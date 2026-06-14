@@ -128,6 +128,12 @@ signal knockout_began(is_match_end: bool, player_won: bool)
 @export var emerald_ripple_strength: float = 0.04
 
 var match_state: MatchState = MatchState.ROUND_ACTIVE
+
+## NETPLAY (Sprint 21): true when the rollback SyncManager (LAN/online) drives the
+## two wizards instead of the local tick drivers. Set in _ready() from
+## NetworkManager. Disables the (not-yet-rollback-routed) emerald spawner and the
+## local-driver park/resume seam.
+var _netplay: bool = false
 var round_number: int = 1
 var player_score: int = 0
 var opponent_score: int = 0
@@ -243,6 +249,7 @@ func _ready() -> void:
 		if card_caster != null:
 			card_caster.spell_staged.connect(_on_player_spell_staged)
 
+	_enter_netplay()
 	round_started.emit(round_number)
 	_warm_up_render_pipelines()
 	_build_arena_borders()
@@ -367,7 +374,9 @@ func request_rematch() -> void:
 ## un-claimed predecessor so exactly one is ever on the field. NETPLAY: converts
 ## to a tick-counted spawn with the rollback sprint, like the stack window.
 func _physics_process(_delta: float) -> void:
-	if match_state != MatchState.ROUND_ACTIVE or emerald_scene == null:
+	# NETPLAY: the emerald spawner isn't rollback-routed yet (Sprint 21) — keep it
+	# off so it can't desync the deterministic sim. Re-enabled in the spawn sprint.
+	if match_state != MatchState.ROUND_ACTIVE or emerald_scene == null or _netplay:
 		return
 	if _emerald != null and not is_instance_valid(_emerald):
 		_emerald = null  # claimed/freed — the clock re-arms below
@@ -786,9 +795,45 @@ func _begin_round() -> void:
 ## Parks/resumes the deterministic sim between rounds by switching the local
 ## tick drivers (the rollback SyncManager replaces this seam later).
 func _set_sim_running(running: bool) -> void:
+	if _netplay:
+		return  # SyncManager owns tick driving in netplay — never touch local drivers.
 	for wizard in [_player, _opponent]:
 		if wizard != null and "local_tick_driver_enabled" in wizard:
 			wizard.local_tick_driver_enabled = running
+
+
+## NETPLAY ENTRY (Sprint 21): if NetworkManager has a networked match active, hand
+## the two wizards to the rollback SyncManager instead of the local tick drivers.
+## Deterministic ownership: the HOST owns Player, the CLIENT owns Opponent (both
+## peers compute the same pair from self/remote ids). Removes the opponent AI and
+## kicks the scene-load handshake; SyncManager.start() fires once both peers
+## confirm the arena scene is loaded (see NetworkManager / rollback_session.gd).
+func _enter_netplay() -> void:
+	var nm: Node = get_node_or_null(^"/root/NetworkManager")
+	if nm == null or not nm.netplay:
+		return
+	_netplay = true
+	# Remove the AI so a REMOTE human drives the opponent wizard.
+	if _opponent != null:
+		var ai: Node = _opponent.get_node_or_null(^"AIBrain")
+		if ai != null:
+			ai.queue_free()
+	var my_id: int = multiplayer.get_unique_id()
+	var remote_id: int = int(nm.remote_peer_id)
+	var is_host: bool = multiplayer.is_server()
+	var host_id: int = my_id if is_host else remote_id
+	var client_id: int = remote_id if is_host else my_id
+	var casting: bool = bool(nm.netplay_casting_enabled)
+	if _player != null and _player.has_method(&"set_netplay"):
+		_player.set_netplay(host_id, casting)
+	if _opponent != null and _opponent.has_method(&"set_netplay"):
+		_opponent.set_netplay(client_id, casting)
+	# NOTE: both peers currently view the arena from the authored (host-side)
+	# camera; swapping the client's camera to follow its OWN wizard is
+	# presentation-only polish deferred to the spawn-rollback sprint (the sim is
+	# identical on both peers, so this is purely cosmetic).
+	# Kick the deterministic handshake.
+	nm.notify_scene_loaded()
 
 
 func _clear_projectiles() -> void:

@@ -17,10 +17,12 @@ config/icon="res://icon.svg"
 
 [autoload]
 
+SyncManager="*res://addons/delta_rollback/SyncManager.gd"
 Nakama="*uid://dji4hpp1d1wo2"
 TheStack="*res://core/the_stack.gd"
 GameSettings="*res://core/game_settings.gd"
 SoundFX="*res://core/sound_fx.gd"
+NetworkManager="*res://core/network_manager.gd"
 
 [display]
 

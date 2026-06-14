@@ -338,21 +338,12 @@ func _build_ui() -> void:
 	ui.layer = 1
 	add_child(ui)
 
-	var story := _make_button(ui, "STORY MODE", Vector2(90, 1440), Vector2(430, 120), 40)
-	story.pressed.connect(func() -> void:
-		Sfx.play(&"ui_click")
-		get_tree().change_scene_to_file(MATCH_SCENE))
-
-	var online := _make_button(ui, "ONLINE MATCH", Vector2(560, 1440), Vector2(430, 120), 40)
-	online.disabled = true
-	online.tooltip_text = "Coming with the Nakama sprint"
-	online.modulate = Color(0.7, 0.7, 0.75)
-
-	var labels: Array[String] = ["DECKS", "INVENTORY", "SHOP"]
-	for i in 3:
-		var placeholder := _make_button(ui, labels[i], Vector2(90 + 313.0 * float(i), 1590), Vector2(287, 92), 28)
-		placeholder.disabled = true
-		placeholder.modulate = Color(0.62, 0.62, 0.68)
+	# Quick Match flow (StateChart-driven) owns the main buttons + every submenu
+	# (Offline / Local / Online), replacing the old STORY/ONLINE buttons. Story
+	# Mode lives on inside it as a reserved (disabled) campaign portal. See
+	# scripts/ui/menu_flow.gd.
+	var menu_flow := preload("res://scenes/ui/menu_flow.tscn").instantiate()
+	ui.add_child(menu_flow)
 
 	# Settings gear, top-right.
 	var gear := Button.new()

@@ -37,7 +37,9 @@ func is_network_host() -> bool:
 	return multiplayer.is_server()
 
 func is_network_master_for_node(node: Node) -> bool:
-	return node.is_network_master()
+	# Godot-4 compat (Sprint 21): is_network_master() was renamed to
+	# is_multiplayer_authority() in Godot 4.0 — identical semantics.
+	return node.is_multiplayer_authority()
 
 func get_network_unique_id() -> int:
 	return multiplayer.get_unique_id()

@@ -1,0 +1,20 @@
+[configuration]
+
+entry_symbol = "delta_rollback_library_init"
+compatibility_minimum = "4.2"
+
+; NOTE (Sprint 21): library entries trimmed to ONLY the desktop targets whose
+; binaries actually exist on disk (Windows/Linux x86_64 + macOS). The android.*
+; and other-arch entries were removed so an export to those platforms does not
+; demand a missing .so. Android multiplayer is deferred until delta_rollback is
+; cross-compiled for arm64 (mirroring the Sprint-17 sg-physics-2d work). See the
+; bug graveyard: "delta_rollback was dead weight / had no Android .so".
+
+[libraries]
+
+macos.debug = "libdelta_rollback.macos.template_debug.framework"
+macos.release = "libdelta_rollback.macos.template_release.framework"
+windows.debug.x86_64 = "libdelta_rollback.windows.template_debug.x86_64.dll"
+windows.release.x86_64 = "libdelta_rollback.windows.template_release.x86_64.dll"
+linux.debug.x86_64 = "libdelta_rollback.linux.template_debug.x86_64.so"
+linux.release.x86_64 = "libdelta_rollback.linux.template_release.x86_64.so"

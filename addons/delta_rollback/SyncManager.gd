@@ -822,7 +822,8 @@ func get_latest_input_from_peer(peer_id: int) -> Dictionary:
 	return {}
 
 func get_latest_input_for_node(node: Node) -> Dictionary:
-	return get_latest_input_from_peer_for_path(node.get_network_master(), str(node.get_path()))
+	# Godot-4 compat (Sprint 21): get_network_master() -> get_multiplayer_authority().
+	return get_latest_input_from_peer_for_path(node.get_multiplayer_authority(), str(node.get_path()))
 
 func get_latest_input_from_peer_for_path(peer_id: int, path: String) -> Dictionary:
 	return get_latest_input_from_peer(peer_id).get(path, {})

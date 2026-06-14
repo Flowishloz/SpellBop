@@ -1,5 +1,5 @@
 PROJECT STATE — WIZARD DODGEBALL
-Last sync: 2026-06-12 | Sprint 16 COMPLETE (Art-Only Stack Cards + Screenshot-Driven Card Audit) — Closing Ceremony by Agent Delta. Autonomy Protocol active.
+Last sync: 2026-06-14 | Sprint 21 COMPLETE (Multiplayer Framework — LAN + Nakama into delta_rollback). On branch feature/multiplayer-netcode.
 
 ===========================================================
 COMPLETED SYSTEMS
@@ -1779,3 +1779,79 @@ the next phase.
 
 NOTE: the new HeartPopFX global class_name required a one-off --import pass to register in
 the Godot class cache; see the graveyard entry for the full rule.
+
+[SPRINT 21 — MULTIPLAYER FRAMEWORK (2026-06-14)]
+Dual-protocol netcode (LAN + Nakama online) both funnelling into the delta_rollback SyncManager,
+plus a StateChart-driven Quick Match menu. Built on git branch feature/multiplayer-netcode.
+All 19 headless suites pass with BIT-IDENTICAL determinism; NEW tests/test_net_handshake.gd drives
+the StateChart + checks autoloads; NEW tests/run_net_smoke.ps1 launches TWO local instances that
+connect over ENet, complete the handshake, reach sync_started, and at sim tick 120 print BYTE-IDENTICAL
+wizard fingerprints. NOT re-exported to Android this sprint.
+
+ARCHITECTURE (anti-spaghetti, 3 layers):
+- core/network_manager.gd (NEW autoload "NetworkManager"): the single coordinator the UI talks to.
+  Owns Transport{OFFLINE,LAN,ONLINE}+Role{HOST,CLIENT} state, the multiplayer.peer_connected signal
+  (the ONE point where both transports converge), a reliable-RPC scene-load ready-exchange, and the
+  netplay flag carried across the menu->arena scene change. Methods: start_offline(),
+  lan_host/lan_search/lan_join/lan_join_direct(), nakama_connect/refresh_friends/add_friend/
+  accept_friend/host_and_invite/accept_invite(), notify_scene_loaded(), cancel_lobby(),
+  leave_match(). Also parses a `--net-smoke` cmdline autopilot.
+
+- core/net/lan_lobby.gd (NEW): LAN transport. PacketPeerUDP beacon broadcast on port 24546
+  (to 255.255.255.255 AND 127.0.0.1 loopback so two instances on one machine discover each other)
+  + listener; ENetMultiplayerPeer create_server/create_client on port 24545. Emits lobby_list.
+  Does ONE structural thing: assigns multiplayer.multiplayer_peer.
+
+- core/net/nakama_lobby.gd (NEW): ONLINE transport. Uses the vendored com.heroiclabs.nakama
+  client: create_client("defaultkey","127.0.0.1",7350,"http") -> authenticate_device (distinct
+  device ids per smoke instance; persisted UUID otherwise) -> socket. Friends: list/add/accept
+  via add_friends_async/list_friends_async. Private match + invite via NakamaMultiplayerBridge
+  .create_match() then a direct-message channel carrying the match_id (no custom server code).
+  join_named_match("spellbop-smoke-room") rendezvous for the smoke test. Also assigns
+  multiplayer.multiplayer_peer.
+
+- core/net/rollback_session.gd (NEW): the ONLY code that touches SyncManager's start sequence.
+  Given 2 loaded peers: both add_peer(remote); host only calls SyncManager.start() (which RPCs
+  _remote_start, waits half-RTT, fires sync_started on both). Transport-agnostic by construction.
+
+THE UNIFIED HANDSHAKE:
+- Once multiplayer.multiplayer_peer is live (ENet or NakamaMultiplayerPeer) the path is byte-
+  identical. NetworkManager.peer_connected -> both peers change_scene_to_file(match_arena) with
+  netplay=true -> MatchController._ready calls NetworkManager.notify_scene_loaded() -> reliable
+  @rpc _remote_scene_ready exchange -> when ALL peers ready, rollback_session.begin() -> SyncManager
+  start -> sync_started -> rollback drives the wizards.
+
+MENU (godot_state_charts):
+- scripts/ui/menu_flow.gd + scenes/ui/menu_flow.tscn (NEW). A real StateChart built IN CODE (paths
+  via get_path_to): Root -> Main / QuickMatch / Local{LocalChoice,Hosting,Searching} /
+  Online{Connecting,OnlineHome,Inviting} / Handshake. One panel per state (state_entered/exited
+  toggles visibility); entering Hosting/Searching/Connecting triggers the matching NetworkManager
+  action; NetworkManager signals forward back in as chart events.
+- Home screen (scripts/ui/home_screen.gd) rewired: the old STORY MODE/ONLINE MATCH buttons replaced
+  by a mounted menu_flow; Story Mode lives on as a RESERVED (disabled) campaign portal; "Offline"
+  reuses the old Story-Mode arena launch (dev sandbox, bypasses all net logic).
+
+ROLLBACK WIRING (the two WIZARDS this sprint):
+- MatchController._enter_netplay() (core/match_controller.gd) removes the opponent AIBrain, assigns
+  deterministic ownership (HOST owns Player, CLIENT owns Opponent — both peers compute the same pair),
+  adds both wizards to the "network_sync" group, stops the local tick drivers (_set_sim_running
+  guarded to no-op in netplay), and disables the emerald spawner in netplay (not rollback-routed
+  yet).
+- PlayerController.set_netplay()/._get_local_input() (scripts/player/player_controller.gd) gate
+  input by multiplayer authority: the owning peer returns real input, the other returns {} (the net
+  supplies it). Casting/cards SUPPRESSED in netplay this sprint (netplay_casting_enabled=false)
+  because projectile spawns aren't SpawnManager-routed yet — that is the NEXT sprint.
+
+PROJECT/CONFIG:
+- delta_rollback GDExtension RE-ENABLED for desktop (renamed addons/delta_rollback/bin/
+  delta_rollback.gdextension.disabled -> .gdextension; android.* library lines TRIMMED so an Android
+  export doesn't demand the missing arm64 .so). SyncManager + NetworkManager added as autoloads in
+  project.godot. Two Godot-4 API-rename compat shims in the addon (RPCNetworkAdaptor + SyncManager:
+  is_network_master/get_network_master -> is_multiplayer_authority/get_multiplayer_authority).
+  Stale ~lib*.dll/.TMP GDExtension shadows (delta_rollback AND sg-physics-2d) deleted.
+
+DEFERRED (next sprint):
+- Route every projectile/barrier/emerald/heart spawn through SpawnManager + flip their local tick
+  drivers (makes casting rollback-correct); cross-compile delta_rollback arm64 for Android multiplayer;
+  P2 camera should follow the client's own wizard (currently both view the host-side camera —
+  presentation only, sim is identical).

@@ -78,6 +78,13 @@ var _card_press_latched: int = 0
 # state so it survives a rollback re-sim.
 var _pending_speed_boost_fp: int = SGFixed.ONE
 
+# NETPLAY (Sprint 21): when true, the rollback SyncManager drives this wizard
+# instead of the local _physics_process tick driver. Input ownership is gated by
+# multiplayer authority. _netplay_casting is false this sprint (projectile spawns
+# aren't rollback-routed yet) — movement syncs, casting is suppressed.
+var _netplay: bool = false
+var _netplay_casting: bool = false
+
 
 func _ready() -> void:
 	# HARDCODED COLLISION LAYERS (Sprint 2 hotfix) — the editor UI fails to
@@ -217,10 +224,42 @@ func reset_for_round(spawn_x_fp: int, spawn_y_fp: int) -> void:
 			child.reset_cast_state()
 
 
+## NETPLAY HANDOFF (Sprint 21): give this wizard to the rollback SyncManager.
+## [param owner_peer_id] is the peer that controls it (host owns Player, client
+## owns Opponent — computed identically on both peers). Stops the local tick
+## driver (SyncManager drives ticks now), claims multiplayer authority so input
+## is attributed to the owning peer, and joins the "network_sync" group that
+## SyncManager scans at start(). [param casting_enabled] is false this sprint —
+## projectile spawns aren't rollback-routed yet, so movement syncs but casting
+## is suppressed.
+func set_netplay(owner_peer_id: int, casting_enabled: bool) -> void:
+	_netplay = true
+	_netplay_casting = casting_enabled
+	local_tick_driver_enabled = false
+	set_multiplayer_authority(owner_peer_id)
+	add_to_group(&"network_sync")
+
+
 ## Produces this tick's input as a compact int-only Dictionary: the AI brain
 ## when one is attached, otherwise the local keyboard. Both sources speak the
 ## same InputCommand shape, so everything downstream is source-agnostic.
 func _get_local_input() -> Dictionary:
+	if _netplay:
+		# Only the OWNING peer supplies this wizard's input; the other peer's
+		# input arrives over the network (attributed by authority + node path).
+		if not is_multiplayer_authority():
+			return {}
+		var inp: Dictionary = InputCommand.capture_local()
+		if _card_press_latched != 0:
+			if not inp.has(InputCommand.KEY_CARD):
+				inp[InputCommand.KEY_CARD] = _card_press_latched
+			_card_press_latched = 0
+		if not _netplay_casting:
+			# Casting/cards aren't rollback-safe yet (Sprint 21) — strip so both
+			# peers process identical movement-only input.
+			inp.erase(InputCommand.KEY_CAST)
+			inp.erase(InputCommand.KEY_CARD)
+		return inp
 	if _ai_brain != null:
 		return _ai_brain.decide(current_tick)
 	var captured: Dictionary = InputCommand.capture_local()
