@@ -1405,3 +1405,39 @@ VERIFICATION:
   field visible together), the arena borders (cyan neon frame around the court), and
   the death animation (wizard sprite spinning off the baseline with red fade + impact
   burst on knockdown).
+
+[SPRINT 19 — PHASE 5: GAME FEEL & POLISH (2026-06-14)]
+Two tuning changes to perfect the Phase 1-4 overhaul. No new bugs; no graveyard entries.
+All 15 headless test suites pass with BIT-IDENTICAL determinism. Phase 5 committed to
+GitHub https://github.com/Flowishloz/SpellBop.git (main branch).
+
+(1) SMOOTHER SLOW-MO → NORMAL TRANSITION:
+- TheStack.resume_ramp_rate (core/the_stack.gd): raised 7 -> 11 s^-1 for a snappier
+  exponential ramp back to Engine.time_scale 1.0. The faster acceleration reduces the
+  visual "lag" of the lingering time dilation post-stack-resolution.
+- MatchController (core/match_controller.gd): post_resolve_delay_seconds reduced from
+  0.2 s to 0.12 s (the inter-spell stagger for LIFO releases). The FINAL spell is
+  resolved, then MatchController calls resume_speed() after only 0.12 s, allowing the
+  ramp to begin immediately instead of holding dilation for an extra 80 ms. Combined
+  effect: stack resolution snaps back to gameplay speed cleanly — no lingering
+  dilated float.
+
+(2) FIRING IMPACT AMPLIFIED 20%:
+- MatchController._on_spell_cast (core/match_controller.gd): NEW fire_shake_multiplier
+  (1.2 constant, 20% amplification). Every projectile spawn adds trauma to the camera
+  via camera_rig.add_trauma(base_trauma * fire_shake_multiplier), where base_trauma is
+  0.15. Net result: peak trauma = 0.180 (0.15 x 1.2).
+- Verified in tests/test_fire_shake.gd: fires a base fireball and reads the peak
+  camera trauma value off PunchOutCameraRig._trauma, asserting 0.180. Test passes;
+  determinism stays BIT-IDENTICAL (camera state is visual-only, never enters sim dicts).
+
+VERIFICATION:
+- All 15 headless test suites pass: the original 14 + tests/test_fire_shake.gd (NEW).
+- Determinism: BIT-IDENTICAL across all suites (no sim state changes — tuning only).
+- No regressions introduced; no graveyard entries needed.
+
+SPRINT 19 COMPLETE — FIVE-PHASE OVERHAUL DONE:
+The entire Sprint 19 gameplay/UI/graphics/feel pipeline is now finished and fully
+committed. All code, scenes, tests, and documentation are version-controlled and pushed
+to the GitHub backup at https://github.com/Flowishloz/SpellBop.git (main branch). The
+project is production-ready for the next phase (Story Mode, Draft, Nakama backend).
