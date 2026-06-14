@@ -1601,3 +1601,34 @@ emerald economy, wall repositioning, and KNOCKOUT SEQUENCE cinematic are now fin
 fully committed. The game now provides a dramatic, visually-complete death/victory
 experience. All 14 headless test suites pass with determinism preserved. The project is
 backed up and ready for the next phase.
+
+[SPRINT 20 FOLLOW-UP (2026-06-14)]
+Creative Director re-report: two target fixes addressing stack clustering and knockout
+zoom pacing. All 14 headless test suites still pass with BIT-IDENTICAL determinism.
+
+(1) STACK RESOLUTION VISIBILITY FIX (still releasing all at once):
+- ROOT CAUSE: the Sprint-20 fix (resolve_time_scale 0.3 + 0.4 s stagger) staggered
+  the TIMING, but the 0.4 s gap was STILL TOO QUICK to read visually, and the final
+  spell snapped back to normal speed immediately, so spells still felt simultaneous
+  during playtest.
+- FIX: MatchController.stagger_delay_seconds raised 0.4 s -> 0.85 s (a clearly
+  readable ~0.85 s pause between each LIFO release — the timer runs ignore_time_scale,
+  so the pause is REAL regardless of time dilation). MatchController.post_resolve_delay_seconds
+  raised 0.12 s -> 0.55 s (the LAST released spell now gets a slow-mo travel window
+  before normal speed resumes, instead of launching and immediately snapping back).
+  the_stack.resolve_time_scale tuned 0.3 -> 0.35 (holds speed slightly longer).
+- RESULT: verified by playtest + tests/test_stack_resolution.gd: the first released
+  spell travels ~1369 sim units down-court (~77% of the ~1760-unit court) before the
+  second launches — unmistakably one-at-a-time. Updated test assertion: SIM-POSITION
+  separation (>200 units between releases), not just wall-clock gap.
+
+(2) KNOCKOUT ZOOM BY OUTCOME:
+- The death cam's flat 50% zoom (death_zoom_scale 0.5) is now outcome-based:
+  * WIN: tighter zoom celebration (death_zoom_scale_win = 0.65, 35% zoom-in).
+  * LOSS: gentler, wider zoom (death_zoom_scale_lose = 0.80, 20% zoom-in).
+- Implementation: New MatchController @exports death_zoom_scale_win / death_zoom_scale_lose.
+  camera_rig.begin_death_cam(sprite, zoom_scale) now takes a per-knockout FOV factor.
+  MatchController._begin_death_sequence picks the correct scale from player_won_round
+  and passes it to the camera.
+- VERIFICATION: all 14 headless suites still pass with BIT-IDENTICAL determinism.
+  Win/loss death-cam framings confirmed by pixel screenshots.

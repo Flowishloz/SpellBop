@@ -81,14 +81,18 @@ signal knockout_began(is_match_end: bool, player_won: bool)
 ## STACK RESOLUTION (Phase 1, Creative Director): when the countdown ends the
 ## staged spells resolve LIFO one at a time, holding slow-mo, with this REAL-time
 ## gap between each release. Normal speed resumes only after the FINAL spell.
-## Sprint 20: raised 0.2 -> 0.4 — at the moderate resolve_time_scale each spell
-## now travels a clearly readable distance before the next releases (the old
-## 0.2 s gap at deep 0.1 dilation looked simultaneous — Creative Director).
-@export var stagger_delay_seconds: float = 0.4
+## Sprint 20 (round 2): raised to 0.85 s — at the resolve_time_scale slow-mo each
+## released spell must visibly CROSS a chunk of the court before the next launches,
+## or the staggered releases still cluster near the spawn and read as simultaneous
+## (the Creative Director's "they all resolve at the same time"). 0.85 s at 0.35
+## dilation ≈ 0.30 s of sim travel — a fast bolt clears ~hundreds of units.
+@export var stagger_delay_seconds: float = 0.85
 
-## A short beat after the FINAL spell resolves before normal speed resumes — kept
-## small so the slow-mo doesn't linger (Phase 5: smooth slow-mo -> normal).
-@export var post_resolve_delay_seconds: float = 0.12
+## A beat after the FINAL spell resolves before normal speed resumes. Sprint 20
+## (round 2): raised 0.12 -> 0.55 so the LAST released spell also gets a slow-mo
+## moment to travel before speed snaps back — otherwise the final spell launched
+## and immediately resumed, bunching it with the prior one.
+@export var post_resolve_delay_seconds: float = 0.55
 
 ## STACK WINNER REWARD: the player who placed the NEWEST spell on the stack (last
 ## responder, always) gets this launch-speed multiplier on their NEXT projectile.
@@ -117,6 +121,11 @@ signal knockout_began(is_match_end: bool, player_won: bool)
 ## post-game overlay waits death_sequence_seconds while it all plays.
 @export_range(0.05, 1.0) var death_time_scale: float = 0.3
 @export var death_sequence_seconds: float = 2.5
+## KNOCKOUT ZOOM by outcome (Sprint 20, Creative Director): the death cam's FOV
+## multiplier — a tighter zoom celebrating a WIN (35% zoom-in = 0.65), a gentler
+## one on a LOSS (20% zoom-in = 0.80). Lower = closer.
+@export_range(0.1, 1.0) var death_zoom_scale_win: float = 0.65
+@export_range(0.1, 1.0) var death_zoom_scale_lose: float = 0.8
 ## Peak UV displacement of the death screen-ripple (retro_lens ripple_strength).
 @export var death_ripple_strength: float = 0.05
 ## SCALED seconds for the ripple ring to fully expand (slows with the dilation).
@@ -692,7 +701,9 @@ func _begin_death_sequence(ko_was_player: bool, match_over: bool, player_won_rou
 		if dying != null and _camera.has_method(&"begin_death_cam"):
 			var sprite: Node3D = dying.get_node_or_null(^"WizardRig/Sprite3D") as Node3D
 			var rig: Node3D = dying.get_node_or_null(^"WizardRig") as Node3D
-			_camera.begin_death_cam(sprite if sprite != null else rig)
+			# Tighter zoom on a win, gentler on a loss (Creative Director).
+			var zoom: float = death_zoom_scale_win if player_won_round else death_zoom_scale_lose
+			_camera.begin_death_cam(sprite if sprite != null else rig, zoom)
 
 	# Screen-space shockwave from the point of contact.
 	_trigger_death_ripple(dying)

@@ -124,8 +124,10 @@ var _follow_x: float = 0.0
 var _base_fov: float = 75.0
 var _fov_zoom: float = 1.0
 
-# DEATH CAM (Sprint 20): the eliminated wizard's sprite to frame, or null.
+# DEATH CAM (Sprint 20): the eliminated wizard's sprite to frame, or null, plus
+# the per-knockout FOV zoom factor (the caller picks it by win/lose outcome).
 var _death_target: Node3D = null
+var _death_zoom: float = 0.5
 
 
 # Right-shoulder reference values captured at _ready (the dynamic swap and
@@ -182,9 +184,12 @@ func set_rumble(strength: float) -> void:
 
 
 ## DEATH CAM start: frame [param sprite] (the eliminated wizard's Sprite3D) — the
-## camera zooms in and tracks it until end_death_cam(). Pure presentation.
-func begin_death_cam(sprite: Node3D) -> void:
+## camera zooms to [param zoom_scale] × the base FOV and tracks it until
+## end_death_cam(). The caller picks zoom_scale by outcome (a tighter zoom on a
+## win, a gentler one on a loss). Pure presentation.
+func begin_death_cam(sprite: Node3D, zoom_scale: float = 0.5) -> void:
 	_death_target = sprite
+	_death_zoom = clampf(zoom_scale, 0.05, 1.0)
 
 
 ## DEATH CAM end: release the framing; the normal follow/zoom eases back in.
@@ -274,8 +279,8 @@ func _update_death_cam(dt: float) -> void:
 		pos += Vector3(max_shake_offset.x * mag * sin(wob * 1.7),
 				max_shake_offset.y * mag * sin(wob * 2.3 + 1.3), 0.0)
 	global_position = pos
-	# Zoom in on the sprite.
-	_fov_zoom = lerpf(_fov_zoom, death_zoom_scale, t)
+	# Zoom in on the sprite (the per-knockout factor picked by win/lose outcome).
+	_fov_zoom = lerpf(_fov_zoom, _death_zoom, t)
 	fov = _base_fov * _fov_zoom
 	# Look straight at the sprite (the death cam owns rotation). Guard the
 	# degenerate near-zero distance so look_at never errors.

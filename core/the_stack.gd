@@ -51,7 +51,10 @@ enum State { NORMAL, STACK_WINDOW }
 ## (at 0.1 the staggered spells barely moved between releases and looked
 ## simultaneous — the bug the Creative Director reported). _expire_window() steps
 ## the dilation here; resume_speed() ramps it back to 1.0 after the final spell.
-@export_range(0.01, 1.0) var resolve_time_scale: float = 0.3
+## Sprint 20 (round 2): 0.35 — fast enough that a released spell visibly crosses
+## the court within the inter-spell gap, so the LIFO releases read as distinct
+## one-at-a-time launches rather than a simultaneous burst.
+@export_range(0.01, 1.0) var resolve_time_scale: float = 0.35
 
 ## REAL-seconds length of the window when open_window() is called without an
 ## explicit duration. Spell cards may pass bespoke durations later.

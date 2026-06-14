@@ -110,10 +110,20 @@ func _run() -> void:
 	if t_first > 0 and t_second > 0:
 		var gap_ms: int = t_second - t_first
 		_ck(gap_ms >= 120, "spells resolved ONE AT A TIME (gap %d ms >= 120, not simultaneous)" % gap_ms)
+		# VISIBLE SEPARATION (round-2 fix): timing alone isn't enough — at the
+		# resolve slow-mo the FIRST spell must already be well down-court when the
+		# SECOND launches, or they cluster near the spawn and read as simultaneous.
+		if projectiles.get_child_count() >= 2:
+			var p0: SGFixedVector2 = projectiles.get_child(0).get_global_fixed_position()
+			var p1: SGFixedVector2 = projectiles.get_child(1).get_global_fixed_position()
+			var gap_units: float = absi(p0.y - p1.y) / 65536.0
+			_ck(gap_units > 200.0,
+				"first spell %.0f units down-court when the second launches (>200 = visibly separated)" % gap_units)
 
 	# WINNER = last responder = the COUNTER (slot 3), the player's -> the player
-	# banks a 1.5x boost on its NEXT throw. Granted AFTER the stack fully resolves.
-	await _wait(0.6)
+	# banks a 1.5x boost on its NEXT throw. Granted AFTER the stack fully resolves
+	# (the longer round-2 stagger + post-resolve beat pushes this out — wait it out).
+	await _wait(1.2)
 	var boost: int = player.consume_speed_boost() if player.has_method(&"consume_speed_boost") else 0
 	_ck(boost == SGFixed.from_float(1.5), "stack winner (player) banked a 1.5x next-throw boost (got %d, want %d)" % [boost, SGFixed.from_float(1.5)])
 
