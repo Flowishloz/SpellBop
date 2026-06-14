@@ -1,5 +1,5 @@
 PROJECT STATE — WIZARD DODGEBALL
-Last sync: 2026-06-14 | Sprint 21 COMPLETE (Multiplayer Framework — LAN + Nakama into delta_rollback). On branch feature/multiplayer-netcode.
+Last sync: 2026-06-14 | Sprint 22 Phase 1 COMPLETE (base fireball spawn-rollback). On branch main.
 
 ===========================================================
 COMPLETED SYSTEMS
@@ -1855,3 +1855,34 @@ DEFERRED (next sprint):
   drivers (makes casting rollback-correct); cross-compile delta_rollback arm64 for Android multiplayer;
   P2 camera should follow the client's own wizard (currently both view the host-side camera —
   presentation only, sim is identical).
+
+[SPRINT 21 FIX — MULTIPLAYER CLIENT VIEW (2026-06-14)]
+The multiplayer client view was fixed via a VISUAL MIRROR (not a camera flip). The literal 180-degree
+camera rotation rendered black because the arena backdrop/lights/fog are authored one-sided for the
+host's +Z viewpoint. FIX: VisualBridgeComponent.view_flip_z negates the visual Z only (X kept so the
+client's left/right controls stay correct), so on the CLIENT its wizard (the red Opponent) renders at
+the near, fully-lit baseline and the blue Player downcourt; the authored camera follows the client's
+rig via camera_rig.set_follow_target. Reuses all authored lighting/backdrop. Also: input AUTHORITY was
+verified CORRECT all along (host drives the blue Player) — the "frozen blue" report was the perspective
+confusion. Also: MatchHUD.set_perspective_flipped swaps the client's health bars (corner = own/Opponent,
+floating = foe/Player over the far rig) — active once netplay casting/damage lands. Files:
+scripts/player/components/visual_bridge_component.gd, scripts/visual/camera_rig.gd,
+core/match_controller.gd (_enter_netplay), scripts/ui/match_hud.gd. All 19 suites pass; verified via
+windowed two-instance smoke. Merged to main.
+
+[SPRINT 22 PHASE 1 — BASE FIREBALL SPAWN-ROLLBACK (2026-06-14)]
+First slice of routing mid-match spawns through the rollback SyncManager so casting works online. The
+BASE FIREBALL now spawns via SyncManager.spawn(): SpellCasterComponent._spawn_projectile builds a
+deterministic int/fixed-point payload (px,py,vx,vy,b,mask,dmg,shat,size,src-path); the stack-winner
+boost is consumed in the CASTER's tick (it mutates caster sim state), the rest is pure data.
+FireballController gained _network_spawn(data) (positions+arms+launches, identical in single-player and
+on every rollback re-spawn), _despawn() (SyncManager.despawn under a live match, queue_free otherwise;
+all four self-free sites converted), and in _ready when SyncManager.started it joins the network_sync
+group + idles its local tick driver so SyncManager drives it. KEY_CAST is no longer stripped in netplay;
+KEY_CARD still is (cards resolve off the wall-clock Stack, not yet tick-counted = Phase 2). Presentation
+hooks suppress during SyncManager.is_in_rollback(). Verified: 19/19 headless suites pass (single-player
+determinism BIT-IDENTICAL), and the two-instance smoke (both peers pulse-cast) shows both fire fireballs
+that spawn + fly to BYTE-IDENTICAL fixed-point positions. Files: scripts/projectiles/fireball_controller.gd,
+scripts/player/components/spell_caster_component.gd, scripts/player/player_controller.gd,
+core/network_manager.gd. The general spawn-rollback RULE and the Phase 2/3 roadmap are in HANDOFF.md.
+Merged to main (commit 43414a5).
