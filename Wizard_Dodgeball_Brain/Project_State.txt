@@ -1632,3 +1632,57 @@ zoom pacing. All 14 headless test suites still pass with BIT-IDENTICAL determini
   and passes it to the camera.
 - VERIFICATION: all 14 headless suites still pass with BIT-IDENTICAL determinism.
   Win/loss death-cam framings confirmed by pixel screenshots.
+
+[SPRINT 20 ROUND-3 (2026-06-14)]
+Creative Director re-report: TWO root-cause fixes for bugs that persisted through earlier rounds.
+All 18 headless test suites pass with BIT-IDENTICAL determinism. New suite: tests/test_reflect_freeze.gd.
+
+(1) STACK DISPLAY CLEARED ALL AT ONCE (Root Cause: UI Event, Not Sim):
+- SYMPTOM: The staggered LIFO projectile releases were mechanically correct per Sprint 20
+  follow-up, but the on-screen MTG-style stack display (scripts/ui/stack_display_hud.gd,
+  the card pile at the top that the PLAYER ACTUALLY WATCHES) flew ALL card faces away
+  simultaneously when the window expired. Result: even though the projectiles staggered,
+  the visible stack clearing still looked simultaneous — masking a working mechanic through
+  three separate bug reports.
+- ROOT CAUSE: the display's _on_stack_closed callback cleared the entire pile instantly,
+  disconnected from the actual staggered spell resolutions. The PRESENTATION event (display
+  clear) was decoupled from the SIMULATION event (card_cast, which fires ~0.85 s apart per
+  LIFO release).
+- FIX: peel the display cards ONE AT A TIME by connecting to each caster's card_cast signal
+  (which fires once per LIFO release, in lockstep with the staggered releases). Each card
+  removal via _on_card_resolved + _make_leave removes the top remaining card from the pile.
+  The _on_stack_closed callback now ONLY clears the whole pile on a KO or forced-close
+  (when staged spells never resolve and the round ends), never on normal expiry. DEFENSE
+  card_casts are ignored (instant resolves, never staged).
+- VERIFICATION: tests/test_stack_resolution.gd asserts that exactly ONE card is leaving
+  on the first resolution (leaving=1, staying=1), not all at once; multi-spell stacks
+  verified piecemeal.
+- RULE: when a mechanic is staggered in the SIM, its primary on-screen REPRESENTATION must
+  be driven by the same per-step event, not by a one-shot "closed" signal. Always verify
+  the thing the PLAYER LOOKS AT resolves one step at a time, not just the underlying entities.
+
+(2) REFLECTED ICE WALL INTERMITTENTLY MISSED THE THROWER:
+- SYMPTOM: a court-wide frost wave (Frost Front counter) sometimes didn't freeze its
+  original thrower after the defense barrier reflected it, even though the anti-tunnel
+  band (Sprint 20 round-2) made a straight reflected wave connect reliably.
+- ROOT CAUSE: the defense barrier's capture release gives every ball a random lateral
+  ricochet (sign = a position-parity hash, deterministic but varying). A wide ice wall
+  (400 units across) inherited this ricochet, veering off-angle and sailing PAST the
+  thrower (who may have moved) — a MISS, not a reflection failure.
+- FIX: a reflected FROST wave (identified by slow_ticks > 0) now:
+  * Flies STRAIGHT back (vx = 0, no ricochet inherited).
+  * Gently HOMES onto its ORIGINAL THROWER (captured from get_hit_source() BEFORE the
+    hit source is overwritten to the defender; set_homing(thrower, 0.4) in
+    scripts/arena/barrier_controller.gd _tick_capture).
+  Fireballs are UNAFFECTED (they keep the ricochet; only slow_ticks>0 waves reflect
+  straight+homing). The frost VFX (ice cube) fires off the movement slow_started signal,
+  so a landed freeze is always visibly confirmed.
+- VERIFICATION: tests/test_reflect_freeze.gd:
+  * Fast ice wave freezes the recipient via anti-tunnel (existing path).
+  * Barrier-reflected ice wave homes onto a thrower who teleported +330 units aside and
+    still freezes the thrower.
+- RULE: a WIDE area projectile that must reliably return to a specific target should NOT
+  inherit a randomized ricochet meant for point projectiles. Reflect it straight (and/or
+  home it) so its width is an asset, not a way to whiff past the target.
+
+ALL 18 SUITES PASS, DETERMINISM BIT-IDENTICAL. GitHub backup updated.

@@ -253,12 +253,29 @@ func _tick_capture() -> void:
 	var vx: int = SGFixed.mul(speed_out_fp, _ricochet_fp) * sign_hash
 	var vy: int = speed_out_fp * _release_dir
 
+	# A REFLECTED FROST WAVE (Icey Retort) must RELIABLY return and freeze its
+	# thrower (Creative Director: "the reflected ice wall must ALWAYS freeze").
+	# The court-wide wall used to inherit the random ricochet veer and miss; now it
+	# flies STRAIGHT back (no lateral kick) and gently HOMES onto the original
+	# thrower (captured BEFORE we overwrite the hit source), so it can't drift
+	# off-angle past a thrower who stepped aside. Pure fixed-point, deterministic.
+	var is_frost: bool = "slow_ticks" in _captured_ball and _captured_ball.slow_ticks > 0
+	var original_thrower: Node = null
+	if _captured_ball.has_method(&"get_hit_source"):
+		original_thrower = _captured_ball.get_hit_source()
+	if is_frost:
+		vx = 0
+
 	if _captured_ball.has_method(&"set_hit_source"):
 		_captured_ball.set_hit_source(_owner_body)
 	if _release_mask != 0:
 		_captured_ball.collision_mask = _release_mask  # now the OWNER's ball
 	if _captured_ball.has_method(&"set_homing"):
-		_captured_ball.set_homing(null, 0)  # a reflected ball flies true
+		if is_frost and original_thrower != null:
+			# Gentle tracking onto the thrower — reliable, not an instant lock.
+			_captured_ball.set_homing(original_thrower, SGFixed.from_float(0.4))
+		else:
+			_captured_ball.set_homing(null, 0)  # a reflected ball flies true
 	_captured_ball.launch(vx, vy, SGFixed.ONE)
 	_captured_ball = null
 	capture_released.emit()

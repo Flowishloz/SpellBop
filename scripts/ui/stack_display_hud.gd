@@ -84,9 +84,11 @@ func _ready() -> void:
 	var player_caster: Node = get_node_or_null(player_caster_path)
 	if player_caster != null:
 		player_caster.spell_staged.connect(_on_staged.bind(true))
+		player_caster.card_cast.connect(_on_card_resolved)
 	var opponent_caster: Node = get_node_or_null(opponent_caster_path)
 	if opponent_caster != null:
 		opponent_caster.spell_staged.connect(_on_staged.bind(false))
+		opponent_caster.card_cast.connect(_on_card_resolved)
 
 	_stack = get_node_or_null(^"/root/TheStack")
 	if _stack != null:
@@ -157,10 +159,40 @@ func _on_stack_tick(remaining_s: float) -> void:
 func _on_stack_closed() -> void:
 	_countdown.visible = false
 	_last_tick_second = -1
-	for entry in _entries:
-		entry["leaving"] = true
-		entry["target_pos"] = entry["pos"] + Vector2(0, -700)
-		entry["vel"] = entry["vel"] + Vector2(0, -900)
+	# Sprint 20 (round 2 — "the stack must resolve ONE AT A TIME, like MTG Arena"):
+	# on the NORMAL expiry the cards now peel off the pile one at a time via
+	# _on_card_resolved (each spell's card_cast), in lockstep with the staggered
+	# projectile releases — do NOT fly them all away here. Only a KO / forced close
+	# (the round is no longer active) drops the WHOLE stack at once, because those
+	# staged spells never resolve, so no card_cast ever comes for them.
+	var mc: Node = get_node_or_null(match_controller_path)
+	var round_active: bool = mc != null and "match_state" in mc and int(mc.match_state) == 0
+	if not round_active:
+		for entry in _entries:
+			_make_leave(entry)
+
+
+## One staged spell just RESOLVED (card_cast, fired per release in the staggered
+## LIFO resolution): peel the TOP remaining card off the on-screen stack so the
+## pile empties one card at a time, in lockstep with the projectile launches.
+## DEFENSE casts are instant and never staged here, so they are ignored.
+func _on_card_resolved(card: CardResource) -> void:
+	if card != null and card.card_type == CardResource.CardType.DEFENSE:
+		return
+	for i in range(_entries.size() - 1, -1, -1):
+		if not _entries[i]["leaving"]:
+			_make_leave(_entries[i])
+			return
+
+
+## Sends one stack face flying up and fading (its resolve animation). _process
+## frees it once it has faded out.
+func _make_leave(entry: Dictionary) -> void:
+	if entry["leaving"]:
+		return
+	entry["leaving"] = true
+	entry["target_pos"] = (entry["pos"] as Vector2) + Vector2(0, -700)
+	entry["vel"] = (entry["vel"] as Vector2) + Vector2(0, -900)
 
 
 ## STACK WINNER (Phase 3): flash a bold banner naming the winner (the last

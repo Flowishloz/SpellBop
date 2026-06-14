@@ -104,6 +104,20 @@ func _run() -> void:
 
 	# The shared 0.9 s window (from the attack) expires -> staggered resolution.
 	var t_first: int = await _await_count(projectiles, 1, 4000)
+	# THE STACK DISPLAY must peel ONE card on the first resolution (MTG-Arena
+	# style), not fly the whole pile away at once — the real cause of the
+	# "resolves simultaneously" report. Sampled the instant the 1st spell fires.
+	var stack_hud: Node = arena.get_node_or_null("StackDisplayHUD")
+	if stack_hud != null:
+		var leaving: int = 0
+		var staying: int = 0
+		for e in stack_hud._entries:
+			if e["leaving"]:
+				leaving += 1
+			else:
+				staying += 1
+		_ck(leaving == 1 and staying >= 1,
+			"stack DISPLAY peeled ONE card on the first resolution (leaving=%d, staying=%d) — not all at once" % [leaving, staying])
 	var t_second: int = await _await_count(projectiles, 2, 4000)
 	_ck(t_first > 0, "first staged spell resolved")
 	_ck(t_second > 0, "second staged spell resolved (both came off the stack)")
