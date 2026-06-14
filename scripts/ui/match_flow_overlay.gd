@@ -28,7 +28,10 @@ var _play_again: Button       # match-end only: restarts the match
 var _mc: Node                 # the MatchController (rematch target)
 var _break_deadline_msec: int = 0
 var _showing_break: bool = false
-var _callout_tween: Tween = null  # the ROUND N fade (killed on state changes)
+# ROUND-N call-out (Phase 3): a bold popped title framed by horizontal lightning.
+var _round_label: Label
+var _round_lightning: _RoundLightning
+var _round_anim_msec: int = 0  # wall-clock start of the round call-out (0 = idle)
 
 # Match-end podium (built once, hidden until victory/defeat).
 var _podium: Control
@@ -81,6 +84,24 @@ func _ready() -> void:
 		_stat_lines.append(line)
 
 	_hint = _make_label(28, Vector2(0, 950))
+
+	# ROUND-N CALL-OUT (Phase 3): a dedicated BOLD label (kept off _title so the
+	# result screens keep their own size) framed by two horizontal lightning bolts.
+	_round_lightning = _RoundLightning.new()
+	_round_lightning.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_round_lightning.visible = false
+	add_child(_round_lightning)
+	_round_label = Label.new()
+	_round_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	_round_label.size = Vector2(1080, 130)
+	_round_label.position = Vector2(0, 720)
+	_round_label.pivot_offset = Vector2(540, 65)
+	_round_label.add_theme_font_size_override(&"font_size", 104)
+	_round_label.add_theme_color_override(&"font_color", Color(1, 1, 1))
+	_round_label.add_theme_color_override(&"font_outline_color", Color(0.1, 0.2, 0.45, 0.95))
+	_round_label.add_theme_constant_override(&"outline_size", 16)
+	_round_label.visible = false
+	add_child(_round_label)
 
 	# PLAY AGAIN button — the post-match restart (replaces "tap the fireball").
 	# Sits just under the stats panel; shown only on the match-end screen.
@@ -181,32 +202,66 @@ func _build_podium() -> void:
 
 
 func _process(_delta: float) -> void:
+	if _round_anim_msec != 0:
+		_animate_round_call()
+
 	if not _showing_break:
 		return
 	var remaining: float = maxf(0.0, float(_break_deadline_msec - Time.get_ticks_msec()) / 1000.0)
 	_hint.text = "next round in %d..." % ceili(remaining)
 
 
+## Drives the ROUND-N pop + lightning shoot on the wall clock (immune to the
+## parked sim / dilation): pop (scale), bolt shoot (t), flash, hold, then fade.
+func _animate_round_call() -> void:
+	var rt: float = float(Time.get_ticks_msec() - _round_anim_msec) / 1000.0
+	if rt >= 1.95:
+		_end_round_call()
+		return
+	_round_label.scale = Vector2.ONE * lerpf(1.5, 1.0, ease(clampf(rt / 0.3, 0.0, 1.0), 0.32))
+	_round_lightning.t = clampf(rt / 0.22, 0.0, 1.0)
+	_round_lightning.flash = clampf(1.0 - rt / 0.55, 0.0, 1.0)
+	var a: float = 1.0 if rt < 1.3 else clampf(1.0 - (rt - 1.3) / 0.6, 0.0, 1.0)
+	_round_label.modulate.a = a
+	_round_lightning.modulate.a = a
+	_round_lightning.queue_redraw()
+
+
+func _end_round_call() -> void:
+	_round_anim_msec = 0
+	if _round_label != null:
+		_round_label.visible = false
+	if _round_lightning != null:
+		_round_lightning.visible = false
+
+
 func _on_round_started(round_number: int) -> void:
 	_showing_break = false
 	_set_visible_state(false)
-	# Brief round call-out that fades on its own (no dim).
-	_title.visible = true
-	_title.modulate = Color.WHITE
-	_title.text = "ROUND %d" % round_number
-	_callout_tween = create_tween()
-	_callout_tween.tween_interval(1.2)
-	_callout_tween.tween_property(_title, "modulate:a", 0.0, 0.6)
-	_callout_tween.tween_callback(func() -> void: _title.visible = _showing_break)
+	# BOLD round call-out (Phase 3): the number POPS in framed by horizontal
+	# lightning (top bolt shoots right, bottom bolt shoots left), then fades.
+	_round_label.text = "ROUND %d" % round_number
+	_round_label.modulate = Color.WHITE
+	_round_label.scale = Vector2(1.5, 1.5)
+	_round_label.visible = true
+	_round_lightning.position = Vector2(0, _round_label.position.y - 18.0)
+	_round_lightning.size = Vector2(1080, _round_label.size.y + 36.0)
+	_round_lightning.modulate = Color.WHITE
+	_round_lightning.seed_v = round_number * 7919 + 13
+	_round_lightning.t = 0.0
+	_round_lightning.flash = 1.0
+	_round_lightning.visible = true
+	_round_lightning.queue_redraw()
+	_round_anim_msec = Time.get_ticks_msec()
 
 
 ## A still-running ROUND-N fade must never eat the result screens' title
 ## (caught by the screenshot audit: a KO within ~2 s of a round start let
 ## the stale tween fade "VICTORY" to invisible).
 func _kill_callout() -> void:
-	if _callout_tween != null and _callout_tween.is_valid():
-		_callout_tween.kill()
-	_callout_tween = null
+	# A KO within ~2 s of a round start must not let the stale ROUND-N call-out
+	# linger over the result screen — stop it immediately.
+	_end_round_call()
 
 
 func _on_round_ended(player_won_round: bool, player_score: int, opponent_score: int, break_seconds: float) -> void:
@@ -294,6 +349,46 @@ func _fill_stats() -> void:
 	_stat_lines[0].text = "LIFE LEFT      you %d   •   foe %d" % [s["own_hp"], s["foe_hp"]]
 	_stat_lines[1].text = "ACCURACY      %d%%   (%d of %d throws landed)" % [s["accuracy"], s["hits"], s["throws"]]
 	_stat_lines[2].text = "DAMAGE        dealt %d   •   taken %d" % [s["damage_dealt"], s["damage_taken"]]
+
+
+## Two horizontal lightning bolts framing the ROUND-N call-out: the TOP bolt
+## shoots RIGHT (grows from the left edge), the BOTTOM bolt shoots LEFT (grows
+## from the right edge). `t` = 0..1 shoot progress, `flash` = 0..1 bloom. The
+## jagged shape is seeded per round so it is stable during the animation.
+class _RoundLightning extends Control:
+	var t: float = 1.0
+	var flash: float = 0.0
+	var seed_v: int = 0
+	var bolt_color: Color = Color(0.55, 0.8, 1.0)
+	var jitter_height: float = 18.0
+
+	func _draw() -> void:
+		_bolt(16.0, true, seed_v)                    # top bolt -> shoots right
+		_bolt(size.y - 16.0, false, seed_v + 4099)   # bottom bolt -> shoots left
+
+	func _bolt(y: float, going_right: bool, seed_value: int) -> void:
+		var rng := RandomNumberGenerator.new()
+		rng.seed = seed_value
+		var segs: int = 22
+		var jit := PackedFloat32Array()
+		for i in segs + 1:
+			jit.append(rng.randf_range(-jitter_height, jitter_height))
+		var drawn: float = size.x * clampf(t, 0.0, 1.0)
+		var pts := PackedVector2Array()
+		for i in segs + 1:
+			var fx: float = size.x * float(i) / float(segs)
+			if going_right:
+				if fx > drawn:
+					break
+			elif fx < size.x - drawn:
+				continue
+			pts.append(Vector2(fx, y + jit[i]))
+		if pts.size() < 2:
+			return
+		var glow := Color(bolt_color.r, bolt_color.g, bolt_color.b, 0.3 + 0.55 * flash)
+		var core := Color(1.0, 1.0, 1.0, 0.85)
+		draw_polyline(pts, glow, 9.0 + 7.0 * flash, true)
+		draw_polyline(pts, core, 3.5, true)
 
 
 func _set_visible_state(shown: bool) -> void:

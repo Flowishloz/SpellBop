@@ -280,13 +280,20 @@ func _make_info_panel(pos: Vector2, panel_size: Vector2) -> Panel:
 const DOCK_X: Array[float] = [1102.0, 1074.0, 1040.0]
 const DOCK_ROT_DEG: Array[float] = [-50.0, -63.0, -78.0]
 
+## VISUAL fan order: CARD INDEX -> fan slot (0 = top/tucked, 2 = bottom/most
+## exposed). The card-caster SLOTS are unchanged (1 ATTACK / 2 DEFENSE / 3
+## COUNTER, keys 8/9/0); only the on-screen order swaps so DEFENSE (index 1) is
+## anchored at the BOTTOM and COUNTER (index 2) takes the middle (Phase 3, CD).
+const VISUAL_ORDER: Array[int] = [0, 2, 1]
+
 
 func _dock_pos(i: int) -> Vector2:
-	return Vector2(_mx(DOCK_X[i]), 1010.0 + float(i) * 175.0)
+	var v: int = VISUAL_ORDER[i]
+	return Vector2(_mx(DOCK_X[v]), 1010.0 + float(v) * 175.0)
 
 
 func _dock_rot(i: int) -> float:
-	var rot: float = deg_to_rad(DOCK_ROT_DEG[i])
+	var rot: float = deg_to_rad(DOCK_ROT_DEG[VISUAL_ORDER[i]])
 	return -rot if _left else rot
 
 
@@ -346,7 +353,7 @@ func _process(_delta: float) -> void:
 		face.position = _pos[i] - card_size * 0.5
 		face.rotation = _rot[i]
 		face.scale = Vector2.ONE * _scale[i]
-		face.z_index = 10 if _states[i] != CardState.DOCKED else i
+		face.z_index = 10 if _states[i] != CardState.DOCKED else VISUAL_ORDER[i]
 		var expanded_now: bool = _states[i] == CardState.EXPANDED
 		for info in _info_labels[i]:
 			(info as Control).visible = expanded_now
@@ -380,7 +387,7 @@ func _process(_delta: float) -> void:
 		# BLANKET GRADIENT (docked only): bottom card 40% transparent up to
 		# the top card fully opaque (i 0 = top of the fan, i 2 = bottom).
 		if _states[i] == CardState.DOCKED:
-			face.modulate.a *= 1.0 - 0.2 * float(i)
+			face.modulate.a *= 1.0 - 0.2 * float(VISUAL_ORDER[i])
 
 
 # --- state transitions (signal-driven) --------------------------------
@@ -482,17 +489,21 @@ var _held_touch: int = -2   # -2 none, -1 mouse, >=0 finger index
 
 ## Topmost card whose (rotated/scaled) face contains [param pos], or -1.
 func _card_hit(pos: Vector2) -> int:
-	# Reverse order: the bottom card (i=2) sits on top of the fan and pokes out
-	# the most, so it's the natural first grab.
-	for i in range(_cards.size() - 1, -1, -1):
+	# Pick the card drawn ON TOP under the pointer: the highest VISUAL_ORDER
+	# (most-exposed, bottom of the fan) wins when faces overlap.
+	var best: int = -1
+	var best_v: int = -1
+	for i in _cards.size():
 		if not _cards[i].visible:
 			continue
 		var center: Vector2 = _pos[i] + _root_offset
 		var scl: float = maxf(0.01, _scale[i])
 		var local: Vector2 = (pos - center).rotated(-_rot[i]) / scl
 		if absf(local.x) <= card_size.x * 0.5 and absf(local.y) <= card_size.y * 0.5:
-			return i
-	return -1
+			if VISUAL_ORDER[i] > best_v:
+				best_v = VISUAL_ORDER[i]
+				best = i
+	return best
 
 
 func _begin_card(slot: int, index: int) -> void:

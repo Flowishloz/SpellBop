@@ -8,4 +8,5 @@ script = ExtResource("1_hud")
 
 [node name="CastButton" type="Control" parent="."]
 script = ExtResource("3_cast")
-center = Vector2(730, 1690)
+center = Vector2(885, 1695)
+radius = 142.8

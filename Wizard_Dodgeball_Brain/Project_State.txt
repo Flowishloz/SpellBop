@@ -1232,6 +1232,58 @@ VERIFICATION (ALL 13 SUITES PASS, BIT-IDENTICAL DETERMINISM):
 - Determinism stays BIT-IDENTICAL across all suites (no regressions).
 - GitHub backup: https://github.com/Flowishloz/SpellBop.git (main, all code+scenes+tests).
 
+[SPRINT 19 — PHASE 2: CAMERA SYSTEMS (2026-06-14)]
+Presentation-only camera overhaul in scripts/visual/camera_rig.gd. All changes
+are pure PunchOutCameraRig tuning — no sim changes, no graveyard entries. The
+new tests/test_camera_zoom.gd passes; determinism BIT-IDENTICAL (camera is
+visual-only). Phase 2 committed to GitHub https://github.com/Flowishloz/SpellBop.git
+(main).
+
+(1) DEFAULT PERSPECTIVE PULLED BACK 15%:
+- PunchOutCameraRig: NEW @export pullback_factor (default 1.0); _ready() applies
+  this scale to both the camera height (position.y) and depth (position.z),
+  preserving the lateral shoulder offset. At 1.15, the camera sits 15% further
+  back and higher, widening the viewport's vertical sight-lines. All three
+  shoulder positions (base X, left glide, right glide) scale proportionally.
+
+(2) DEFAULT FOV WIDENED 15%:
+- PunchOutCameraRig: NEW @export base_fov_scale (default 1.0); _ready() applies
+  this scale to the script's owned FOV (script now OWNS fov; .tscn keeps the
+  authored value 71 as a neutral baseline, never read by the runtime). At 1.15,
+  the effective FOV becomes 81.65 degrees, widening the horizontal view. The
+  script multiplies base_fov_scale * authored_71 = live FOV.
+
+(3) SMOOTHER CENTRE-LINGERING TRACKING:
+- follow_strength: 0.85 -> 0.55 (slower blend toward player).
+- follow_speed: 8 -> 5.5 (gentler per-frame pan velocity cap).
+- shoulder_swap_threshold: 0.7 -> 1.15 (wider hysteresis band; camera holds its
+  shoulder longer before flipping).
+- shoulder_glide_speed: 2.4 -> 1.5 (slower glide between shoulders when a flip
+  does occur).
+- NEW @export max_yaw_degrees (default 18): hard clamp on the yaw rotation to
+  guard against jarring perspective flips past a sane angle. Asymmetric: base
+  yaw (left shoulder) and its negation (right shoulder) are clamped independently
+  so the camera never yaws beyond ±18 degrees.
+
+(4) DYNAMIC STACK ZOOM (PRESENTATION-ONLY):
+- While the world is time-dilated (Stack window live, Engine.time_scale <
+  stack_zoom_time_threshold: 0.5 default), the camera tightens its FOV to
+  zoom_fov = base_fov * stack_zoom_scale (0.85 = 15% zoom-in). The zoom eases
+  in/out with a wall-clock exponential (zoom_ease_rate: 12 s^-1 default). As the
+  Stack resumes normal speed (Engine.time_scale rises back toward 1.0), the FOV
+  eases back to the base.
+- Implementation: _process polls Engine.time_scale each frame and updates the
+  zoom target; no "on-window-open" lag or stale zoom state survives a window
+  refresh. Fully reversible (Stacks can open/close mid-round without artifact).
+
+VERIFICATION:
+- tests/test_camera_zoom.gd (NEW): boots the arena, asserts default FOV 81.7
+  (= 71 * 1.15), opens a Stack window, FOV tightens to 69.8 (= 81.7 * 0.85),
+  closes the Stack, FOV eases back to 81.6 (float rounding within 1 unit).
+  Determinism unaffected — the camera state is never sampled into sim dicts.
+- Screenshot probe confirms the zoomed framing during slow-mo.
+- All 13 original + 1 new headless suites pass; determinism BIT-IDENTICAL.
+
 ===========================================================
 NOTES
 ===========================================================
