@@ -841,6 +841,15 @@ func _enter_netplay() -> void:
 			vb.view_flip_z = true
 		if _camera != null and _camera.has_method(&"set_follow_target") and _opponent != null:
 			_camera.set_follow_target(_opponent.get_node_or_null(^"WizardRig") as Node3D)
+		# HUD: the client's wizard is the Opponent, so swap which health bar reads
+		# as "yours" — the corner bar mirrors the Opponent (own), the floating bar
+		# mirrors the Player (foe) and hovers over the far blue wizard.
+		var hud: Node = get_node_or_null(^"MatchHUD")
+		if hud != null and hud.has_method(&"set_perspective_flipped") and _player != null and _opponent != null:
+			hud.set_perspective_flipped(
+					_opponent.get_node_or_null(^"Health"),
+					_player.get_node_or_null(^"Health"),
+					_player.get_node_or_null(^"WizardRig") as Node3D)
 	var mine: String = "Player (blue, near)" if (_player != null and _player.is_multiplayer_authority()) else "Opponent (red, far)"
 	print("[NETPLAY] peer uid=%d (host=%s) controls the %s wizard" % [my_id, str(is_host), mine])
 	# Kick the deterministic handshake.

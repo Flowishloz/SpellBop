@@ -181,3 +181,28 @@ func _on_foe_health_changed(current: int, max_health: int) -> void:
 	for i in _foe_cells.size():
 		_foe_cells[i].color = Color(0.2, 0.08, 0.06, 0.7) if i < lost else foe_filled_color
 	_foe_vel += Vector2(0, -160.0)
+
+
+## NETPLAY (Sprint 21): on the CLIENT the local wizard is the Opponent, so swap
+## which HealthComponent each bar reads — the CORNER bar shows the client's OWN
+## (Opponent) health, the FLOATING bar shows the FOE (Player) and hovers over the
+## far Player rig. Re-binds the signals + refreshes; the cells already match (both
+## wizards share the same max_health). Presentation only.
+func set_perspective_flipped(own_health: Node, foe_health: Node, foe_rig: Node3D) -> void:
+	# Corner (own) bar: re-point from the original Player health to the Opponent.
+	var cur: Node = get_node_or_null(health_path)
+	if cur != null and cur.health_changed.is_connected(_on_health_changed):
+		cur.health_changed.disconnect(_on_health_changed)
+	if own_health != null:
+		own_health.health_changed.connect(_on_health_changed)
+		_on_health_changed(own_health.get_health(), own_health.max_health)
+	# Floating (foe) bar: re-point from the original Opponent health to the Player.
+	var cur_foe: Node = get_node_or_null(opponent_health_path)
+	if cur_foe != null and cur_foe.health_changed.is_connected(_on_foe_health_changed):
+		cur_foe.health_changed.disconnect(_on_foe_health_changed)
+	if foe_health != null:
+		foe_health.health_changed.connect(_on_foe_health_changed)
+		_on_foe_health_changed(foe_health.get_health(), foe_health.max_health)
+	# Hover the foe bar over the far (Player) rig.
+	if foe_rig != null:
+		_foe_rig = foe_rig
