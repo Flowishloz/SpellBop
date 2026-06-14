@@ -64,7 +64,9 @@ signal knockout_began(is_match_end: bool, player_won: bool)
 @export var card_cast_trauma: float = 0.3
 @export var player_hit_trauma: float = 0.5
 @export var opponent_hit_trauma: float = 0.25
-@export var capture_release_trauma: float = 0.55
+## Camera trauma SLAM when a shield flings a captured ball back. Sprint 20 round-4:
+## raised 0.55 -> 0.9 to exaggerate the reflect release (Creative Director).
+@export var capture_release_trauma: float = 0.9
 
 ## PHASE 5 (Creative Director): amplify the FIRING impact — every projectile spawn
 ## adds 20% more camera trauma than its base cast/card value.
@@ -77,22 +79,6 @@ signal knockout_began(is_match_end: bool, player_won: bool)
 ## Extra one-shot trauma KICK the instant a new gauge banks, scaled by the gauge
 ## number (gauge 1 = 1x, 2 = 2x, 3 = 3x of this) — a sharp "pop" per fill.
 @export var charge_pop_trauma: float = 0.1
-
-## STACK RESOLUTION (Phase 1, Creative Director): when the countdown ends the
-## staged spells resolve LIFO one at a time, holding slow-mo, with this REAL-time
-## gap between each release. Normal speed resumes only after the FINAL spell.
-## Sprint 20 (round 2): raised to 0.85 s — at the resolve_time_scale slow-mo each
-## released spell must visibly CROSS a chunk of the court before the next launches,
-## or the staggered releases still cluster near the spawn and read as simultaneous
-## (the Creative Director's "they all resolve at the same time"). 0.85 s at 0.35
-## dilation ≈ 0.30 s of sim travel — a fast bolt clears ~hundreds of units.
-@export var stagger_delay_seconds: float = 0.85
-
-## A beat after the FINAL spell resolves before normal speed resumes. Sprint 20
-## (round 2): raised 0.12 -> 0.55 so the LAST released spell also gets a slow-mo
-## moment to travel before speed snaps back — otherwise the final spell launched
-## and immediately resumed, bunching it with the prior one.
-@export var post_resolve_delay_seconds: float = 0.55
 
 ## STACK WINNER REWARD: the player who placed the NEWEST spell on the stack (last
 ## responder, always) gets this launch-speed multiplier on their NEXT projectile.
@@ -121,15 +107,25 @@ signal knockout_began(is_match_end: bool, player_won: bool)
 ## post-game overlay waits death_sequence_seconds while it all plays.
 @export_range(0.05, 1.0) var death_time_scale: float = 0.3
 @export var death_sequence_seconds: float = 2.5
-## KNOCKOUT ZOOM by outcome (Sprint 20, Creative Director): the death cam's FOV
-## multiplier — a tighter zoom celebrating a WIN (35% zoom-in = 0.65), a gentler
-## one on a LOSS (20% zoom-in = 0.80). Lower = closer.
-@export_range(0.1, 1.0) var death_zoom_scale_win: float = 0.65
-@export_range(0.1, 1.0) var death_zoom_scale_lose: float = 0.8
+## KNOCKOUT DOLLY TIGHTNESS by outcome (Creative Director): the death-cam dolly's
+## END distance scale — a TIGHTER push-in celebrating a WIN (0.65), a gentler one
+## on a LOSS (0.80). Lower = the dolly ends closer to the eliminated wizard.
+@export_range(0.1, 1.5) var death_zoom_scale_win: float = 0.65
+@export_range(0.1, 1.5) var death_zoom_scale_lose: float = 0.8
 ## Peak UV displacement of the death screen-ripple (retro_lens ripple_strength).
 @export var death_ripple_strength: float = 0.05
 ## SCALED seconds for the ripple ring to fully expand (slows with the dilation).
 @export var death_ripple_seconds: float = 0.7
+
+@export_group("Shield & Emerald FX")
+## SHIELD REFLECT DRAMA (Sprint 20 round-4, Creative Director): when a barrier
+## CATCHES a fireball it becomes a slow-mo ANTICIPATION beat — the world dilates to
+## this scale for the capture-hold so the Window-of-Affect reflect is clearly
+## visible, with a screen ripple and a heavy release slam. 1.0 disables the slow-mo.
+@export_range(0.05, 1.0) var shield_capture_time_scale: float = 0.4
+## Peak UV displacement of the shield-contact and emerald screen ripples.
+@export var shield_ripple_strength: float = 0.045
+@export var emerald_ripple_strength: float = 0.04
 
 var match_state: MatchState = MatchState.ROUND_ACTIVE
 var round_number: int = 1
@@ -173,6 +169,9 @@ var _lens_mat: ShaderMaterial = null
 var _ripple_active: bool = false
 var _ripple_progress: float = 0.0
 var _in_death_sequence: bool = false
+# True while a shield capture-hold is dilating time (so capture_released knows to
+# resume). Guards against resuming when the slow-mo wasn't ours to begin with.
+var _shield_slowmo_active: bool = false
 
 # Tracks the window's open state so the tape-slow cue plays only on the
 # NORMAL -> WINDOW transition, not on every counter-slap refresh.
@@ -402,8 +401,15 @@ func _spawn_emerald() -> void:
 		em.seed_drift(_next_emerald_rng())
 	if em.has_method(&"emit_position"):
 		em.emit_position()
+	if em.has_signal(&"claimed"):
+		em.claimed.connect(_on_emerald_claimed)
 	_emerald = em
 	_emeralds_spawned_this_match += 1
+
+
+## The emerald was struck (a life granted): fire the screen ripple from its point.
+func _on_emerald_claimed(world_pos: Vector3) -> void:
+	_trigger_ripple(world_pos, emerald_ripple_strength)
 
 
 ## Whole ticks until the next emerald (emerald_min..max seconds), from the LCG.
@@ -456,10 +462,12 @@ func _on_spell_staged(_card: CardResource, caster: Node) -> void:
 		Sfx.play(&"tape_slow")
 
 
-## The countdown expired: resolve the stack LIFO — the newest slap (the
-## counter) releases first, then the spell it answered. NETPLAY NOTE: the
-## release originates from the wall-clock window today; it becomes a
-## tick-counted event with the rollback sprint.
+## The countdown expired: resolve the stack. SIMULTANEOUS RESOLUTION (Creative
+## Director playtest preference — reverting the Sprint-20 one-at-a-time stagger):
+## ALL staged spells fire AT ONCE, then normal speed resumes. The release order
+## stays LIFO (newest first) only so a counter is loosed just before the spell it
+## answered within the same frame. NETPLAY NOTE: the release originates from the
+## wall-clock window today; it becomes a tick-counted event with the rollback sprint.
 func _on_stack_closed() -> void:
 	_window_open_flag = false
 	if match_state != MatchState.ROUND_ACTIVE:
@@ -469,41 +477,18 @@ func _on_stack_closed() -> void:
 		return
 	# WINNER (last-responder-always, Creative Director): the player who placed the
 	# NEWEST spell on the stack wins it. Captured BEFORE clearing; the +50%
-	# next-throw reward is granted AFTER the stack fully resolves so it lands on
-	# their NEXT throw, not the spell currently resolving.
+	# next-throw reward is granted AFTER the stack resolves so it lands on their
+	# NEXT throw, not a spell currently resolving.
 	_stack_winner = _winning_wizard()
 	var entries: Array[Node] = _stack_entries.duplicate()
 	_stack_entries.clear()
-	entries.reverse()  # newest-first == LIFO
-	_resolve_stack_entry(entries, 0)
-
-
-## Releases one staged spell, then schedules the next after stagger_delay_seconds
-## of REAL time — the dilation HOLDS, so the world stays in slow-mo between
-## releases. After the last, resumes normal speed and rewards the stack winner.
-## NETPLAY NOTE: this wall-clock stagger becomes tick-counted with the rollback
-## sprint (same seam as the window timer).
-func _resolve_stack_entry(entries: Array, index: int) -> void:
-	if match_state != MatchState.ROUND_ACTIVE:
-		# Round ended mid-resolution (a KO): stop releasing, snap speed back.
-		if _stack != null:
-			_stack.resume_speed()
-		_stack_winner = null
-		return
-	if index >= entries.size():
-		# Whole stack resolved: resume normal speed, THEN reward the winner.
-		if _stack != null:
-			_stack.resume_speed()
-		_award_stack_winner()
-		return
-	var caster: Node = entries[index]
-	if is_instance_valid(caster) and caster.has_method(&"release_staged"):
-		caster.release_staged()
-	# A crisp 0.2 s gap BETWEEN spells; only a short beat after the LAST one so the
-	# slow-mo doesn't linger before the resume (Phase 5). ignore_time_scale = true.
-	var delay: float = stagger_delay_seconds if index < entries.size() - 1 else post_resolve_delay_seconds
-	var timer: SceneTreeTimer = get_tree().create_timer(delay, true, false, true)
-	timer.timeout.connect(_resolve_stack_entry.bind(entries, index + 1))
+	entries.reverse()  # newest-first == LIFO (same-frame fire order)
+	for caster in entries:
+		if is_instance_valid(caster) and caster.has_method(&"release_staged"):
+			caster.release_staged()
+	if _stack != null:
+		_stack.resume_speed()
+	_award_stack_winner()
 
 
 ## Grants the captured stack winner a one-shot speed boost on its NEXT fired
@@ -545,9 +530,12 @@ func _on_spell_cast(projectile: Node, spell: SpellResource) -> void:
 			trauma += spell.screen_shake_intensity
 		# Phase 5: amplify the FIRING impact by 20% on every projectile spawn.
 		_camera.add_trauma(trauma * fire_shake_multiplier)
-	# A deployed barrier's capture drama: rumble builds during the hold
-	# (Lethal-Company anticipation), slam on release.
+	# A deployed barrier's capture drama: the catch drops the world into slow-mo
+	# (the WOA anticipation, now clearly visible), rumble builds through the hold,
+	# and a heavy slam + a screen ripple punctuate the release.
 	if projectile != null and projectile.has_signal(&"capture_charging"):
+		if projectile.has_signal(&"capture_started"):
+			projectile.capture_started.connect(_on_capture_started.bind(projectile))
 		projectile.capture_charging.connect(_on_capture_charging)
 		projectile.capture_released.connect(_on_capture_released)
 	# Resolution SFX by effect type (placeholder set — see AUDIO_GUIDE.md).
@@ -561,12 +549,36 @@ func _on_spell_cast(projectile: Node, spell: SpellResource) -> void:
 		Sfx.play(&"cast_fireball")
 
 
+## A shield CAUGHT a ball: drop into slow-mo for the anticipation hold (so the WOA
+## reflect is clearly visible) and fire a screen ripple from the wall. Skipped if
+## a death beat owns the dilation, or already dilated (a stack window).
+func _on_capture_started(barrier: Node) -> void:
+	if _in_death_sequence:
+		return
+	if _stack != null and _stack.state == _stack.State.STACK_WINDOW:
+		return
+	if _stack != null and shield_capture_time_scale < 0.999:
+		_stack.hold_dilation(shield_capture_time_scale)
+		_shield_slowmo_active = true
+	# Screen ripple at the wall (the point of contact).
+	if barrier != null:
+		var visual: Node3D = barrier.get_node_or_null(^"Visual") as Node3D
+		if visual != null:
+			_trigger_ripple(visual.global_position + Vector3(0.0, 0.3, 0.0), shield_ripple_strength)
+
+
 func _on_capture_charging(progress: float) -> void:
 	if _camera != null:
-		_camera.set_rumble(lerpf(0.15, 0.55, clampf(progress, 0.0, 1.0)))
+		# Sprint 20 round-4: a harder rumble builds through the hold (0.3 -> 0.9).
+		_camera.set_rumble(lerpf(0.3, 0.9, clampf(progress, 0.0, 1.0)))
 
 
 func _on_capture_released() -> void:
+	# Resume normal speed if the shield slow-mo was ours (not during a death beat).
+	if _shield_slowmo_active:
+		_shield_slowmo_active = false
+		if _stack != null and not _in_death_sequence:
+			_stack.resume_speed()
 	if _camera != null:
 		_camera.set_rumble(0.0)
 		_camera.add_trauma(capture_release_trauma)
@@ -706,9 +718,13 @@ func _begin_death_sequence(ko_was_player: bool, match_over: bool, player_won_rou
 			_camera.begin_death_cam(sprite if sprite != null else rig, zoom)
 
 	# Screen-space shockwave from the point of contact.
-	_trigger_death_ripple(dying)
+	if dying != null:
+		var dying_rig: Node3D = dying.get_node_or_null(^"WizardRig") as Node3D
+		if dying_rig != null:
+			_trigger_ripple(dying_rig.global_position + Vector3(0.0, 1.0, 0.0), death_ripple_strength)
 
-	# VICTORY/DEFEAT verdict heading (the overlay shows it only on a match end).
+	# VICTORY/DEFEAT verdict heading — emitted in the SAME frame the death cam
+	# begins so the banner and the dolly zoom start together (Creative Director).
 	knockout_began.emit(match_over, player_won_round)
 
 	# The result overlay waits out the death beat (wall-clock, dilation-immune).
@@ -736,20 +752,18 @@ func _finish_death_sequence(match_over: bool, player_won_round: bool) -> void:
 		Sfx.play(&"round_win" if player_won_round else &"round_lose")
 
 
-## Fires the retro-lens screen ripple from the eliminated wizard's on-screen point.
-func _trigger_death_ripple(dying: Node) -> void:
-	if _lens_mat == null or _camera == null or dying == null:
+## Fires the retro-lens screen ripple (the displacement shockwave) from a WORLD
+## point — reused by the knockout, a shield catching a fireball, and the emerald
+## being struck. [param strength] is the peak UV displacement.
+func _trigger_ripple(world_pos: Vector3, strength: float) -> void:
+	if _lens_mat == null or _camera == null:
 		return
-	var rig: Node3D = dying.get_node_or_null(^"WizardRig") as Node3D
-	if rig == null:
-		return
-	var world: Vector3 = rig.global_position + Vector3(0.0, 1.0, 0.0)
-	var screen_px: Vector2 = _camera.unproject_position(world)
+	var screen_px: Vector2 = _camera.unproject_position(world_pos)
 	var vp: Vector2 = get_viewport().get_visible_rect().size
 	if vp.x <= 0.0 or vp.y <= 0.0:
 		return
 	_lens_mat.set_shader_parameter(&"ripple_center", Vector2(screen_px.x / vp.x, screen_px.y / vp.y))
-	_lens_mat.set_shader_parameter(&"ripple_strength", death_ripple_strength)
+	_lens_mat.set_shader_parameter(&"ripple_strength", strength)
 	_ripple_progress = 0.0
 	_ripple_active = true
 

@@ -28,9 +28,9 @@ func _run() -> void:
 	root.add_child(arena)
 	for i in 40:
 		await process_frame
-	# KO the PLAYER: the player LOSES -> DEFEAT heading + the 20% (gentler) zoom.
+	# KO the PLAYER: the player LOSES -> DEFEAT heading + the gentler dolly zoom.
 	arena.get_node("Player/Health").apply_damage(5)
-	await _wait(0.9)
+	await _wait(1.8)
 	root.get_texture().get_image().save_png("res://tests/_screenshot_s20_death_lose.png")
 	print("PROBE: saved _screenshot_s20_death_lose.png")
 	quit(0)

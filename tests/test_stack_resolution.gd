@@ -1,10 +1,10 @@
 ## test_stack_resolution.gd — Phase 1 stack-resolution rules (headless).
 ##
 ## Boots the REAL match arena and drives the player with a scripted brain to
-## prove the two new rules:
-##   STAGGER — two spells on the stack resolve ONE AT A TIME, ~0.2 s apart (not
-##             all in one frame), and the world stays dilated until the last
-##             spell, THEN speed ramps back to 1.0.
+## prove the two rules:
+##   SIMULTANEOUS — both spells on the stack resolve in the SAME frame when the
+##             window closes (Creative Director playtest preference), and the
+##             stack display clears the whole pile together; speed then resumes.
 ##   WINNER  — the player who placed the NEWEST spell on the stack (last
 ##             responder, always) gets a 1.5x speed boost on their NEXT throw.
 ##
@@ -104,35 +104,22 @@ func _run() -> void:
 
 	# The shared 0.9 s window (from the attack) expires -> staggered resolution.
 	var t_first: int = await _await_count(projectiles, 1, 4000)
-	# THE STACK DISPLAY must peel ONE card on the first resolution (MTG-Arena
-	# style), not fly the whole pile away at once — the real cause of the
-	# "resolves simultaneously" report. Sampled the instant the 1st spell fires.
-	var stack_hud: Node = arena.get_node_or_null("StackDisplayHUD")
-	if stack_hud != null:
-		var leaving: int = 0
-		var staying: int = 0
-		for e in stack_hud._entries:
-			if e["leaving"]:
-				leaving += 1
-			else:
-				staying += 1
-		_ck(leaving == 1 and staying >= 1,
-			"stack DISPLAY peeled ONE card on the first resolution (leaving=%d, staying=%d) — not all at once" % [leaving, staying])
 	var t_second: int = await _await_count(projectiles, 2, 4000)
 	_ck(t_first > 0, "first staged spell resolved")
 	_ck(t_second > 0, "second staged spell resolved (both came off the stack)")
 	if t_first > 0 and t_second > 0:
+		# SIMULTANEOUS RESOLUTION (Creative Director playtest preference): both
+		# staged spells fire in the same frame when the window closes, not staggered.
 		var gap_ms: int = t_second - t_first
-		_ck(gap_ms >= 120, "spells resolved ONE AT A TIME (gap %d ms >= 120, not simultaneous)" % gap_ms)
-		# VISIBLE SEPARATION (round-2 fix): timing alone isn't enough — at the
-		# resolve slow-mo the FIRST spell must already be well down-court when the
-		# SECOND launches, or they cluster near the spawn and read as simultaneous.
-		if projectiles.get_child_count() >= 2:
-			var p0: SGFixedVector2 = projectiles.get_child(0).get_global_fixed_position()
-			var p1: SGFixedVector2 = projectiles.get_child(1).get_global_fixed_position()
-			var gap_units: float = absi(p0.y - p1.y) / 65536.0
-			_ck(gap_units > 200.0,
-				"first spell %.0f units down-court when the second launches (>200 = visibly separated)" % gap_units)
+		_ck(gap_ms < 100, "spells resolved SIMULTANEOUSLY (gap %d ms < 100 — all at once)" % gap_ms)
+	# THE STACK DISPLAY clears the WHOLE pile together (no per-card peel).
+	var stack_hud: Node = arena.get_node_or_null("StackDisplayHUD")
+	if stack_hud != null:
+		var staying: int = 0
+		for e in stack_hud._entries:
+			if not e["leaving"]:
+				staying += 1
+		_ck(staying == 0, "stack DISPLAY cleared ALL cards together (%d still on the pile)" % staying)
 
 	# WINNER = last responder = the COUNTER (slot 3), the player's -> the player
 	# banks a 1.5x boost on its NEXT throw. Granted AFTER the stack fully resolves

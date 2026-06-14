@@ -1686,3 +1686,96 @@ All 18 headless test suites pass with BIT-IDENTICAL determinism. New suite: test
   home it) so its width is an asset, not a way to whiff past the target.
 
 ALL 18 SUITES PASS, DETERMINISM BIT-IDENTICAL. GitHub backup updated.
+
+[SPRINT 20 ROUND-4 (2026-06-14)]
+Creative Director playtest follow-ups: five major changes following another creative-director playtest session.
+All 18 headless test suites pass with BIT-IDENTICAL determinism; screenshots confirm new visuals.
+A brand-new global class_name (HeartPopFX) required a one-off project re-import to register in the class cache.
+
+(1) STACK RESOLUTION REVERTED TO SIMULTANEOUS:
+- CREATIVE DIRECTIVE: "I want to see all spells resolve AT ONCE" — the staggered one-at-a-time
+  resolution playtest felt WRONG to the director. The month-long one-at-a-time sprint is ROLLED BACK.
+- CHANGE: MatchController._on_stack_closed now releases ALL staged spells in one frame (LIFO order
+  only for same-frame counter-before-attack: counters release first, then attacks, both in the same
+  frame), then resume_speed() (no staggered dilation resume). Removed: the entire staggered
+  _resolve_stack_entry recursion, stagger_delay_seconds and post_resolve_delay_seconds exports,
+  the_stack.resolve_time_scale, and _expire_window's time dilation step.
+- DISPLAY: stack_display_hud._on_stack_closed now flies the WHOLE card pile away together again
+  (the per-card card_cast peel was removed; _on_card_resolved callback deleted).
+- VERIFICATION: tests/test_stack_resolution.gd rewritten to assert SIMULTANEOUS resolution:
+  both projectiles spawn <100 ms apart, the display clears all cards together (no piecemeal peeling).
+- CODEBOOK NOTE: the per-slot cooldown (cooldown_time starting at staging) still prevents true
+  duplicate stacks on the same player — two fireballs can slap together, but identical cards cannot
+  stage from one caster in rapid succession (SprintBranch Sprint 7 rule).
+
+(2) SHIELD REFLECT DRAMA (SLOW-MO ANTICIPATION BEAT):
+- CREATIVE DIRECTIVE: "Sometimes I don't see it" — the Window-of-Affect reflect is so fast the
+  director doesn't perceive it. Solution: drop into slow-mo when the barrier CATCHES a fireball,
+  so the reflect charge and release are always visible.
+- CHANGE: On BarrierController.capture_started signal, MatchController drops the world to
+  shield_capture_time_scale (0.4, 40% speed) for the hold and resumes on release (guarded against
+  the death beat and an open stack window, so KO edges and stack window don't stutter).
+  BarrierController.min_capture_ticks raised to 24 (0.4 s) so even a low-WOA early block holds
+  visibly. CardResource basic_defense.tres: woa_max_hold_seconds raised 0.6 -> 1.1 (longer charge
+  window for a last-second block).
+- RUMBLE HARDENING: the capture rumble was amplified (0.3 -> 0.9 across the hold, per
+  BarrierController._capture_trauma_scale) and the release slam raised (capture_release_trauma
+  0.55 -> 0.9, a larger impact jolt at reflect).
+- VERIFICATION: Manual playtest confirms the slow-mo hold is perceptually clear; determinism
+  unaffected (slow-mo is presentation-only, ignore_time_scale guards the sim).
+
+(3) SCREEN RIPPLE REUSED (IMPACT FEEDBACK):
+- The knockout's retro-lens displacement shockwave (MatchController._trigger_ripple, a generalized
+  screen-space ripple effect) is now called from THREE events:
+  * Knockout: at the fallen wizard's death world position (existing).
+  * Shield catch: at the barrier's wall face (new, shield_ripple_strength export).
+  * Emerald struck: at the gem's world position (new, emerald_ripple_strength export).
+- CHANGE: _trigger_ripple(world_point, strength) is now parameterized (was hardcoded to the death
+  position). The emerald emits a new claimed(world_pos: Vector3) signal; MatchController connects
+  it at spawn (in _try_spawn_emerald) to fire the ripple. Barrier calls _trigger_ripple on
+  capture_started. All calls are signal-driven, so timing is robust.
+- VERIFICATION: Determinism unaffected (ripple is visual-only, no sim state change). Three ripple
+  events confirmed by screenshots.
+
+(4) HEART-POP EMERALD CUE (NEW VISUAL FEEDBACK):
+- CREATIVE DIRECTIVE: a clear "you gained a life" visual cue. Solution: a red HEART pops out of
+  the emerald when struck, arcs up, and falls under gravity.
+- NEW SCRIPT: scripts/visual/heart_pop_fx.gd (class_name HeartPopFX) — a one-shot FX spawned by
+  EmeraldController._grant_heal. The heart is a shared static mesh/material (two emissive red lobes
+  over a downward cone, built procedurally at _ready as a CompositeMesh). On spawn the heart pops
+  vertically at +400 u/s, falls under -1200 u/s^2 gravity (simulated in _process), and DESPAWNS
+  the instant it touches y=0 (the floor plane).
+- PLACEMENT: spawned from the gem position at the instant of claimed().
+- VERIFICATION: Screenshot confirms the heart pop visual above the emerald; all 18 suites pass.
+- NOTE: the new class_name required a one-off `godot --headless --import` after the script was
+  added, so the global class cache registered HeartPopFX before headless -s suites ran (see graveyard
+  entry for the class_name cache rule).
+
+(5) KNOCKOUT CAMERA: DOLLY ZOOM (NO CUT):
+- (a) VERDICT BANNER TIMING: the VICTORY/DEFEAT verdict banner (match_flow_overlay.gd) is now
+  emitted in the SAME frame the death cam begins (MatchController._begin_death_sequence), so the
+  banner fade-in and the camera motion start together (no banner appearing mid-zoom).
+- (b) DOLLY ZOOM REPLACES FOV CUT: the abrupt flat 50% zoom (death_zoom_scale) is replaced by a
+  smooth sports-broadcast dolly zoom in camera_rig.gd:
+  * The camera glides PHYSICALLY IN from its current position over dolly_seconds (1.5 s, smoothstep
+    ease) while the FOV WIDENS toward dolly_fov_widen (1.15, a 15% FOV expansion).
+  * The push-in and FOV-widening create a vertigo-pan effect (perspective compression).
+  * The camera tracks the sprite via look_at (no hard rotation cut).
+  * The motion is outcome-based tightness:
+    - WIN: tighter end-framing (dolly_distance_scale 0.65 repurposed as end-distance, closer shot).
+    - LOSS: gentler framing (dolly_distance_scale 0.80, less aggressive).
+- EXPORT CHANGE: the old death_zoom_scale_win/lose are repurposed as dolly_distance_scale_win/lose
+  (still 0.65 / 0.80). The dolly motion is smooth, no snaps, no cuts.
+- VERIFICATION: Tests/test_death_sequence.gd (existing) still passes; win/loss dolly-zoom framings
+  confirmed by pixel-perfect screenshots.
+
+SUMMARY:
+All 18 headless suites pass, determinism BIT-IDENTICAL. The stack resolution is now back to
+simultaneous release (as intended by the Creative Director). The shield catch has a dramatic
+slow-mo hold that makes the WOA reflect always perceptible. The emerald gain is marked by a
+heart-pop animation. The knockout camera is a smooth dolly zoom with no cuts. Screen ripple
+feedback is now reused across three impact events. GitHub backup updated. Project ready for
+the next phase.
+
+NOTE: the new HeartPopFX global class_name required a one-off --import pass to register in
+the Godot class cache; see the graveyard entry for the full rule.

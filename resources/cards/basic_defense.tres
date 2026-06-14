@@ -13,3 +13,4 @@ barrier_scene = ExtResource("2_wall")
 display_name = "Gaea's Wall"
 is_card = true
 cast_time = 0.0
+woa_max_hold_seconds = 1.1

@@ -47,6 +47,13 @@ signal capture_released
 ## When false, the local tick driver idles (rollback SyncManager later).
 @export var local_tick_driver_enabled: bool = true
 
+## MINIMUM capture-hold (Sprint 20 round-4, Creative Director): even a low-WOA
+## early block holds the ball on the wall at least this many ticks, so the reflect
+## ANTICIPATION beat is ALWAYS visible (it ran instantly for early blocks before —
+## "sometimes I don't see it working"). 24 = 0.4 s of sim, stretched by the shield
+## slow-mo into a clear, dramatic charge-up.
+@export var min_capture_ticks: int = 24
+
 ## Visual rig (a Node3D holding the wall mesh). The barrier positions it from
 ## the sim ONCE at deploy (and per tick when drifting) — barriers have no
 ## VisualBridge because they have no movement component to signal from.
@@ -209,7 +216,7 @@ func _try_capture() -> void:
 		var vel: SGFixedVector2 = SGFixed.vector2(child.get_velocity_x(), child.get_velocity_y())
 		_captured_speed_fp = vel.length()
 		_captured_ball = child
-		_capture_remaining = maxi(1, _hold_ticks)
+		_capture_remaining = maxi(min_capture_ticks, _hold_ticks)
 		_woa_armed = false  # one capture per barrier
 		child.launch(0, 0, SGFixed.ONE)
 		# INTERCEPT FX (pure visual): shield-colored shards FLATTEN against

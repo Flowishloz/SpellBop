@@ -23,6 +23,10 @@ extends SGCharacterBody2D
 ## points at this body, "..").
 signal state_updated(fixed_x: int, fixed_y: int)
 
+## Emitted (with a WORLD position) the instant a projectile strikes the emerald —
+## the arena listens to fire the screen ripple from the point of contact.
+signal claimed(world_pos: Vector3)
+
 ## Lives granted to the wizard whose projectile strikes the emerald.
 @export var heal_amount: int = 1
 
@@ -215,8 +219,13 @@ func _grant_heal(projectile: Node) -> void:
 		thrower.apply_heal(heal_amount)
 	var visual: Node3D = get_node_or_null(visual_root_path) as Node3D
 	if visual != null:
-		BurstFX.spawn(get_parent(), visual.global_position + Vector3(0, hover_height * 0.5, 0),
+		var burst_pos: Vector3 = visual.global_position + Vector3(0, hover_height * 0.5, 0)
+		BurstFX.spawn(get_parent(), burst_pos,
 				Vector3.UP, Color(0.35, 1.0, 0.55, 0.95), 36, 3.4, 0.08, 150.0)
+		# A HEART pops up out of the gem and falls — the "you gained a life" cue.
+		HeartPopFX.spawn(get_parent(), visual.global_position + Vector3(0, hover_height, 0))
+		# Notify the arena so it can fire the screen ripple from the point of contact.
+		claimed.emit(burst_pos)
 	Sfx.play(&"heal")
 	if is_instance_valid(projectile):
 		projectile.queue_free()

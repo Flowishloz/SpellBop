@@ -31,8 +31,8 @@ func _run() -> void:
 		await process_frame
 	# KO the OPPONENT: the player WINS -> VICTORY heading + the opponent is flung.
 	arena.get_node("Opponent/Health").apply_damage(5)
-	# Grab it ~0.9 s into the slow-mo beat (fling + explosion + death cam + verdict).
-	await _wait(0.9)
+	# Grab it ~1.8 s in — after the 1.5 s dolly zoom has settled on the sprite.
+	await _wait(1.8)
 	root.get_texture().get_image().save_png("res://tests/_screenshot_s20_death.png")
 	print("PROBE: saved _screenshot_s20_death.png")
 	quit(0)

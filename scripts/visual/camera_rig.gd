@@ -98,15 +98,19 @@ extends Camera3D
 @export var shake_frequency: float = 16.0
 
 @export_group("Death Cam")
-## DEATH CAM (Sprint 20, Creative Director): on a KO the camera zooms onto the
-## eliminated wizard's sprite and TRACKS it as it's flung off the arena, so the
-## death animation is the focal point. FOV scales by death_zoom_scale (0.5 = zoom
-## in ~50%); the camera eases to a point death_cam_distance/height from the sprite
-## and looks straight at it. MatchController drives begin/end_death_cam().
-@export var death_zoom_scale: float = 0.5
-@export var death_cam_distance: float = 4.6   # metres back from the sprite
+## DEATH CAM (Sprint 20 round-4, Creative Director): on a KO the camera does a
+## smooth DOLLY ZOOM onto the eliminated wizard's sprite — a sports-broadcast
+## vertigo: it physically DOLLIES IN (from wherever it was, to a close framing)
+## while the FOV WIDENS, warping the perspective, and tracks the sprite via
+## look_at. NOT an abrupt cut. MatchController drives begin/end_death_cam(tightness).
+## tightness = the END distance scale (lower = closer = a tighter shot on a win).
+@export var death_cam_distance: float = 4.6   # base end distance from the sprite
 @export var death_cam_height: float = 1.7     # metres above the sprite
-@export var death_cam_speed: float = 6.0      # ease rate into the death framing
+## Wall-clock seconds the dolly takes to glide fully in (smooth, deliberate).
+@export var dolly_seconds: float = 1.5
+## FOV widen factor at the end of the dolly (the vertigo warp). 1.0 = no warp.
+## Kept modest so the physical dolly-in still nets a ZOOM-IN on both outcomes.
+@export var dolly_fov_widen: float = 1.15
 
 # TRAUMA MODEL (pure visual): bursts (add_trauma) decay over real time;
 # rumble (set_rumble) is a sustained floor held by whoever sets it (the
@@ -124,10 +128,14 @@ var _follow_x: float = 0.0
 var _base_fov: float = 75.0
 var _fov_zoom: float = 1.0
 
-# DEATH CAM (Sprint 20): the eliminated wizard's sprite to frame, or null, plus
-# the per-knockout FOV zoom factor (the caller picks it by win/lose outcome).
+# DEATH CAM (Sprint 20): the eliminated wizard's sprite to frame (or null), the
+# per-knockout end-distance tightness, and the start framing + wall-clock start
+# captured so the dolly glides from wherever the camera was (no abrupt cut).
 var _death_target: Node3D = null
-var _death_zoom: float = 0.5
+var _death_tightness: float = 0.7
+var _death_start_pos: Vector3 = Vector3.ZERO
+var _death_start_fov: float = 75.0
+var _death_start_msec: int = 0
 
 
 # Right-shoulder reference values captured at _ready (the dynamic swap and
@@ -183,13 +191,16 @@ func set_rumble(strength: float) -> void:
 	_rumble = clampf(strength, 0.0, 1.0) if shake_enabled else 0.0
 
 
-## DEATH CAM start: frame [param sprite] (the eliminated wizard's Sprite3D) — the
-## camera zooms to [param zoom_scale] × the base FOV and tracks it until
-## end_death_cam(). The caller picks zoom_scale by outcome (a tighter zoom on a
-## win, a gentler one on a loss). Pure presentation.
-func begin_death_cam(sprite: Node3D, zoom_scale: float = 0.5) -> void:
+## DEATH CAM start: dolly-zoom onto [param sprite] (the eliminated wizard's
+## Sprite3D), tracking it until end_death_cam(). [param tightness] is the end
+## distance scale (lower = closer; the caller picks it by outcome — tighter on a
+## win). The dolly glides from the camera's CURRENT framing, so there is no cut.
+func begin_death_cam(sprite: Node3D, tightness: float = 0.7) -> void:
 	_death_target = sprite
-	_death_zoom = clampf(zoom_scale, 0.05, 1.0)
+	_death_tightness = clampf(tightness, 0.2, 1.5)
+	_death_start_pos = global_position
+	_death_start_fov = fov
+	_death_start_msec = Time.get_ticks_msec()
 
 
 ## DEATH CAM end: release the framing; the normal follow/zoom eases back in.
@@ -264,13 +275,20 @@ func _process(delta: float) -> void:
 ## eliminated wizard's sprite, zoom the FOV in, and look straight at it so the
 ## knockout animation is the focal point. Driven on the WALL clock (real_delta) so
 ## the framing keeps gliding even though the world is in death slow-mo.
-func _update_death_cam(dt: float) -> void:
+func _update_death_cam(_dt: float) -> void:
 	var sp: Vector3 = _death_target.global_position
-	# Frame from the camera's own baseline side, pulled in close to the sprite.
+	# Smooth, deliberate dolly progress on the WALL clock (so it glides at the same
+	# pace regardless of the death slow-mo) — never an abrupt cut.
+	var elapsed: float = float(Time.get_ticks_msec() - _death_start_msec) / 1000.0
+	var p: float = clampf(elapsed / maxf(0.05, dolly_seconds), 0.0, 1.0)
+	var e: float = p * p * (3.0 - 2.0 * p)  # smoothstep (ease-in-out)
+	# END framing: close to the sprite, on the camera's own baseline side.
 	var side: float = 1.0 if _base_z >= 0.0 else -1.0
-	var desired: Vector3 = sp + Vector3(0.0, death_cam_height, death_cam_distance * side)
-	var t: float = 1.0 - exp(-death_cam_speed * dt)
-	var pos: Vector3 = global_position.lerp(desired, t)
+	var end_pos: Vector3 = sp + Vector3(0.0, death_cam_height, death_cam_distance * _death_tightness * side)
+	# DOLLY ZOOM (vertigo): glide the camera from its start framing IN to the close
+	# end framing while the FOV WIDENS — the camera physically moves in as the lens
+	# opens up, warping the perspective like a sports-broadcast push-in.
+	var pos: Vector3 = _death_start_pos.lerp(end_pos, e)
 	# Layer the KO jolt shake on top.
 	var shake: float = maxf(_trauma, _rumble)
 	if shake > 0.0:
@@ -279,9 +297,8 @@ func _update_death_cam(dt: float) -> void:
 		pos += Vector3(max_shake_offset.x * mag * sin(wob * 1.7),
 				max_shake_offset.y * mag * sin(wob * 2.3 + 1.3), 0.0)
 	global_position = pos
-	# Zoom in on the sprite (the per-knockout factor picked by win/lose outcome).
-	_fov_zoom = lerpf(_fov_zoom, _death_zoom, t)
-	fov = _base_fov * _fov_zoom
+	fov = lerpf(_death_start_fov, _base_fov * dolly_fov_widen, e)
+	_fov_zoom = fov / maxf(1.0, _base_fov)  # keep the shared zoom var coherent for the resume ease
 	# Look straight at the sprite (the death cam owns rotation). Guard the
 	# degenerate near-zero distance so look_at never errors.
 	if pos.distance_to(sp) > 0.05:

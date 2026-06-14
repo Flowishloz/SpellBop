@@ -41,20 +41,10 @@ signal stack_closed
 
 enum State { NORMAL, STACK_WINDOW }
 
-## Simulation speed inside the window (Manifesto: 10% "bullet time").
+## Simulation speed inside the window (Manifesto: 10% "bullet time"). The stack
+## resolves at this same dilation: when the window expires MatchController fires
+## ALL staged spells at once, then resume_speed() ramps back to 1.0.
 @export_range(0.01, 1.0) var stack_time_scale: float = 0.1
-
-## Simulation speed WHILE THE STACK RESOLVES (Sprint 20, Creative Director): the
-## reaction window runs at the deep stack_time_scale (0.1), but once it expires
-## and the spells release LIFO one at a time, the world loosens to this moderate
-## slow-mo so each release visibly travels and clearly reads as "one at a time"
-## (at 0.1 the staggered spells barely moved between releases and looked
-## simultaneous — the bug the Creative Director reported). _expire_window() steps
-## the dilation here; resume_speed() ramps it back to 1.0 after the final spell.
-## Sprint 20 (round 2): 0.35 — fast enough that a released spell visibly crosses
-## the court within the inter-spell gap, so the LIFO releases read as distinct
-## one-at-a-time launches rather than a simultaneous burst.
-@export_range(0.01, 1.0) var resolve_time_scale: float = 0.35
 
 ## REAL-seconds length of the window when open_window() is called without an
 ## explicit duration. Spell cards may pass bespoke durations later.
@@ -131,10 +121,8 @@ func _expire_window() -> void:
 		return
 	state = State.NORMAL
 	_resolving = true
-	# Loosen the deep reaction slow-mo to the moderate resolve scale so the
-	# staggered LIFO releases visibly separate (Sprint 20). The dilation stays
-	# HELD here (no resume) until MatchController finishes the staggered releases.
-	Engine.time_scale = clampf(resolve_time_scale, 0.01, 1.0)
+	# The dilation stays HELD here (no resume) at the window slow-mo; MatchController
+	# releases ALL staged spells at once on stack_closed, then calls resume_speed().
 	stack_closed.emit()
 
 
