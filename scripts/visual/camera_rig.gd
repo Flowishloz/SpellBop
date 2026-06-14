@@ -208,6 +208,16 @@ func end_death_cam() -> void:
 	_death_target = null
 
 
+## NETPLAY (Sprint 21): point the camera at [param target] — the LOCALLY-OWNED
+## wizard's rig. With the client's visual-Z mirror its wizard sits at the NEAR
+## baseline, so the authored (fully-lit) camera frames it exactly like the host
+## frames the Player. Presentation only.
+func set_follow_target(target: Node3D) -> void:
+	if target != null:
+		_target = target
+		_follow_x = target.global_position.x  # reset the pan so there's no jump
+
+
 func _process(delta: float) -> void:
 	# Decay on the WALL clock so bursts feel identical inside slow-mo.
 	var real_delta: float = delta / maxf(Engine.time_scale, 0.001)

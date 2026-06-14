@@ -128,6 +128,11 @@ var _facing_deadzone_fp: int = 0
 # instantly (facing_turn_speed == 0) or eased in _process (> 0).
 var _target_yaw: float = 0.0
 
+## NETPLAY visual mirror flag (Sprint 21) — set true by MatchController on the
+## CLIENT so this entity's visual Z is mirrored (see _on_state_updated). Default
+## false: offline/host present the court normally.
+var view_flip_z: bool = false
+
 
 func _ready() -> void:
 	# Belt-and-braces re-derive: the facing_deadzone setter keeps this cache
@@ -145,6 +150,12 @@ func _ready() -> void:
 func _on_state_updated(fixed_x: int, fixed_y: int) -> void:
 	_target_x = SGFixed.to_float(fixed_x) * sim_to_world_scale
 	_target_z = SGFixed.to_float(fixed_y) * sim_to_world_scale
+	# NETPLAY visual mirror (Sprint 21): the CLIENT sees the court spun front-to-back
+	# so ITS wizard sits at the near, well-lit baseline. Pure presentation — only the
+	# visual Z is mirrored (X kept, so left/right controls stay correct); the sim is
+	# untouched and identical on both peers. Set by MatchController for the client.
+	if view_flip_z:
+		_target_z = -_target_z
 
 	if face_movement_direction:
 		_update_facing(fixed_x)

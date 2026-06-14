@@ -240,9 +240,9 @@ func _on_sync_started() -> void:
 	emit_signal(&"status", "Rollback active — fight!")
 	if _smoke_mode != "":
 		print("[NET-SMOKE] sync_started host=", multiplayer.is_server(), " uid=", multiplayer.get_unique_id())
-		# Drive the LOCALLY-OWNED wizard so the synced fingerprint is non-trivial:
-		# each peer moves its own wizard, and rollback must keep both identical.
-		if InputMap.has_action(&"move_right"):
+		# DIAG: ONLY the host presses, so the fingerprint reveals WHICH wizard the
+		# host's input actually drives (proves authority routing, not just sync).
+		if multiplayer.is_server() and InputMap.has_action(&"move_right"):
 			Input.action_press(&"move_right")
 		if SyncManager != null and not SyncManager.tick_finished.is_connected(_on_smoke_tick):
 			SyncManager.tick_finished.connect(_on_smoke_tick)
@@ -373,6 +373,11 @@ func _on_smoke_tick(_is_rollback: bool) -> void:
 	if t >= 120:
 		_smoke_done = true
 		print("[NET-SMOKE] tick=", t, " fp=", _smoke_fingerprint())
+		# Capture the REAL-game render (windowed only) so the client's reverse view
+		# can be inspected — proves whether the flip renders in the actual loop.
+		var img := get_viewport().get_texture().get_image()
+		if img != null:
+			img.save_png("res://tests/_net_smoke_%s.png" % ("host" if multiplayer.is_server() else "client"))
 		print("[NET-SMOKE] OK")
 
 

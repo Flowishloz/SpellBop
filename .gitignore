@@ -21,6 +21,6 @@
 tests/_screenshot*.png
 tests/_screenshot*.png.import
 
-# Net smoke-test logs (regenerable by tests/run_net_smoke.ps1)
-tests/_net_smoke_*.log
-tests/_net_smoke_*.err
+# Net smoke-test artifacts (regenerable by tests/run_net_smoke.ps1)
+tests/_net_smoke_*
+tests/_screenshot_netplay_*.png

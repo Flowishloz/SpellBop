@@ -828,10 +828,21 @@ func _enter_netplay() -> void:
 		_player.set_netplay(host_id, casting)
 	if _opponent != null and _opponent.has_method(&"set_netplay"):
 		_opponent.set_netplay(client_id, casting)
-	# NOTE: both peers currently view the arena from the authored (host-side)
-	# camera; swapping the client's camera to follow its OWN wizard is
-	# presentation-only polish deferred to the spawn-rollback sprint (the sim is
-	# identical on both peers, so this is purely cosmetic).
+	# CLIENT VIEW (visual mirror): each player should see THEIR OWN wizard in the
+	# near, well-lit foreground. The HOST owns Player (already near) — nothing to do.
+	# The CLIENT owns Opponent (normally the FAR wizard), so MIRROR the visual court
+	# front-to-back (VisualBridge.view_flip_z negates visual Z only — X kept so
+	# left/right controls stay correct) — the client's wizard now renders at the
+	# near baseline — and point the AUTHORED camera at it. This reuses all the
+	# authored lighting/backdrop (no reverse-angle darkness); pure presentation, the
+	# deterministic sim is identical on both peers.
+	if not is_host:
+		for vb in find_children("*", "VisualBridgeComponent", true, false):
+			vb.view_flip_z = true
+		if _camera != null and _camera.has_method(&"set_follow_target") and _opponent != null:
+			_camera.set_follow_target(_opponent.get_node_or_null(^"WizardRig") as Node3D)
+	var mine: String = "Player (blue, near)" if (_player != null and _player.is_multiplayer_authority()) else "Opponent (red, far)"
+	print("[NETPLAY] peer uid=%d (host=%s) controls the %s wizard" % [my_id, str(is_host), mine])
 	# Kick the deterministic handshake.
 	nm.notify_scene_loaded()
 
