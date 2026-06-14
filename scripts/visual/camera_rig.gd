@@ -17,11 +17,11 @@ extends Camera3D
 
 ## 0.0 = fixed camera. 1.0 = camera X mirrors the player's X exactly.
 ## Values between give a "soft pan" that under-travels the player.
-@export_range(0.0, 1.0) var follow_strength: float = 0.85
+@export_range(0.0, 1.0) var follow_strength: float = 0.55
 
 ## Exponential follow rate per second (higher = tighter). Uses _process delta,
 ## so the pan slows with the world inside the Stack window — intentional.
-@export var follow_speed: float = 8.0
+@export var follow_speed: float = 5.5
 
 ## Hard clamp (meters) on how far from center the camera may pan, so the
 ## frame never slides off the court edges.
@@ -44,6 +44,27 @@ extends Camera3D
 ## shoulder, yawed slightly back toward them — the "dynamic tilt".
 @export var yaw_degrees: float = 8.0
 
+## Final yaw clamp (degrees) — a hard guard so the camera can never "flip" past a
+## sane angle however the shoulder swap / follow combine (Phase 2 Creative
+## Director: avoid jarring flips past 90 degrees).
+@export var max_yaw_degrees: float = 60.0
+
+@export_group("Default Perspective")
+## PHASE 2 (Creative Director): push the camera BACK from the arena by this factor
+## (1.15 = +15% further: scales height + depth, keeps the lateral shoulder) and
+## widen the default FOV by base_fov_scale (+15%) so more of the court is framed.
+@export var pullback_factor: float = 1.15
+@export var base_fov_scale: float = 1.15
+
+@export_group("Dynamic Stack Zoom")
+## PHASE 2 (Creative Director): while the stack resolves in slow-mo, tighten the
+## FOV to base_fov * stack_zoom_scale (0.85 = zoom in 15%), easing back as normal
+## speed resumes. Driven off Engine.time_scale (dilated == stack active).
+@export var stack_zoom_scale: float = 0.85
+@export var stack_zoom_speed: float = 5.0
+## Engine.time_scale below this counts as "in the stack" (dilated) -> zoom in.
+@export var stack_zoom_time_threshold: float = 0.92
+
 @export_group("Dynamic Shoulder")
 ## DYNAMIC SHOULDER SWAP (Creative Director): same angles and perspective,
 ## but the camera glides to the LEFT shoulder when the wizard plays the left
@@ -52,12 +73,12 @@ extends Camera3D
 
 ## Player |x| (meters) beyond which the shoulder swaps — hysteresis: between
 ## the thresholds the camera keeps its current side (no flip-flapping).
-@export var shoulder_swap_threshold: float = 0.7
+@export var shoulder_swap_threshold: float = 1.15
 
 ## Glide rate (per second) of the swap. Runs on the WALL clock — the camera
 ## must stay alive inside the Stack window (Creative Director: it read as
 ## "locked" during slow-mo when this used scaled delta).
-@export var shoulder_glide_speed: float = 2.4
+@export var shoulder_glide_speed: float = 1.5
 
 @export_group("Shake")
 ## Master switch for the trauma shake (charging rumble, cast bursts, hits).
@@ -89,6 +110,8 @@ var _base_x: float = 0.0
 var _base_y: float = 0.0
 var _base_z: float = 0.0
 var _follow_x: float = 0.0
+var _base_fov: float = 75.0
+var _fov_zoom: float = 1.0
 
 
 # Right-shoulder reference values captured at _ready (the dynamic swap and
@@ -102,9 +125,14 @@ var _side: float = 1.0
 
 
 func _ready() -> void:
+	# PHASE 2: push the camera back from the arena (scale its height + depth, keep
+	# the lateral shoulder offset) and widen the default FOV.
 	_base_x = global_position.x
-	_base_y = global_position.y
-	_base_z = global_position.z
+	_base_y = global_position.y * pullback_factor
+	_base_z = global_position.z * pullback_factor
+	_base_fov = fov * base_fov_scale
+	_fov_zoom = 1.0
+	fov = _base_fov
 	_default_base_x = _base_x
 	_default_yaw = yaw_degrees
 	_follow_x = _base_x
@@ -183,5 +211,14 @@ func _process(delta: float) -> void:
 		offset_y = max_shake_offset.y * magnitude * sin(wobble_t * 2.3 + 1.3)
 		roll = max_shake_roll_degrees * magnitude * sin(wobble_t * 1.3 + 0.7)
 
+	# DYNAMIC STACK ZOOM (Phase 2): tighten the FOV while the world is dilated
+	# (the stack resolving in slow-mo), ease back as normal speed resumes.
+	var want_zoom: float = stack_zoom_scale if Engine.time_scale < stack_zoom_time_threshold else 1.0
+	var zt: float = 1.0 - exp(-stack_zoom_speed * real_delta)
+	_fov_zoom = lerpf(_fov_zoom, want_zoom, zt)
+	fov = _base_fov * _fov_zoom
+
+	# Hard yaw guard so the camera never flips past a sane angle (Phase 2).
+	var clamped_yaw: float = clampf(yaw_degrees, -max_yaw_degrees, max_yaw_degrees)
 	global_position = Vector3(_follow_x + offset_x, _base_y + offset_y, _base_z)
-	rotation_degrees = Vector3(pitch_degrees, yaw_degrees, roll)
+	rotation_degrees = Vector3(pitch_degrees, clamped_yaw, roll)
