@@ -1348,3 +1348,60 @@ NOTES
 - Autonomy Protocol (2026-06-11): Orchestrator has full autonomous authority over
   all code, scene, and resource files; the human is Creative Director + playtester
   and is no longer asked to perform editor wiring.
+
+[SPRINT 19 — PHASE 4: GRAPHICS & ENVIRONMENT (2026-06-14)]
+Visual/graphics only. No new bugs introduced; no graveyard entries. All 14 headless
+test suites pass with BIT-IDENTICAL determinism. Phase 4 backed up to GitHub
+https://github.com/Flowishloz/SpellBop.git (main branch).
+
+(1) FULLY-CHARGED FIREBALL SIZE SCALING (ALREADY IMPLEMENTED):
+- scripts/player/components/spell_caster_component.gd: CHARGE_SIZE_MULTIPLIERS =
+  [1.0, 1.0, 1.15, 1.35] (index = charge_level). A gauge-3 fully-charged fireball
+  renders at 32.4u radius (base 24u * 1.35 = 32.4u), 35% larger than the base orb.
+  Verified in tests/test_charge_mechanics.gd (exact fixed-point assertion).
+
+(2) 80S SYNTHWAVE HOME SCREEN BACKDROP:
+- scripts/ui/home_screen.gd NEW _build_backdrop() method (called in _ready):
+  (a) GradientTexture2D sunset sky: purple (bottom) -> magenta -> orange (top),
+  unshaded, fills the background far plane. (b) BIG RINGED PLANET: an emissive
+  sphere (radius ~3m) with a tilted neon-cyan TorusMesh ring (torus scale ~4.2,
+  tilted 65 deg), positioned at z-6. Sphere albedo = deep purple, emission_energy
+  = 0.8 (glow). (c) SMALL SECOND PLANET: a dimmer emissive sphere (~0.5m) at a
+  different depth/offset. (d) STAR FIELD: a pre-baked starfield sprite (existing
+  resources/placeholder/starfield.png) layered far back. All composed via 3D nodes
+  under the home scene's diorama, drawn before the UI layer.
+
+(3) GLOWING ARENA BORDERS:
+- core/match_controller.gd NEW _build_arena_borders() method (called in _ready):
+  four emissive cyan BoxMesh strips framing the 9.6m x 21m floor perimeter:
+  (a) TOP border (y=-10.8, near wall baseline): 9.6m wide x 0.3m tall x 0.1m deep,
+  (b) BOTTOM border (y=+10.8, player baseline): same dimensions, (c-d) LEFT & RIGHT
+  side borders (x=±4.8, y=0): 0.3m wide x 21m tall x 0.1m deep. All use emissive
+  cyan StandardMaterial3D (albedo [0.2, 1.0, 1.0], emission = [0, 1, 1] at
+  emission_energy 0.5), no shadow casting. Visual effect: a neon-lit rectangular
+  frame around the court, thematic to the synthwave aesthetic.
+
+(4) DEATH ANIMATION — BACKWARD KNOCKBACK + FLING:
+- scripts/visual/wizard_animator_component.gd: on HealthComponent.knocked_out signal
+  (LETHAL hit = 0 HP), the wizard sprite is flung OFF ITS OWN BASELINE EDGE with a
+  visual gravity arc. Implementation: (a) OFFSET ARC: _sprite.position (local to the
+  rig, visual-only) eases downward + backward (Y component increases toward +floor
+  plane, Z toward away from the rig — the direction opposite the court normal).
+  Gravity constant ~500 unit/s^2; launch velocity ~800 units/s backward. (b) FLAT-SPIN:
+  the sprite's scale.x (left-right flip, since Y-billboard ignores node rotation)
+  oscillates during the arc (full 360° tumble, unraveling as the sprite drops).
+  (c) RED FADE: self_modulate color eases from [1,1,1,1] to [1,0,0,0.3] (death tint
+  + transparency) over the arc duration (~1.2 s). (d) IMPACT BURST: BurstFX.spawn()
+  red sparks at the final impact position. (e) RESET: HealthComponent.reset() on the
+  next round (health_changed signal) restores the wizard to the baseline with full
+  health; the sprite offset and color reset to their base state for the fresh round.
+  The VisualBridge owns the rig's X/Z world position (the fling is SPRITE-local only,
+  so it can't fight the Bridge's physics sync).
+
+VERIFICATION:
+- All 14 original headless test suites pass unchanged (visual changes only, no sim
+  state touched). Determinism BIT-IDENTICAL.
+- Screenshot probe captures the home screen backdrop (sunset sky, ringed planet, star
+  field visible together), the arena borders (cyan neon frame around the court), and
+  the death animation (wizard sprite spinning off the baseline with red fade + impact
+  burst on knockdown).

@@ -60,6 +60,10 @@ signal stack_winner_decided(player_won: bool)
 @export var opponent_hit_trauma: float = 0.25
 @export var capture_release_trauma: float = 0.55
 
+## PHASE 5 (Creative Director): amplify the FIRING impact — every projectile spawn
+## adds 20% more camera trauma than its base cast/card value.
+@export var fire_shake_multiplier: float = 1.2
+
 ## Sustained rumble per fireball charge level (index = level 0-3). Escalates
 ## hard so each banked gauge visibly grips the screen more (Creative Director).
 @export var charge_rumble_levels: Array[float] = [0.06, 0.22, 0.4, 0.62]
@@ -72,6 +76,10 @@ signal stack_winner_decided(player_won: bool)
 ## staged spells resolve LIFO one at a time, holding slow-mo, with this REAL-time
 ## gap between each release. Normal speed resumes only after the FINAL spell.
 @export var stagger_delay_seconds: float = 0.2
+
+## A short beat after the FINAL spell resolves before normal speed resumes — kept
+## small so the slow-mo doesn't linger (Phase 5: smooth slow-mo -> normal).
+@export var post_resolve_delay_seconds: float = 0.12
 
 ## STACK WINNER REWARD: the player who placed the NEWEST spell on the stack (last
 ## responder, always) gets this launch-speed multiplier on their NEXT projectile.
@@ -415,9 +423,10 @@ func _resolve_stack_entry(entries: Array, index: int) -> void:
 	var caster: Node = entries[index]
 	if is_instance_valid(caster) and caster.has_method(&"release_staged"):
 		caster.release_staged()
-	# Hold slow-mo for a crisp real-time beat (ignore_time_scale = true), then
-	# resolve the next spell.
-	var timer: SceneTreeTimer = get_tree().create_timer(stagger_delay_seconds, true, false, true)
+	# A crisp 0.2 s gap BETWEEN spells; only a short beat after the LAST one so the
+	# slow-mo doesn't linger before the resume (Phase 5). ignore_time_scale = true.
+	var delay: float = stagger_delay_seconds if index < entries.size() - 1 else post_resolve_delay_seconds
+	var timer: SceneTreeTimer = get_tree().create_timer(delay, true, false, true)
 	timer.timeout.connect(_resolve_stack_entry.bind(entries, index + 1))
 
 
@@ -458,7 +467,8 @@ func _on_spell_cast(projectile: Node, spell: SpellResource) -> void:
 		var trauma: float = card_cast_trauma if (spell != null and spell.is_card) else cast_trauma
 		if spell is CardResource:
 			trauma += spell.screen_shake_intensity
-		_camera.add_trauma(trauma)
+		# Phase 5: amplify the FIRING impact by 20% on every projectile spawn.
+		_camera.add_trauma(trauma * fire_shake_multiplier)
 	# A deployed barrier's capture drama: rumble builds during the hold
 	# (Lethal-Company anticipation), slam on release.
 	if projectile != null and projectile.has_signal(&"capture_charging"):

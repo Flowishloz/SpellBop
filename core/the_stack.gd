@@ -59,8 +59,9 @@ var _deadline_msec: int = 0
 # Total length (real seconds) of the CURRENT window — the WOA denominator.
 var _window_total_s: float = 0.0
 
-## Exponential ramp rate (per REAL second) of the speed-up back to 1.0.
-@export var resume_ramp_rate: float = 7.0
+## Exponential ramp rate (per REAL second) of the speed-up back to 1.0. Phase 5:
+## raised 7 -> 11 for a snappier, lag-free slow-mo -> normal transition.
+@export var resume_ramp_rate: float = 11.0
 
 # Resume-ramp state (wall-clock driven — _process delta is itself scaled).
 var _resuming: bool = false
