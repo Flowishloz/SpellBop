@@ -1142,6 +1142,96 @@ NEXT IMMEDIATE TASKS (Sprint 17 candidates)
 4. Touch controls (virtual joystick feeds aim; dash/card touch buttons).
 5. Audio pass proper + real card art; stack-resolution choreography.
 
+[SPRINT 19 — PHASE 1: GAMEPLAY & MECHANICS (2026-06-14)]
+Creative Director mega-directive: overhaul stack resolution, grant stack-winner rewards,
+implement ice-shatter for max-charge fireballs, rework AI movement, extend projectile
+lifespans, introduce healing emeralds, and REMOVE the dash ability wholesale. All 13
+headless test suites pass with BIT-IDENTICAL determinism; 3 new suites added
+(test_stack_resolution.gd, test_ice_shatter.gd, test_emerald.gd). Project backed up to
+GitHub https://github.com/Flowishloz/SpellBop.git (main branch).
+
+(1) STACK RESOLUTION — STAGGERED SLOW-MO RELEASE:
+- TheStack: close_window() now remains frozen at time_scale 0.1 while MatchController
+  loops through _stack_entries LIFO, calling _resolve_stack_entry() for each caster.
+  Each resolution spawns the projectile/wave, then schedules a SceneTreeTimer.new()
+  (ignore_time_scale = true) for 0.2 s wall-clock pause before the next release
+  (_expire_window() helper). After the FINAL spell, resume_speed() ramps time_scale
+  back to 1.0 smoothly (7 s^-1 exponential). Visual effect: every spell launches with a
+  0.2 s real-time gap inside slow-mo, then the world snaps back to normal.
+
+(2) STACK WINNER REWARD (1.5x next-throw speed boost):
+- NEW sim state key "psb" (player speed boost): int, saved/loaded. PlayerController
+  manages grant/consume via public methods. When a stack resolves, MatchController
+  identifies the STACK WINNER as the last responder (newest spell on the stack, per
+  LIFO) and emits stack_winner_decided(player_won: bool). The victor's psb is set to
+  1 (boosted) for the next fired projectile (SpellCasterComponent._spawn_projectile
+  and CardCasterComponent._resolve_attack both check psb, apply 1.5x launch velocity,
+  then consume it). An uncontested stack (player throws, opponent does nothing) still
+  grants the player the reward — they were the last responder. Signal is Phase-3 hook.
+
+(3) MAX-CHARGE FIREBALL SHATTERS ICE:
+- SpellCasterComponent: when fired with charge_level >= 3, sets FireballController
+  .shatters_ice = true via the projectile. FireballController in _physics_process calls
+  _scan_ice_shatter(velocity) every tick (raycast-based, precise half-extent calculation
+  via get_collider_half_extents), and on collision with an ice_wave, calls the wave's
+  shatter_ice() method (visual glass burst via BurstFX + shield_shatter.wav), frees the
+  wave, and continues forward unimpeded (momentum preserved).
+
+(4) AI INDEPENDENT PATROL MOVEMENT:
+- AIBrainComponent._decide_x() REPLACED: no longer returns the player's X. Instead,
+  it steers to a deterministic _patrol_target_x: a triangle-wave patrol bouncing ±100u
+  from centre (period 360 ticks), plus a SEEK to emerald position if the AI is hurt
+  (hp < max_hp). Same dodge logic vs incoming balls, but positioned independently.
+
+(5) PROJECTILE LIFESPAN DOUBLED (all four projectile types):
+- fireball.tscn: lifespan 2.2 s -> 4.4 s.
+- ice_wave.tscn: lifespan 1.5 s -> 3.0 s.
+- basic_attack.tres (Spark Bolt): lifetime 2.8 s -> 5.6 s.
+- spark_bolt.tscn: lifespan 2.2 s -> 4.4 s.
+
+(6) HEALING EMERALD (NEW MECHANIC — pickup system):
+- scripts/pickups/emerald_controller.gd (NEW): EmeraldController : SGCharacterBody2D,
+  per-tick floating bob + spin (visual-only via VisualBridgeComponent), deterministic
+  random drift (fixed-point LCG, reflecting inside a ±150u wander box). Lifecycle: NOT
+  affected by slow-mo (time_scale independent). Collision: explicitly avoids homing-
+  projectile-seeking metadata (no get_velocity_y/get_hit_source/slow_ticks/redirect
+  exposed), so all existing scans (AI dodge band, WOA capture, barrier intercept,
+  ice-shatter raycast) skip it without special casing.
+- MatchController: spawns an emerald every 25-40 ticks deterministically (LCG schedule,
+  gated to ROUND_ACTIVE only). Spawner sits in the arena centre with small random X/Y
+  variance (deterministic). Re-spawn happens at the next interval (old emerald freed).
+- On projectile hit: HitDetectionComponent.area_hit -> HealthComponent.apply_heal(1)
+  on the THROWER + emerald.queue_free(). Both player and opponent can claim it; the
+  projectile (regardless of owner) determines who heals.
+- "pickups" group: emerald is a member for future item system expansion.
+
+(7) DASH ABILITY REMOVED ENTIRELY:
+- MovementComponent: dash fields (dash_ticks, dash_speed_ratio, dash_cooldown, etc.)
+  DELETED. The dash logic, cooldown tracking, and landing-slow all gone.
+- InputCommand: KEY_DASH bit removed. The "d" key in the dict no longer exists.
+- PlayerController: render-rate dash_press latch removed.
+- DashButtonHUD (scripts/ui/dash_button_hud.gd): DELETED file. The node formerly in
+  match_hud.tscn is GONE.
+- project.godot: the "dash" InputMap action removed; no Shift keybinding.
+- VisualBridgeComponent: dash-smoothing-boost parameter removed.
+- SoundFX: dash_sfx trigger removed from the audio dispatcher.
+- Graveyard entry logged in HANDOFF.
+
+VERIFICATION (ALL 13 SUITES PASS, BIT-IDENTICAL DETERMINISM):
+- 10 original suites (test_determinism through test_play_again) — PASS.
+- tests/test_stack_resolution.gd (NEW): LIFO release order verified (stack entries
+  pop newest-first), 0.2 s gaps between releases, stack_winner_decided signal fires
+  correctly, speed boost 1.5x on next throw, uncontested throw still rewards.
+- tests/test_ice_shatter.gd (NEW): max-charge (gauge 3) fireball shatters ice wave
+  on collision, wave freed, ball continues with preserved momentum, non-max-charge
+  fireballs are captured by the wave (old behaviour), raycast/half-extent calcs exact.
+- tests/test_emerald.gd (NEW): emerald spawns on schedule (deterministic LCG), floats
+  + drifts within wander box, projectile hit grants thrower +1 hp, emerald consumed,
+  AI dodge and defense WOA scans skip it (no metadata exposure), frozen at round end.
+- test_touch_controls.gd + test_play_again.gd re-verified (dash references purged).
+- Determinism stays BIT-IDENTICAL across all suites (no regressions).
+- GitHub backup: https://github.com/Flowishloz/SpellBop.git (main, all code+scenes+tests).
+
 ===========================================================
 NOTES
 ===========================================================
