@@ -41,8 +41,14 @@ extends Node
 ## floor plane. Raise slightly if the floor mesh isn't exactly at Y = 0.
 @export var floor_y: float = 0.01
 
+## Optional HealthComponent: when set (or auto-found as a sibling) the shadow
+## HIDES on knockout — a flung-off, eliminated wizard must not leave a shadow
+## stuck on the arena floor (Sprint 20 graphical fix) — and reappears on revive.
+@export var health_path: NodePath
+
 var _shadow: Node3D
 var _target: Node3D
+var _ko: bool = false
 
 
 func _ready() -> void:
@@ -52,6 +58,43 @@ func _ready() -> void:
 		push_warning("DropShadowComponent: shadow_path is unset or not a Node3D — shadow disabled.")
 	if _target == null:
 		push_warning("DropShadowComponent: target_path is unset or not a Node3D — shadow disabled.")
+
+	# Hide the floor shadow while the wizard is knocked out (it gets flung off the
+	# arena — its shadow must not linger). Explicit path wins; otherwise auto-find
+	# a sibling HealthComponent so no per-scene wiring is needed.
+	var health: Node = _resolve_health()
+	if health != null:
+		if health.has_signal(&"knocked_out"):
+			health.knocked_out.connect(_on_knocked_out)
+		if health.has_signal(&"health_changed"):
+			health.health_changed.connect(_on_health_changed)
+
+
+## The HealthComponent driving the KO hide: the explicit health_path, else the
+## first sibling HealthComponent (a wizard's shadow lives beside its Health).
+func _resolve_health() -> Node:
+	if not health_path.is_empty():
+		return get_node_or_null(health_path)
+	var parent: Node = get_parent()
+	if parent != null:
+		for sibling in parent.get_children():
+			if sibling is HealthComponent:
+				return sibling
+	return null
+
+
+func _on_knocked_out() -> void:
+	_ko = true
+	if _shadow != null:
+		_shadow.visible = false
+
+
+func _on_health_changed(current: int, _max_health: int) -> void:
+	# Round reset refills health: the wizard is back, restore its shadow.
+	if _ko and current > 0:
+		_ko = false
+		if _shadow != null:
+			_shadow.visible = true
 
 
 func _process(_delta: float) -> void:

@@ -445,6 +445,10 @@ func _resolve_counter(card: CardResource, woa_fp: int) -> void:
 
 	if wave.has_method(&"set_hit_source"):
 		wave.set_hit_source(_body)
+	# The court-wide frost wave never spews side-wall pulses (Sprint 20): it is
+	# wide and travels straight, so a clipped corner must not flash mid-court.
+	if "emits_wall_pulse" in wave:
+		wave.emits_wall_pulse = false
 	if "damage" in wave:
 		wave.damage = card.damage
 	if "slow_ticks" in wave:

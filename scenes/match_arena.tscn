@@ -92,14 +92,14 @@ fixed_position_y = -57671680
 position = Vector2(0, -880)
 
 [node name="SideWallLeft" type="SGStaticBody2D" parent="."]
-fixed_position_x = -30801920
+fixed_position_x = -32768000
 script = ExtResource("12_wall")
 
 [node name="SGCollisionShape2D" type="SGCollisionShape2D" parent="SideWallLeft"]
 shape = SubResource("SGRectangleShape2D_sidewall")
 
 [node name="SideWallRight" type="SGStaticBody2D" parent="."]
-fixed_position_x = 30801920
+fixed_position_x = 32768000
 script = ExtResource("12_wall")
 
 [node name="SGCollisionShape2D" type="SGCollisionShape2D" parent="SideWallRight"]

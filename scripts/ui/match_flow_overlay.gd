@@ -5,7 +5,7 @@
 ## MatchController's round-flow signals.
 ##
 ## States:
-##   - ROUND BANNER (post-round break): "ROUND TAKEN/LOST" + score + a live
+##   - ROUND BANNER (post-round break): "ROUND WON/LOST" + score + a live
 ##     countdown to the next round, over a soft dim. The card hand expands
 ##     beside it (CardHandHUD handles that).
 ##   - VICTORY SCREEN (match over): full dim, verdict, score, rematch hint.
@@ -32,6 +32,7 @@ var _showing_break: bool = false
 var _round_label: Label
 var _round_lightning: _RoundLightning
 var _round_anim_msec: int = 0  # wall-clock start of the round call-out (0 = idle)
+var _round_hold: bool = false  # true = a death VICTORY/DEFEAT verdict that HOLDS
 
 # Match-end podium (built once, hidden until victory/defeat).
 var _podium: Control
@@ -125,6 +126,9 @@ func _ready() -> void:
 	_mc.round_started.connect(_on_round_started)
 	_mc.round_ended.connect(_on_round_ended)
 	_mc.match_ended.connect(_on_match_ended)
+	# Death verdict heading (Sprint 20): popped the instant a match-ending KO lands.
+	if _mc.has_signal(&"knockout_began"):
+		_mc.knockout_began.connect(_on_knockout_began)
 
 
 func _make_label(font_size: int, pos: Vector2) -> Label:
@@ -215,13 +219,15 @@ func _process(_delta: float) -> void:
 ## parked sim / dilation): pop (scale), bolt shoot (t), flash, hold, then fade.
 func _animate_round_call() -> void:
 	var rt: float = float(Time.get_ticks_msec() - _round_anim_msec) / 1000.0
-	if rt >= 1.95:
+	# A held death verdict never auto-fades — it stays until the result screen
+	# replaces it (_on_match_ended -> _kill_callout). The round call-out fades.
+	if not _round_hold and rt >= 1.95:
 		_end_round_call()
 		return
 	_round_label.scale = Vector2.ONE * lerpf(1.5, 1.0, ease(clampf(rt / 0.3, 0.0, 1.0), 0.32))
 	_round_lightning.t = clampf(rt / 0.22, 0.0, 1.0)
 	_round_lightning.flash = clampf(1.0 - rt / 0.55, 0.0, 1.0)
-	var a: float = 1.0 if rt < 1.3 else clampf(1.0 - (rt - 1.3) / 0.6, 0.0, 1.0)
+	var a: float = 1.0 if (_round_hold or rt < 1.3) else clampf(1.0 - (rt - 1.3) / 0.6, 0.0, 1.0)
 	_round_label.modulate.a = a
 	_round_lightning.modulate.a = a
 	_round_lightning.queue_redraw()
@@ -229,10 +235,38 @@ func _animate_round_call() -> void:
 
 func _end_round_call() -> void:
 	_round_anim_msec = 0
+	_round_hold = false
 	if _round_label != null:
 		_round_label.visible = false
 	if _round_lightning != null:
 		_round_lightning.visible = false
+
+
+## DEATH VERDICT (Sprint 20): on a MATCH-ENDING knockout, pop a bold VICTORY
+## (yellow) / DEFEAT (red) heading HIGH on screen — framed like the ROUND header
+## with the horizontal lightning — that HOLDS through the 2.5 s death beat so it
+## never blocks the knockout animation. The full result screen (podium + stats)
+## replaces it when match_ended fires after the beat.
+func _on_knockout_began(is_match_end: bool, player_won: bool) -> void:
+	if not is_match_end:
+		return
+	_round_label.text = "VICTORY" if player_won else "DEFEAT"
+	_round_label.position = Vector2(0, 250)   # high — clear of the death animation
+	_round_label.add_theme_color_override(&"font_color", win_color if player_won else lose_color)
+	_round_label.modulate = Color.WHITE
+	_round_label.scale = Vector2(1.5, 1.5)
+	_round_label.visible = true
+	_round_lightning.position = Vector2(0, _round_label.position.y - 18.0)
+	_round_lightning.size = Vector2(1080, _round_label.size.y + 36.0)
+	_round_lightning.bolt_color = win_color if player_won else lose_color
+	_round_lightning.modulate = Color.WHITE
+	_round_lightning.seed_v = (3 if player_won else 5) * 7919 + 31
+	_round_lightning.t = 0.0
+	_round_lightning.flash = 1.0
+	_round_lightning.visible = true
+	_round_lightning.queue_redraw()
+	_round_hold = true
+	_round_anim_msec = Time.get_ticks_msec()
 
 
 func _on_round_started(round_number: int) -> void:
@@ -240,7 +274,12 @@ func _on_round_started(round_number: int) -> void:
 	_set_visible_state(false)
 	# BOLD round call-out (Phase 3): the number POPS in framed by horizontal
 	# lightning (top bolt shoots right, bottom bolt shoots left), then fades.
+	# Reset any death-verdict overrides (position/colour/hold) back to round style.
 	_round_label.text = "ROUND %d" % round_number
+	_round_label.position = Vector2(0, 720)
+	_round_label.add_theme_color_override(&"font_color", Color(1, 1, 1))
+	_round_hold = false
+	_round_lightning.bolt_color = Color(0.55, 0.8, 1.0)
 	_round_label.modulate = Color.WHITE
 	_round_label.scale = Vector2(1.5, 1.5)
 	_round_label.visible = true
@@ -276,7 +315,7 @@ func _on_round_ended(player_won_round: bool, player_score: int, opponent_score: 
 	_hint.position.y = 950
 	_dim.color = Color(0.0, 0.0, 0.05, 0.55)
 	_title.modulate = Color.WHITE
-	_title.text = "ROUND TAKEN" if player_won_round else "ROUND LOST"
+	_title.text = "ROUND WON" if player_won_round else "ROUND LOST"
 	_title.add_theme_color_override(&"font_color", win_color if player_won_round else lose_color)
 	_score.text = "YOU %d  -  %d FOE" % [player_score, opponent_score]
 	_fill_stats()

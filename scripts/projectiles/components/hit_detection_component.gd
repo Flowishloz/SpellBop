@@ -74,16 +74,31 @@ func _ready() -> void:
 
 ## One overlap scan per tick. Group iteration order is scene-tree order —
 ## deterministic for identical trees on every peer.
+##
+## ANTI-TUNNEL (Sprint 20 — the reflected ice wall "sometimes doesn't freeze"):
+## a fast projectile (a 2x-reflected Counter wave near the terminal-velocity cap)
+## moves a per-tick step comparable to its own thin Y collider, so the once-per-
+## tick post-move scan can step PAST a wizard between two ticks and never overlap.
+## Widen the band by this projectile's per-tick velocity on each axis — the same
+## speed-aware-band fix the barrier capture and ice-shatter scans already use —
+## so a reflected wave reliably connects (and freezes) on its owner. Pure int
+## math (the body's fixed-point velocity), deterministic on every peer.
 func _network_process(_input: Dictionary) -> void:
 	if _has_hit:
 		return
+	var step_x: int = 0
+	var step_y: int = 0
+	if _body.has_method(&"get_velocity_x"):
+		step_x = absi(_body.get_velocity_x())
+	if _body.has_method(&"get_velocity_y"):
+		step_y = absi(_body.get_velocity_y())
 	var my_pos: SGFixedVector2 = _body.get_global_fixed_position()
 	for target in get_tree().get_nodes_in_group(target_group):
 		if target == source or not (target is SGFixedNode2D):
 			continue
 		var target_pos: SGFixedVector2 = target.get_global_fixed_position()
-		if absi(my_pos.x - target_pos.x) < _half_w_fp + _radius_x_fp \
-				and absi(my_pos.y - target_pos.y) < _half_h_fp + _radius_y_fp:
+		if absi(my_pos.x - target_pos.x) < _half_w_fp + _radius_x_fp + step_x \
+				and absi(my_pos.y - target_pos.y) < _half_h_fp + _radius_y_fp + step_y:
 			_has_hit = true
 			hit.emit(target)
 			return

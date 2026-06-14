@@ -29,6 +29,12 @@ signal match_ended(player_won_match: bool)
 ## the Phase 3 stack-winner indicator. player_won = the LOCAL player won it.
 signal stack_winner_decided(player_won: bool)
 
+## A KO landed and the death sequence began (Sprint 20): slow-mo + death cam + the
+## bigger explosion. is_match_end is true on the final blow (vs a round KO);
+## player_won = the LOCAL player won the round. MatchFlowOverlay shows the
+## VICTORY/DEFEAT verdict heading off this, high on screen, during the death beat.
+signal knockout_began(is_match_end: bool, player_won: bool)
+
 ## The arena camera (a PunchOutCameraRig) that receives shake feedback.
 @export var camera_path: NodePath = NodePath("Camera3D")
 
@@ -75,7 +81,10 @@ signal stack_winner_decided(player_won: bool)
 ## STACK RESOLUTION (Phase 1, Creative Director): when the countdown ends the
 ## staged spells resolve LIFO one at a time, holding slow-mo, with this REAL-time
 ## gap between each release. Normal speed resumes only after the FINAL spell.
-@export var stagger_delay_seconds: float = 0.2
+## Sprint 20: raised 0.2 -> 0.4 — at the moderate resolve_time_scale each spell
+## now travels a clearly readable distance before the next releases (the old
+## 0.2 s gap at deep 0.1 dilation looked simultaneous — Creative Director).
+@export var stagger_delay_seconds: float = 0.4
 
 ## A short beat after the FINAL spell resolves before normal speed resumes — kept
 ## small so the slow-mo doesn't linger (Phase 5: smooth slow-mo -> normal).
@@ -94,6 +103,24 @@ signal stack_winner_decided(player_won: bool)
 ## Seed for the deterministic spawn-cadence + position LCG (mixed with the round
 ## number so each round differs but replays identically).
 @export var emerald_seed: int = 24301
+
+## HEALING EMERALD CAP (Sprint 20, Creative Director): at most this many emeralds
+## spawn across an entire MATCH (not per round). Resets only on a fresh match
+## (request_rematch). Exactly one is ever on the field at a time.
+@export var emerald_max_per_match: int = 2
+
+@export_group("Death Sequence")
+## DEATH SEQUENCE (Sprint 20, Creative Director): a KO triggers a slow-mo death
+## beat BEFORE the result overlay. The world dilates to death_time_scale, the
+## camera zooms onto and tracks the eliminated wizard, a bigger explosion + a
+## screen-space ripple fire from the point of contact, and the post-round /
+## post-game overlay waits death_sequence_seconds while it all plays.
+@export_range(0.05, 1.0) var death_time_scale: float = 0.3
+@export var death_sequence_seconds: float = 2.5
+## Peak UV displacement of the death screen-ripple (retro_lens ripple_strength).
+@export var death_ripple_strength: float = 0.05
+## SCALED seconds for the ripple ring to fully expand (slows with the dilation).
+@export var death_ripple_seconds: float = 0.7
 
 var match_state: MatchState = MatchState.ROUND_ACTIVE
 var round_number: int = 1
@@ -125,6 +152,18 @@ var _stack_winner_boost_fp: int = 98304
 var _emerald: Node = null
 var _emerald_rng: int = 0
 var _emerald_countdown: int = 0
+# Emeralds spawned so far THIS MATCH (capped at emerald_max_per_match; reset only
+# on a fresh match in request_rematch — persists across rounds).
+var _emeralds_spawned_this_match: int = 0
+
+# DEATH SEQUENCE state (Sprint 20). The retro-lens material drives the screen
+# ripple; _ripple_* tracks the active shockwave; _in_death_sequence guards the
+# parked POST_ROUND/MATCH_OVER flow so the next round / a rematch can't start
+# until the death beat finishes.
+var _lens_mat: ShaderMaterial = null
+var _ripple_active: bool = false
+var _ripple_progress: float = 0.0
+var _in_death_sequence: bool = false
 
 # Tracks the window's open state so the tape-slow cue plays only on the
 # NORMAL -> WINDOW transition, not on every counter-slap refresh.
@@ -155,6 +194,13 @@ func _ready() -> void:
 	_projectiles = get_node_or_null(projectiles_path)
 	_stack_winner_boost_fp = SGFixed.from_float(maxf(1.0, stack_winner_speed_multiplier))
 	_reseed_emeralds()
+
+	# Death screen-ripple driver: grab the retro-lens shader material and clear any
+	# stale ripple so the pass renders normally until a KO arms it.
+	var lens: Node = get_node_or_null(^"RetroPostFX/LensRect")
+	if lens != null and lens.get(&"material") is ShaderMaterial:
+		_lens_mat = lens.get(&"material") as ShaderMaterial
+		_lens_mat.set_shader_parameter(&"ripple_progress", -1.0)
 
 	# Wire EVERY caster in the arena (player and AI alike). owned=false so
 	# casters inside instanced scenes (player.tscn) are found.
@@ -258,7 +304,11 @@ func _build_arena_borders() -> void:
 		add_child(mi)
 
 
-func _process(_delta: float) -> void:
+func _process(delta: float) -> void:
+	_update_death_ripple(delta)
+	# The death beat owns the screen — no round transition / rematch until it ends.
+	if _in_death_sequence:
+		return
 	match match_state:
 		MatchState.POST_ROUND:
 			if Time.get_ticks_msec() >= _post_round_deadline_msec:
@@ -269,6 +319,18 @@ func _process(_delta: float) -> void:
 			# request_rematch() directly.
 			if Input.is_action_just_pressed("cast_spell"):
 				request_rematch()
+
+
+## Advances the screen-space death ripple on SCALED time (so the shockwave expands
+## slowly during the death slow-mo, like the rest of the 3D), then clears it.
+func _update_death_ripple(delta: float) -> void:
+	if not _ripple_active or _lens_mat == null:
+		return
+	_ripple_progress += delta / maxf(0.0001, death_ripple_seconds)
+	_lens_mat.set_shader_parameter(&"ripple_progress", _ripple_progress)
+	if _ripple_progress >= 1.0:
+		_ripple_active = false
+		_lens_mat.set_shader_parameter(&"ripple_progress", -1.0)
 
 
 ## Restart the match from a fresh scoreboard (the PLAY AGAIN button + the SPACE
@@ -283,6 +345,7 @@ func request_rematch() -> void:
 	_stat_hits = 0
 	_stat_damage_dealt = 0
 	_stat_damage_taken = 0
+	_emeralds_spawned_this_match = 0  # a fresh match refills the emerald budget
 	_begin_round()
 
 
@@ -299,11 +362,14 @@ func _physics_process(_delta: float) -> void:
 	if match_state != MatchState.ROUND_ACTIVE or emerald_scene == null:
 		return
 	if _emerald != null and not is_instance_valid(_emerald):
-		_emerald = null  # claimed/freed — the clock restarts below
+		_emerald = null  # claimed/freed — the clock re-arms below
+	# ONE emerald at a time, and at most emerald_max_per_match across the MATCH
+	# (Sprint 20). While one is floating, or the match budget is spent, the
+	# countdown waits — no refresh of an un-claimed emerald.
+	if _emerald != null or _emeralds_spawned_this_match >= emerald_max_per_match:
+		return
 	_emerald_countdown -= 1
 	if _emerald_countdown <= 0:
-		if _emerald != null and is_instance_valid(_emerald):
-			_emerald.queue_free()  # retire the un-claimed one before refreshing
 		_spawn_emerald()
 		_emerald_countdown = _next_emerald_interval_ticks()
 
@@ -328,6 +394,7 @@ func _spawn_emerald() -> void:
 	if em.has_method(&"emit_position"):
 		em.emit_position()
 	_emerald = em
+	_emeralds_spawned_this_match += 1
 
 
 ## Whole ticks until the next emerald (emerald_min..max seconds), from the LCG.
@@ -591,24 +658,89 @@ func _on_knocked_out(ko_was_player: bool) -> void:
 
 	# State changes BEFORE close_window(): _on_stack_closed must see the
 	# round as over so a KO never releases staged spells into the break.
-	if player_score >= rounds_to_win or opponent_score >= rounds_to_win:
-		match_state = MatchState.MATCH_OVER
-	else:
-		match_state = MatchState.POST_ROUND
+	var match_over: bool = player_score >= rounds_to_win or opponent_score >= rounds_to_win
+	match_state = MatchState.MATCH_OVER if match_over else MatchState.POST_ROUND
 
+	# Clear any open stack window (the handler no-ops now the round is over)
+	# WITHOUT keeping normal speed — the death sequence owns the dilation next.
 	if _stack != null:
 		_stack.close_window()
+
+	# DEATH SEQUENCE (Sprint 20): slow-mo + death cam + bigger explosion + screen
+	# ripple + the VICTORY/DEFEAT verdict; the result overlay (and the break clock)
+	# wait death_sequence_seconds while the knockout animation plays.
+	_begin_death_sequence(ko_was_player, match_over, player_won_round)
+
+
+## Begins the slow-mo knockout beat: dilate the world, zoom + track the eliminated
+## wizard, fire the screen ripple, pop the VICTORY/DEFEAT verdict, and schedule the
+## result overlay after death_sequence_seconds of REAL time (dilation-immune).
+func _begin_death_sequence(ko_was_player: bool, match_over: bool, player_won_round: bool) -> void:
+	_in_death_sequence = true
+	var dying: Node = _player if ko_was_player else _opponent
+
+	# Death slow-mo, HELD until _finish_death_sequence resumes normal speed.
+	if _stack != null:
+		_stack.hold_dilation(death_time_scale)
+	else:
+		Engine.time_scale = clampf(death_time_scale, 0.05, 1.0)
+
+	# Death cam: zoom onto the eliminated wizard's sprite and track the fling.
 	if _camera != null:
 		_camera.set_rumble(0.0)
-		_camera.add_trauma(0.7)
+		_camera.add_trauma(0.9)
+		if dying != null and _camera.has_method(&"begin_death_cam"):
+			var sprite: Node3D = dying.get_node_or_null(^"WizardRig/Sprite3D") as Node3D
+			var rig: Node3D = dying.get_node_or_null(^"WizardRig") as Node3D
+			_camera.begin_death_cam(sprite if sprite != null else rig)
 
-	if match_state == MatchState.MATCH_OVER:
+	# Screen-space shockwave from the point of contact.
+	_trigger_death_ripple(dying)
+
+	# VICTORY/DEFEAT verdict heading (the overlay shows it only on a match end).
+	knockout_began.emit(match_over, player_won_round)
+
+	# The result overlay waits out the death beat (wall-clock, dilation-immune).
+	var timer: SceneTreeTimer = get_tree().create_timer(death_sequence_seconds, true, false, true)
+	timer.timeout.connect(_finish_death_sequence.bind(match_over, player_won_round))
+
+
+## Ends the death beat: resume normal speed, release the death cam, and NOW raise
+## the post-round / post-game result overlay (and start the break clock).
+func _finish_death_sequence(match_over: bool, player_won_round: bool) -> void:
+	_in_death_sequence = false
+	if _stack != null:
+		_stack.resume_speed()
+	else:
+		Engine.time_scale = 1.0
+	if _camera != null and _camera.has_method(&"end_death_cam"):
+		_camera.end_death_cam()
+
+	if match_over:
 		match_ended.emit(player_score >= rounds_to_win)
 		Sfx.play(&"victory" if player_score >= rounds_to_win else &"round_lose")
 	else:
 		_post_round_deadline_msec = Time.get_ticks_msec() + int(post_round_seconds * 1000.0)
 		round_ended.emit(player_won_round, player_score, opponent_score, post_round_seconds)
 		Sfx.play(&"round_win" if player_won_round else &"round_lose")
+
+
+## Fires the retro-lens screen ripple from the eliminated wizard's on-screen point.
+func _trigger_death_ripple(dying: Node) -> void:
+	if _lens_mat == null or _camera == null or dying == null:
+		return
+	var rig: Node3D = dying.get_node_or_null(^"WizardRig") as Node3D
+	if rig == null:
+		return
+	var world: Vector3 = rig.global_position + Vector3(0.0, 1.0, 0.0)
+	var screen_px: Vector2 = _camera.unproject_position(world)
+	var vp: Vector2 = get_viewport().get_visible_rect().size
+	if vp.x <= 0.0 or vp.y <= 0.0:
+		return
+	_lens_mat.set_shader_parameter(&"ripple_center", Vector2(screen_px.x / vp.x, screen_px.y / vp.y))
+	_lens_mat.set_shader_parameter(&"ripple_strength", death_ripple_strength)
+	_ripple_progress = 0.0
+	_ripple_active = true
 
 
 func _begin_round() -> void:

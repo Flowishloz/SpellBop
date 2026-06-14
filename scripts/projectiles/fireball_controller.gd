@@ -52,6 +52,13 @@ var splits_on_barrier: bool = false
 ## SpellCasterComponent when the fired charge level is 3.
 var shatters_ice: bool = false
 
+## WALL-PULSE OPT-OUT (Sprint 20): the wide Icey Retort frost wave is court-wide
+## and travels straight — it must never spew side-wall hit pulses if a corner
+## clips a barrier/wall (the Creative Director's "pulses next to the wave's
+## sides" graphical error). Point projectiles (fireball/spark bolt) keep it true
+## so a genuine side-wall ricochet still pulses AT the wall face.
+var emits_wall_pulse: bool = true
+
 var _movement: ProjectileMovementComponent
 var _hit_detection: HitDetectionComponent
 
@@ -131,14 +138,22 @@ func _on_expired() -> void:
 	queue_free()
 
 
-## Bounce presentation: an X-facing normal means one of the invisible side
-## walls — pulse it visible for a beat (Creative Director).
+## Bounce presentation: an X-facing normal means one of the side walls — pulse it
+## visible for a beat (Creative Director). Sprint 20: the pulse spawns ON THE WALL
+## FACE (the ball's centre offset out by its own half-extent), not at the ball's
+## centre, so the flash always reads exactly at the glowing perimeter — and a wide
+## frost wave opts out entirely (emits_wall_pulse) so it never pulses mid-court.
 func _on_bounced(normal_x: int, _normal_y: int) -> void:
-	if normal_x == 0:
+	if normal_x == 0 or not emits_wall_pulse:
 		return
 	var visual: Node3D = get_node_or_null(^"Visual") as Node3D
 	if visual != null:
-		BurstFX.spawn_wall_pulse(get_parent(), visual.global_position, signi(normal_x))
+		# Push the flash from the ball centre out to the struck wall face: the
+		# normal points INTO the court, so the wall is in the -normal direction.
+		var half_x_m: float = get_collider_half_extents().x / 65536.0 * 0.01
+		var face: Vector3 = visual.global_position
+		face.x -= float(signi(normal_x)) * half_x_m
+		BurstFX.spawn_wall_pulse(get_parent(), face, signi(normal_x))
 		Sfx.play(&"wall_bounce")
 
 

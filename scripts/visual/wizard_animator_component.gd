@@ -102,9 +102,12 @@ func _process(delta: float) -> void:
 	var wall_dt: float = clampf(float(now - _wall_last_msec) / 1000.0, 0.0, 0.05)
 	_wall_last_msec = now
 
-	# DEATH fling overrides all normal animation (the wizard is knocked off).
+	# DEATH fling overrides all normal animation (the wizard is knocked off). It
+	# runs on the SCALED delta (not the wall clock) so the knockout plays in the
+	# death slow-mo with the rest of the 3D world (Sprint 20 — the kill must read
+	# as a dramatic, visible beat, not a wall-clock blur).
 	if _dead:
-		_update_death(wall_dt)
+		_update_death(delta)
 		return
 
 	# --- locomotion read (visual X only — never sim) -------------------
@@ -197,20 +200,27 @@ func _on_knocked_out() -> void:
 		back = 1.0
 	_death_vel = Vector3(0.0, death_up_speed, back * death_back_speed)
 	if _rig != null:
-		BurstFX.spawn(_rig.get_parent(), _rig.global_position + Vector3(0.0, 1.0, 0.0),
-				Vector3(0.0, 0.5, back), Color(1.0, 0.5, 0.3, 0.95), 32, 5.5)
+		# A bigger, wider EXPLOSION on death (Sprint 20, Creative Director): a dense
+		# fiery blast carrying the knockback direction, plus a near-radial white
+		# flash. The CPUParticles3D run on scaled time, so the blast slows with the
+		# death slow-mo like the rest of the 3D.
+		var burst_pos: Vector3 = _rig.global_position + Vector3(0.0, 1.0, 0.0)
+		BurstFX.spawn(_rig.get_parent(), burst_pos, Vector3(0.0, 0.5, back),
+				Color(1.0, 0.5, 0.25, 0.95), 80, 9.5, 0.14, 100.0)
+		BurstFX.spawn(_rig.get_parent(), burst_pos, Vector3.UP,
+				Color(1.0, 0.92, 0.7, 0.95), 46, 6.5, 0.11, 175.0)
 	Sfx.play(&"hit_wizard")
 
 
 ## Advances the death fling: gravity arc on the sprite's local offset, a flat-
 ## spin (scale.x flip — the Y-billboard ignores node rotation), shrink + fade.
-func _update_death(wall_dt: float) -> void:
+func _update_death(dt: float) -> void:
 	if _sprite == null:
 		return
-	_death_vel.y -= death_gravity * wall_dt
-	_death_off += _death_vel * wall_dt
+	_death_vel.y -= death_gravity * dt
+	_death_off += _death_vel * dt
 	_sprite.position = _sprite_base_pos + _death_off
-	_death_t += wall_dt
+	_death_t += dt
 	var spin: float = sin(_death_t * death_spin_speed)
 	var shrink: float = clampf(1.0 - _death_t * 0.32, 0.18, 1.0)
 	_sprite.scale = Vector3(spin * shrink, shrink, shrink)

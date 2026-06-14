@@ -97,6 +97,17 @@ extends Camera3D
 ## Wobble speed of the shake pattern (bigger = more frantic).
 @export var shake_frequency: float = 16.0
 
+@export_group("Death Cam")
+## DEATH CAM (Sprint 20, Creative Director): on a KO the camera zooms onto the
+## eliminated wizard's sprite and TRACKS it as it's flung off the arena, so the
+## death animation is the focal point. FOV scales by death_zoom_scale (0.5 = zoom
+## in ~50%); the camera eases to a point death_cam_distance/height from the sprite
+## and looks straight at it. MatchController drives begin/end_death_cam().
+@export var death_zoom_scale: float = 0.5
+@export var death_cam_distance: float = 4.6   # metres back from the sprite
+@export var death_cam_height: float = 1.7     # metres above the sprite
+@export var death_cam_speed: float = 6.0      # ease rate into the death framing
+
 # TRAUMA MODEL (pure visual): bursts (add_trauma) decay over real time;
 # rumble (set_rumble) is a sustained floor held by whoever sets it (the
 # charge-up). Displayed magnitude is trauma squared — small values whisper,
@@ -112,6 +123,9 @@ var _base_z: float = 0.0
 var _follow_x: float = 0.0
 var _base_fov: float = 75.0
 var _fov_zoom: float = 1.0
+
+# DEATH CAM (Sprint 20): the eliminated wizard's sprite to frame, or null.
+var _death_target: Node3D = null
 
 
 # Right-shoulder reference values captured at _ready (the dynamic swap and
@@ -167,10 +181,27 @@ func set_rumble(strength: float) -> void:
 	_rumble = clampf(strength, 0.0, 1.0) if shake_enabled else 0.0
 
 
+## DEATH CAM start: frame [param sprite] (the eliminated wizard's Sprite3D) — the
+## camera zooms in and tracks it until end_death_cam(). Pure presentation.
+func begin_death_cam(sprite: Node3D) -> void:
+	_death_target = sprite
+
+
+## DEATH CAM end: release the framing; the normal follow/zoom eases back in.
+func end_death_cam() -> void:
+	_death_target = null
+
+
 func _process(delta: float) -> void:
 	# Decay on the WALL clock so bursts feel identical inside slow-mo.
 	var real_delta: float = delta / maxf(Engine.time_scale, 0.001)
 	_trauma = maxf(0.0, _trauma - trauma_decay_per_second * real_delta)
+
+	# DEATH CAM (Sprint 20): when an eliminated wizard is being framed, the death
+	# cam OWNS the camera — zoom in, ease toward the sprite, look straight at it.
+	if _death_target != null and is_instance_valid(_death_target):
+		_update_death_cam(real_delta)
+		return
 
 	# DYNAMIC SHOULDER: pick the side from the player's court position
 	# (hysteresis holds the current side near center), then glide the base
@@ -222,3 +253,31 @@ func _process(delta: float) -> void:
 	var clamped_yaw: float = clampf(yaw_degrees, -max_yaw_degrees, max_yaw_degrees)
 	global_position = Vector3(_follow_x + offset_x, _base_y + offset_y, _base_z)
 	rotation_degrees = Vector3(pitch_degrees, clamped_yaw, roll)
+
+
+## DEATH CAM framing (Sprint 20): ease the camera toward a close shot of the
+## eliminated wizard's sprite, zoom the FOV in, and look straight at it so the
+## knockout animation is the focal point. Driven on the WALL clock (real_delta) so
+## the framing keeps gliding even though the world is in death slow-mo.
+func _update_death_cam(dt: float) -> void:
+	var sp: Vector3 = _death_target.global_position
+	# Frame from the camera's own baseline side, pulled in close to the sprite.
+	var side: float = 1.0 if _base_z >= 0.0 else -1.0
+	var desired: Vector3 = sp + Vector3(0.0, death_cam_height, death_cam_distance * side)
+	var t: float = 1.0 - exp(-death_cam_speed * dt)
+	var pos: Vector3 = global_position.lerp(desired, t)
+	# Layer the KO jolt shake on top.
+	var shake: float = maxf(_trauma, _rumble)
+	if shake > 0.0:
+		var mag: float = shake * shake
+		var wob: float = Time.get_ticks_msec() / 1000.0 * shake_frequency
+		pos += Vector3(max_shake_offset.x * mag * sin(wob * 1.7),
+				max_shake_offset.y * mag * sin(wob * 2.3 + 1.3), 0.0)
+	global_position = pos
+	# Zoom in on the sprite.
+	_fov_zoom = lerpf(_fov_zoom, death_zoom_scale, t)
+	fov = _base_fov * _fov_zoom
+	# Look straight at the sprite (the death cam owns rotation). Guard the
+	# degenerate near-zero distance so look_at never errors.
+	if pos.distance_to(sp) > 0.05:
+		look_at(sp, Vector3.UP)

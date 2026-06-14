@@ -5,6 +5,10 @@
 # Build caches (regenerable)
 .sconsign.dblite
 
+# Godot GDExtension hot-reload shadow copies (regenerable temp DLLs)
+~*.dll
+~*.so
+
 # OS / editor junk & interrupted-copy temp files
 .DS_Store
 **/.DS_Store

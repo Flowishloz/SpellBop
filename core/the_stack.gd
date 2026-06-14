@@ -44,6 +44,15 @@ enum State { NORMAL, STACK_WINDOW }
 ## Simulation speed inside the window (Manifesto: 10% "bullet time").
 @export_range(0.01, 1.0) var stack_time_scale: float = 0.1
 
+## Simulation speed WHILE THE STACK RESOLVES (Sprint 20, Creative Director): the
+## reaction window runs at the deep stack_time_scale (0.1), but once it expires
+## and the spells release LIFO one at a time, the world loosens to this moderate
+## slow-mo so each release visibly travels and clearly reads as "one at a time"
+## (at 0.1 the staggered spells barely moved between releases and looked
+## simultaneous — the bug the Creative Director reported). _expire_window() steps
+## the dilation here; resume_speed() ramps it back to 1.0 after the final spell.
+@export_range(0.01, 1.0) var resolve_time_scale: float = 0.3
+
 ## REAL-seconds length of the window when open_window() is called without an
 ## explicit duration. Spell cards may pass bespoke durations later.
 ## 3.0 s per Creative Director (trimmed 0.5 s in the feel pass): every
@@ -119,6 +128,10 @@ func _expire_window() -> void:
 		return
 	state = State.NORMAL
 	_resolving = true
+	# Loosen the deep reaction slow-mo to the moderate resolve scale so the
+	# staggered LIFO releases visibly separate (Sprint 20). The dilation stays
+	# HELD here (no resume) until MatchController finishes the staggered releases.
+	Engine.time_scale = clampf(resolve_time_scale, 0.01, 1.0)
 	stack_closed.emit()
 
 
@@ -129,6 +142,18 @@ func resume_speed() -> void:
 	_resolving = false
 	_resuming = true
 	_resume_last_msec = Time.get_ticks_msec()
+
+
+## DEATH SLOW-MO (Sprint 20): parks the dilation at [param scale] and HOLDS it
+## (no resume) so a knockout plays in slow motion. MatchController calls this on a
+## KO and resume_speed() after the death beat. Uses the same held-dilation latch
+## as the stack resolution, so _process leaves Engine.time_scale untouched until
+## the resume.
+func hold_dilation(scale: float) -> void:
+	state = State.NORMAL
+	_resolving = true   # held: _process won't touch Engine.time_scale
+	_resuming = false
+	Engine.time_scale = clampf(scale, 0.01, 1.0)
 
 
 ## REAL seconds until the window closes (0.0 when closed).

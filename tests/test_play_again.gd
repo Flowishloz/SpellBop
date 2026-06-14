@@ -35,6 +35,9 @@ func _run() -> void:
 	ai.reaction_distance = 0.0
 	ai.track_deadzone = 100000.0
 	arena.post_round_seconds = 0.3
+	# Sprint 20: collapse the death beat (the result overlay now waits it out).
+	arena.death_sequence_seconds = 0.1
+	arena.death_time_scale = 1.0
 	root.add_child(arena)
 	for i in 30:
 		await process_frame

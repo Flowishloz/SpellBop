@@ -277,7 +277,9 @@ func _make_info_panel(pos: Vector2, panel_size: Vector2) -> Panel:
 # NATURAL FAN (Creative Director): exposure grows toward the BOTTOM card —
 # top tucked furthest behind the edge, bottom poking out most — with a
 # progressive rotation like a loosely held hand. ~10% lower on screen.
-const DOCK_X: Array[float] = [1102.0, 1074.0, 1040.0]
+# Sprint 20: pulled ~20% further into the screen (≈48 px = 0.2 × card width)
+# so each card reveals more and is easier to tap (Creative Director).
+const DOCK_X: Array[float] = [1054.0, 1026.0, 992.0]
 const DOCK_ROT_DEG: Array[float] = [-50.0, -63.0, -78.0]
 
 ## VISUAL fan order: CARD INDEX -> fan slot (0 = top/tucked, 2 = bottom/most

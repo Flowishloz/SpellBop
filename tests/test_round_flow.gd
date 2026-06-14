@@ -44,6 +44,11 @@ func _run() -> void:
 	ai_brain.track_deadzone = 100000.0
 
 	arena.post_round_seconds = 1.0  # shorten the 15 s break for the suite
+	# Sprint 20: skip the dramatic death beat for this deterministic flow test —
+	# round_ended/match_ended now fire AFTER death_sequence_seconds, so collapse it
+	# and drop the slow-mo (the death sequence is verified by its own probe).
+	arena.death_sequence_seconds = 0.1
+	arena.death_time_scale = 1.0
 	root.add_child(arena)
 	await process_frame
 
@@ -64,9 +69,10 @@ func _run() -> void:
 	_check(player_health.max_health == 5, "health pool is 5 points (got %d)" % player_health.max_health)
 
 	# --- KO #1: opponent down -> round ends, sim parks ----------------
+	# round_ended now fires AFTER the (collapsed) death beat — wait for it.
 	opponent_health.apply_damage(5)
-	await process_frame
-	_check(_round_ended_count == 1, "KO ended round 1 (round_ended fired)")
+	var ended1: bool = await _await_condition(func() -> bool: return _round_ended_count == 1, 2000)
+	_check(ended1, "KO ended round 1 (round_ended fired after the death beat)")
 	_check(arena.player_score == 1 and arena.opponent_score == 0, "score 1-0 (got %d-%d)" % [arena.player_score, arena.opponent_score])
 	_check(player.local_tick_driver_enabled == false, "sim PARKED for the post-round break")
 
@@ -80,8 +86,8 @@ func _run() -> void:
 
 	# --- KO #2: match over ---------------------------------------------
 	opponent_health.apply_damage(5)
-	await process_frame
-	_check(_match_ended and _match_winner_player, "second KO ended the MATCH for the player (2-0)")
+	var ended2: bool = await _await_condition(func() -> bool: return _match_ended, 2000)
+	_check(ended2 and _match_winner_player, "second KO ended the MATCH for the player (2-0)")
 	_check(arena.match_state == arena.MatchState.MATCH_OVER, "match state is MATCH_OVER")
 	_check(player.local_tick_driver_enabled == false, "sim parked on the victory screen")
 

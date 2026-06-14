@@ -27,12 +27,16 @@ signal state_updated(fixed_x: int, fixed_y: int)
 @export var heal_amount: int = 1
 
 ## Drift speed, sim units/sec — each retarget picks a new random velocity up to
-## this in EACH axis. Slow: the emerald wanders, it never darts.
-@export var drift_speed: float = 90.0
+## this in EACH axis. Slow: the emerald wanders the arena, it never darts.
+@export var drift_speed: float = 120.0
 
-## Half-size (sim units) of the box around the arena centre the emerald wanders
-## inside; it reflects off this boundary so it stays near the middle.
-@export var wander_half_extent: float = 230.0
+## Half-size (sim units) of the box the emerald wanders inside, centred on the
+## arena origin. Sprint 20 (Creative Director: "move around the arena, bumping
+## into walls"): roams most of the central court and visibly BUMPS the side walls
+## (X) and mid-court (Y), reflecting off each boundary — kept clear of the
+## wizards' baselines (±880) so it never overlaps a player.
+@export var wander_half_x: float = 440.0
+@export var wander_half_y: float = 560.0
 
 ## Whole ticks between drift re-targets (a new random heading). 48 = 0.8 s.
 @export var retarget_interval_ticks: int = 48
@@ -52,15 +56,17 @@ signal state_updated(fixed_x: int, fixed_y: int)
 @export var visual_root_path: NodePath = NodePath("Visual")
 @export var mesh_path: NodePath = NodePath("Visual/EmeraldMesh")
 
-## VISUAL float/spin (wall-clock cosmetic; never sim).
+## VISUAL float/spin (wall-clock cosmetic; never sim). Sprint 20: a SLOW spin and
+## a SUBTLE hover (Creative Director — the chaos-emerald gem turns gently).
 @export var hover_height: float = 0.85
-@export var bob_amplitude: float = 0.14
-@export var bob_speed: float = 2.2
-@export var spin_speed: float = 1.7
+@export var bob_amplitude: float = 0.10
+@export var bob_speed: float = 2.0
+@export var spin_speed: float = 1.0
 
 # --- cached fixed-point (computed in _ready) ---
 var _drift_step_fp: int = 0   # max per-tick velocity component (fixed-point)
-var _wander_fp: int = 0
+var _wander_x_fp: int = 0
+var _wander_y_fp: int = 0
 var _pickup_fp: int = 0
 
 # --- sim state (ints only — rollback-safe) ---
@@ -90,9 +96,15 @@ func _ready() -> void:
 	add_to_group(&"pickups")
 	var safe_tr: int = maxi(1, tick_rate)
 	_drift_step_fp = SGFixed.div(SGFixed.from_float(maxf(0.0, drift_speed)), SGFixed.from_int(safe_tr))
-	_wander_fp = SGFixed.from_float(maxf(1.0, wander_half_extent))
+	_wander_x_fp = SGFixed.from_float(maxf(1.0, wander_half_x))
+	_wander_y_fp = SGFixed.from_float(maxf(1.0, wander_half_y))
 	_pickup_fp = SGFixed.from_float(maxf(0.0, pickup_radius))
 	_mesh = get_node_or_null(mesh_path) as Node3D
+	# CHAOS-EMERALD GEM (Sprint 20): swap the placeholder sphere for a faceted
+	# brilliant-cut gem. The mesh is a SHARED static (built once, never per spawn),
+	# so it never compiles a fresh pipeline mid-fight (graveyard material rule).
+	if _mesh is MeshInstance3D:
+		(_mesh as MeshInstance3D).mesh = _shared_gem_mesh()
 
 
 ## Seeds the deterministic drift LCG (the spawner passes a per-emerald seed so
@@ -134,17 +146,17 @@ func _network_process(_input: Dictionary) -> void:
 	var pos: SGFixedVector2 = get_global_fixed_position()
 	pos.x += _vx
 	pos.y += _vy
-	if pos.x > _wander_fp:
-		pos.x = _wander_fp
+	if pos.x > _wander_x_fp:
+		pos.x = _wander_x_fp
 		_vx = -_vx
-	elif pos.x < -_wander_fp:
-		pos.x = -_wander_fp
+	elif pos.x < -_wander_x_fp:
+		pos.x = -_wander_x_fp
 		_vx = -_vx
-	if pos.y > _wander_fp:
-		pos.y = _wander_fp
+	if pos.y > _wander_y_fp:
+		pos.y = _wander_y_fp
 		_vy = -_vy
-	elif pos.y < -_wander_fp:
-		pos.y = -_wander_fp
+	elif pos.y < -_wander_y_fp:
+		pos.y = -_wander_y_fp
 		_vy = -_vy
 	set_global_fixed_position(pos)
 	sync_to_physics_engine()
@@ -248,3 +260,73 @@ func _process(delta: float) -> void:
 	_vis_time += delta
 	_mesh.position.y = hover_height + sin(_vis_time * bob_speed) * bob_amplitude
 	_mesh.rotation.y += spin_speed * delta
+
+
+# =====================================================================
+# Chaos-emerald gem mesh (Sprint 20)
+# =====================================================================
+
+## A faceted brilliant-cut gem (flat top "table", crown facets, long pointed
+## pavilion) built ONCE and shared by every emerald — the mesh is read-only, so
+## sharing is safe and no fresh pipeline compiles mid-fight. The embedded material
+## is emissive green so the gem glows like a classic Chaos Emerald.
+static var _gem_mesh: ArrayMesh = null
+
+
+static func _shared_gem_mesh() -> ArrayMesh:
+	if _gem_mesh != null:
+		return _gem_mesh
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var sides: int = 8
+	var girdle_r: float = 0.30   # widest ring (the gem's equator)
+	var table_r: float = 0.12    # flat top face radius
+	var y_table: float = 0.17    # crown height
+	var y_tip: float = -0.34     # pavilion point (the long, pointed bottom)
+	var table := PackedVector3Array()
+	var girdle := PackedVector3Array()
+	for i in sides:
+		var a: float = TAU * float(i) / float(sides)
+		table.append(Vector3(cos(a) * table_r, y_table, sin(a) * table_r))
+		girdle.append(Vector3(cos(a) * girdle_r, 0.0, sin(a) * girdle_r))
+	var top := Vector3(0.0, y_table, 0.0)
+	var tip := Vector3(0.0, y_tip, 0.0)
+	var center := Vector3(0.0, -0.05, 0.0)  # rough centroid for the outward test
+	for i in sides:
+		var j: int = (i + 1) % sides
+		_add_face(st, top, table[i], table[j], center)          # flat table cap
+		_add_face(st, table[i], girdle[i], girdle[j], center)   # crown facet A
+		_add_face(st, table[i], girdle[j], table[j], center)    # crown facet B
+		_add_face(st, girdle[i], tip, girdle[j], center)        # pavilion facet
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(0.12, 0.78, 0.42)
+	mat.metallic = 0.5
+	mat.roughness = 0.12
+	mat.emission_enabled = true
+	mat.emission = Color(0.2, 1.0, 0.55)
+	mat.emission_energy_multiplier = 1.8
+	st.set_material(mat)
+	_gem_mesh = st.commit()
+	return _gem_mesh
+
+
+## Adds one flat-shaded triangle facet, forcing the normal to point OUTWARD from
+## [param center] (winding-independent — it flips the order if the face points
+## inward, so the gem renders solid regardless of how the rings were ordered).
+static func _add_face(st: SurfaceTool, a: Vector3, b: Vector3, c: Vector3, center: Vector3) -> void:
+	var n: Vector3 = (b - a).cross(c - a)
+	if n.length() < 0.000001:
+		return
+	n = n.normalized()
+	var centroid: Vector3 = (a + b + c) / 3.0
+	if n.dot(centroid - center) < 0.0:
+		n = -n
+		var tmp: Vector3 = b
+		b = c
+		c = tmp
+	st.set_normal(n)
+	st.add_vertex(a)
+	st.set_normal(n)
+	st.add_vertex(b)
+	st.set_normal(n)
+	st.add_vertex(c)

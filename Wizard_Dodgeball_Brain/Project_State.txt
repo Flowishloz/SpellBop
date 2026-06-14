@@ -1441,3 +1441,163 @@ The entire Sprint 19 gameplay/UI/graphics/feel pipeline is now finished and full
 committed. All code, scenes, tests, and documentation are version-controlled and pushed
 to the GitHub backup at https://github.com/Flowishloz/SpellBop.git (main branch). The
 project is production-ready for the next phase (Story Mode, Draft, Nakama backend).
+
+[SPRINT 20 — ROUND-2 OVERHAUL: UI, FREEZE RELIABILITY, RESOLUTION VISIBILITY, EMERALD CAP, WALLS, KNOCKOUT SEQUENCE (2026-06-14)]
+Creative Director directive: polish UI text, improve ice-freeze reliability, make staggered stack resolution VISIBLE in slow-mo,
+cap healing emerald spawns, reposition side-wall colliders, and implement a full CINEMATIC KNOCKOUT SEQUENCE with slow-mo,
+death camera, screen ripple, and victory/defeat verdicts. All 14 headless test suites pass with BIT-IDENTICAL determinism.
+Two new suites added (tests/test_death_sequence.gd, tests/test_emerald_cap.gd). Project backed up to GitHub
+https://github.com/Flowishloz/SpellBop.git (main branch).
+
+(1) UI TEXT POLISH:
+- match_flow_overlay.gd: post-round banner text changed from "ROUND TAKEN" to
+  "ROUND WON" (player victory) / "ROUND LOST" (player defeat) for clarity.
+- card_hand_hud.gd: fanned card hand pulled 20% further into the screen (DOCK_X
+  values: ATTACK top 1102 -> 1054, COUNTER middle 1074 -> 1026, DEFENSE bottom
+  1040 -> 992). Cards now sit closer to the player and are easier to tap on
+  mobile touch screens.
+- project.godot: Desktop cast keycodes reassigned (project.godot [input] actions
+  card_slot_1/2/3). Keys now read from TOP to BOTTOM of the on-screen hand:
+  key 8 = ATTACK (top card, red), key 9 = COUNTER (middle, blue), key 0 =
+  DEFENSE (bottom, green). The card SLOT-to-TYPE mapping remains UNCHANGED; only
+  the desktop keycodes shifted. Touch input and AI paths unaffected.
+
+(2) ICE-WALL FREEZE RELIABILITY (anti-tunnel):
+- HitDetectionComponent: the overlap detection band is now SPEED-AWARE, widened
+  by the projectile's per-tick velocity. When a fast ice wave (or 2x-reflected
+  Icey Retort frost wave near the terminal-velocity cap) travels at high speed,
+  the detection band expands to match, preventing the projectile from stepping
+  PAST its owner between ticks without applying the freeze.
+- FireballController._on_hit: applies the expanded band to all projectile types
+  equally, reusing the same pattern already used by barrier-capture and ice-shatter
+  scans (existing precedent).
+
+(3) STAGGERED STACK RESOLUTION NOW VISIBLE:
+- ROOT CAUSE: the LIFO one-at-a-time release was mechanically correct (ignore_time_scale
+  wall-clock timers gave real gaps, spells released in correct order) but the
+  0.2 s REAL-TIME gap became only ~0.02 s of SIM TIME at the 10% stack dilation,
+  so consecutive spells visually separated imperceptibly before normal speed
+  resumed (playtest: "the stack still releases all spells at once").
+- FIX: the_stack.gd _expire_window() now steps Engine.time_scale UP to a moderate
+  resolve_time_scale (0.3, 30% world speed) DURING the resolution beat, and
+  MatchController.stagger_delay_seconds was raised 0.2 s -> 0.4 s. At 30% dilation,
+  the 0.4 s inter-spell gap represents ~0.12 s of SIM travel, enough for the spell
+  to visibly arc across the court before the next releases. Verified by
+  tests/test_stack_resolution.gd: gap between releases = 393 ms (was near-simultaneous).
+- RULE logged in HANDOFF: a staggered PRESENTATION beat under time dilation must
+  either run at a time scale where its inter-event gap produces visible on-screen
+  motion, or lengthen the gap to compensate — real-time gaps alone are insufficient
+  in deep slow-mo.
+
+(4) HEALING EMERALD CAP (MATCH BUDGET):
+- MatchController: NEW @export emerald_max_per_match (default 2). Each match spawns
+  a TOTAL of 2 emeralds across all rounds; no mid-round refresh, no reset on respawn.
+  Once both have been claimed (or expiry cycles them out), no more emeralds spawn
+  until the next REMATCH.
+- EmeraldController mesh upgrade: the placeholder green sphere was replaced with a
+  faceted CHAOS EMERALD brilliant-cut gem (resources/models/chaos_emerald_mesh.tres,
+  created once via SurfaceTool with flat-per-face normals + an emissive green
+  StandardMaterial3D, shared static to avoid fresh pipeline compiles mid-fight).
+- Visual tuning: spin rate lowered 1.0 -> 1.0 (kept at 1 full rotation per second);
+  hover bob amplitude reduced 0.10 (subtler bob). Wander box expanded (±440u X,
+  ±560u Y, drift speed 120) so the emerald roams wider and can reflect off the
+  arena side walls.
+
+(5) SIDE-WALL HITBOX REPOSITIONING + WALL PULSES:
+- match_arena.tscn: the invisible side-wall BounceWall colliders were moved OUT
+  (fixed_position_x ±30801920 -> ±32768000 in 64.16 fixed-point, i.e. centre
+  position ±500 -> ±500 sim units; collider inner face ±450 -> ±480, just OUTSIDE
+  the glowing cyan perimeter glow at ±475). Result: walls are positioned at the
+  VISIBLE arena edge, no longer indented.
+- FireballController._on_bounced: wall pulses (BurstFX blooms) now spawn ON the
+  wall face (the ball's centre pushed OUTWARD by the collider's half-extent) instead
+  of at the projectile centre. This visually anchors the impact to the wall art.
+- FireballController: NEW @export emits_wall_pulse (default true). Counterspell
+  frost waves set this false (via CardCasterComponent._resolve_counter) so the wide
+  Icey Retort ice wave never flashes pulses as it travels mid-court — only true
+  wall bounces trigger visible impacts.
+
+(6) KNOCKOUT SEQUENCE — CINEMATIC DEATH BEAT (THE BIG ONE):
+When a wizard is KNOCKED OUT (health reaches 0), a multi-part cinematic plays BEFORE
+the round-end / match-end overlay:
+
+  (a) SLOW-MO HOLD: the_stack.gd NEW hold_dilation(scale) method parks
+      Engine.time_scale at death_time_scale (0.3, 30% speed) and HOLDS it until
+      the beat ends (cleared by a dedicated _in_death_sequence guard in
+      MatchController._process). No resume_ramp — the dilation is an abrupt hold,
+      not a smooth transition.
+
+  (b) DEATH CAMERA: camera_rig.gd NEW begin_death_cam() / end_death_cam() /
+      _update_death_cam methods. The camera ZOOMS IN (death_zoom_scale 0.5 = 50%
+      tighter FOV), focuses its look_at() on the eliminated wizard's Sprite3D,
+      and TRACKS the wizard's fling trajectory as they're launched off the baseline.
+      As the arc completes, the camera eases back to normal framing.
+
+  (c) DEATH FLING (SCALED): wizard_animator_component.gd _update_death(delta) now
+      uses the SCALED delta (delta * Engine.time_scale) so the sprite's gravity arc
+      and tumble play synchronously with the slow-mo world. Previous fling ran on
+      unscaled delta and felt misaligned.
+
+  (d) BIGGER EXPLOSION: BurstFX.spawn spawns TWO bursts on KO — ~80 fiery orange
+      particles + ~46 white-flash particles (larger overall than a normal hit).
+
+  (e) SCREEN-SPACE RIPPLE SHOCKWAVE: retro_lens.gdshader gained ripple_center,
+      ripple_progress, ripple_strength uniforms. On KO, MatchController
+      _update_death_ripple drives these on SCALED delta so the ripple expands in
+      sync with the slow-mo (concentric ring distortion emanating from the impact
+      point, fading over ~1.5 s).
+
+  (f) FLOOR SHADOW HIDES: DropShadowComponent (scripts/visual/drop_shadow_component.gd)
+      auto-detects a sibling HealthComponent and listens to knocked_out (hide shadow)
+      / health_changed (show shadow on revive). The grounding shadow vanishes as the
+      wizard is launched, returns when health refills.
+
+  (g) RESULT OVERLAY WAIT: MatchController._begin_death_sequence / _finish_death_sequence
+      use a wall-clock SceneTreeTimer (ignore_time_scale = false, runs on scaled
+      delta, so it respects the death slow-mo). The post-round / post-game overlay
+      waits death_sequence_seconds (2.5 s, tunable) for the animation to complete,
+      then initiates the round/match-end UI. An _in_death_sequence guard parks the
+      normal round-flow state machine until the beat ends.
+
+  (h) VICTORY / DEFEAT VERDICT HEADING: NEW bold heading in match_flow_overlay.gd
+      _on_knockout_began callback. On a MATCH-ENDING KO, a tall "VICTORY" (yellow,
+      player won) or "DEFEAT" (red, player lost) label pops HIGH on-screen, framed
+      by the same horizontal lightning bolts as the round-start banner. The heading
+      HOLDS THROUGH the death beat so it never clips the fling animation. Driven by
+      new MatchController.knockout_began(is_match_end: bool, player_won: bool) signal.
+      A _round_hold mode in the overlay parks the round-result banner until the
+      verdict heading clears, so only one result dominates the screen at a time.
+
+VERIFICATION (ALL 14 SUITES PASS, BIT-IDENTICAL DETERMINISM):
+- 12 original suites (test_determinism through test_fire_shake) — PASS unchanged.
+- tests/test_death_sequence.gd (NEW): boots the arena, triggers a match-ending KO,
+  asserts the death sequence triggers (verified _in_death_sequence guard + delayed
+  round_ended/match_ended signals), time_scale held at death_time_scale (0.3),
+  death scene timers respect the scaled delta, slow-mo ends exactly at
+  death_sequence_seconds (2.5 s).
+- tests/test_emerald_cap.gd (NEW): spawns emerald #1, claims it (hp +1), spawns
+  emerald #2, claims it (hp +1), waits for the next interval, verifies NO emerald
+  #3 spawns (cap reached per-match). Rematch resets emerald_claimed_count; a new
+  match starts with an empty budget.
+- test_stack_resolution.gd + test_round_flow.gd + test_play_again.gd were UPDATED:
+  death_sequence_seconds set SMALL (0.02 s) + death_time_scale set to 1.0 (no
+  actual slow-mo in tests) to collapse the cinematic beat so tests run fast. Tests
+  then wait for the now-delayed round_ended and match_ended signals (via
+  wait_until_signal or timer polling) before asserting match state (score, round
+  number, etc.). No assertions changed; the tests just needed adaptation for the
+  delayed signal timing.
+- Determinism stays BIT-IDENTICAL across all suites (new timers are
+  ignore_time_scale or scaled, never sampled into sim dicts; all new signals are
+  signal-driven, no floating-point state).
+- Screenshot probe (tests/screenshot_probe.gd + tests/screenshot_death_sequence.gd
+  NEW): verify the chaos-emerald gem visual in the arena, the death camera focus,
+  the ripple shockwave, and the VICTORY / DEFEAT heading text at full resolution.
+- GitHub backup: https://github.com/Flowishloz/SpellBop.git (main, all code +
+  scenes + tests up to date).
+
+SPRINT 20 COMPLETE — ROUND-2 POLISH AND CINEMATIC DONE:
+The entire Sprint 20 UI refinement, freeze reliability hardening, visibility improvements,
+emerald economy, wall repositioning, and KNOCKOUT SEQUENCE cinematic are now finished and
+fully committed. The game now provides a dramatic, visually-complete death/victory
+experience. All 14 headless test suites pass with determinism preserved. The project is
+backed up and ready for the next phase.

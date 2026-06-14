@@ -39,6 +39,15 @@ uniform float dither_strength : hint_range(0.0, 1.0) = 0.6;
 uniform float scanline_strength : hint_range(0.0, 0.4) = 0.07;
 uniform float vignette_strength : hint_range(0.0, 1.0) = 0.22;
 
+// 6. DEATH RIPPLE (Sprint 20): a screen-space shockwave that expands from the
+// point of contact on a knockout — a Screen-Space Distortion ring that displaces
+// the sampled image radially. MatchController drives ripple_progress (0..1, < 0 =
+// off) on SCALED time so the ring expands slowly during the death slow-mo, like
+// the rest of the 3D.
+uniform vec2 ripple_center = vec2(0.5, 0.5); // impact point, screen UV
+uniform float ripple_progress = -1.0;        // 0..1 expansion, < 0 = inactive
+uniform float ripple_strength = 0.0;         // peak UV displacement
+
 const mat4 BAYER = mat4(
 		vec4( 0.0,  8.0,  2.0, 10.0),
 		vec4(12.0,  4.0, 14.0,  6.0),
@@ -46,8 +55,23 @@ const mat4 BAYER = mat4(
 		vec4(15.0,  7.0, 13.0,  5.0));
 
 void fragment() {
+	// --- 0. Death ripple (screen-space shockwave) ----------------------
+	// Displace the sample UV radially along an expanding ring centred on the
+	// impact point, fading as it grows — a Screen-Space Distortion shockwave.
+	vec2 suv = SCREEN_UV;
+	if (ripple_progress >= 0.0) {
+		float aspect = SCREEN_PIXEL_SIZE.y / SCREEN_PIXEL_SIZE.x; // res.x / res.y
+		vec2 d = suv - ripple_center;
+		float dist = length(vec2(d.x * aspect, d.y));
+		float radius = ripple_progress * 1.4;
+		float ring = smoothstep(0.12, 0.0, abs(dist - radius));
+		float fade = 1.0 - clamp(ripple_progress, 0.0, 1.0);
+		vec2 dir = normalize(d + vec2(1e-6));
+		suv += dir * ring * ripple_strength * fade;
+	}
+
 	// --- 1. Curvilinear lens -------------------------------------------
-	vec2 centered = SCREEN_UV - vec2(0.5);
+	vec2 centered = suv - vec2(0.5);
 	float r2 = dot(centered, centered) * 2.0; // 0 center, 1.0 at corners
 	vec2 uv = vec2(0.5) + centered * (1.0 + distortion_strength * r2)
 			/ (1.0 + distortion_strength);
