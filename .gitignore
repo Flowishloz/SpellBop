@@ -1,0 +1,14 @@
+# Godot 4+ specific ignores
+.godot/
+/android/
+
+# Build caches (regenerable)
+.sconsign.dblite
+
+# OS / editor junk & interrupted-copy temp files
+.DS_Store
+**/.DS_Store
+*.TMP
+
+# Local-only Claude settings (personal permission grants)
+.claude/settings.local.json

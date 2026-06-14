@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="CardResource" format=3 uid="uid://ba6bdqsbh6ol8"]
+
+[ext_resource type="Script" uid="uid://d3cbexyjjpqvy" path="res://resources/card_resource.gd" id="1_card"]
+[ext_resource type="PackedScene" path="res://scenes/barrier.tscn" id="2_wall"]
+
+[resource]
+script = ExtResource("1_card")
+card_type = 1
+faction = 2
+casting_cost = 2
+description = "Instantly raise a wall. Block at the LAST second and the wall charges the ball, hurling it back faster and at a wild angle. Shatters against energy bolts. 0 DMG."
+barrier_scene = ExtResource("2_wall")
+display_name = "Gaea's Wall"
+is_card = true
+cast_time = 0.0

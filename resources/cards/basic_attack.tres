@@ -1,0 +1,19 @@
+[gd_resource type="Resource" script_class="CardResource" format=3 uid="uid://bqspepnnjwjj"]
+
+[ext_resource type="Script" uid="uid://d3cbexyjjpqvy" path="res://resources/card_resource.gd" id="1_card"]
+[ext_resource type="PackedScene" path="res://scenes/spark_bolt.tscn" id="2_proj"]
+
+[resource]
+script = ExtResource("1_card")
+casting_cost = 2
+description = "Hold to channel a ball of uncontained energy onto the stack. It SEEKS its target - and SHATTERS walls, splitting into two 1-DMG shards. 2 DMG."
+lifetime = 2.8
+homing_strength = 0.2
+barrier_breaker = true
+display_name = "Spark Bolt"
+projectile_scene = ExtResource("2_proj")
+base_speed = 1050.0
+damage = 2
+projectile_size = 31.0
+is_card = true
+cast_time = 1.0

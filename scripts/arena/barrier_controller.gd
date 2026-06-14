@@ -1,0 +1,313 @@
+## barrier_controller.gd — Deployable card barrier (Defense, Category B).
+##
+## ROLE: a temporary wall a DEFENSE card deploys in front of its caster.
+## It lives on the WALLS collision layer, so projectiles (mask = walls only)
+## reflect off it through the exact same deterministic move_and_collide +
+## bounce() path as the arena walls — zero new collision code. (That cuts
+## both ways: your OWN throws bounce off your wall too — don't fire through
+## your own bulwark.)
+##
+## WINDOW OF AFFECT (Creative Director, round-system sprint): defense casts
+## are INSTANT; the skill is timing. The caster measures the WOA at deploy
+## (how close the incoming ball already was) and arms this barrier with it.
+## The FIRST hostile ball that reaches the wall is CAPTURED: it sticks to
+## the wall and charges for hold_ticks (camera shake builds — the
+## Lethal-Company anticipation beat), then releases back down-court at
+## reflect_mult x its captured speed, ricocheting sideways harder the higher
+## the WOA (deterministic angle — the "random" sign is a parity hash of the
+## capture position, identical on every peer). Later balls just bounce
+## normally off the static body.
+##
+## All sim math is 64.16 fixed-point ints. Sim state: age, position, capture
+## hold counter + latched release parameters. Spawn/despawn lifecycle is
+## local for now — the rollback SyncManager owns it in a later sprint (the
+## captured-ball NODE REFERENCE is part of that same lifecycle debt).
+##
+## DEPLOY CONTRACT: CardCasterComponent instantiates the scene, positions it
+## via set_global_fixed_position + sync_to_physics_engine, then calls
+## deploy() with the card's wall parameters and arm_window_of_affect() with
+## the measured WOA (fixed-point/tick values — the caster converts the
+## CardResource floats once at cast time).
+class_name BarrierController
+extends SGStaticBody2D
+
+## Emitted when the barrier's lifetime expires (it frees itself afterwards).
+signal barrier_expired
+
+## A hostile ball stuck to the wall and is charging (anticipation hold).
+signal capture_started
+
+## Per held tick: progress 0..1 toward release. Camera-shake hook
+## (MatchController ramps rumble off this — pure presentation).
+signal capture_charging(progress: float)
+
+## The held ball released (reflected). MatchController slams the camera.
+signal capture_released
+
+## When false, the local tick driver idles (rollback SyncManager later).
+@export var local_tick_driver_enabled: bool = true
+
+## Visual rig (a Node3D holding the wall mesh). The barrier positions it from
+## the sim ONCE at deploy (and per tick when drifting) — barriers have no
+## VisualBridge because they have no movement component to signal from.
+@export var visual_root_path: NodePath = NodePath("Visual")
+
+## sim units -> meters (must match VisualBridgeComponent's scale).
+@export var sim_to_world_scale: float = 0.01
+
+## Visual wall height in meters (sim is 2D — height is presentation only).
+@export var visual_height: float = 1.2
+
+# --- Deploy-time parameters (fixed-point/ticks, set by deploy()) ---
+var _lifespan_ticks: int = 0      # 0 = until despawn by round flow
+var _move_speed_fp: int = 0       # X drift per tick (Category B movement_speed)
+var _half_w_fp: int = 0
+var _half_h_fp: int = 0
+
+# --- Window of Affect (set by arm_window_of_affect()) ---
+var _owner_body: Node = null      # the deploying wizard (its balls don't count)
+var _woa_fp: int = 0              # 0..ONE, measured at deploy
+var _hold_ticks: int = 0          # anticipation hold length
+var _reflect_mult_fp: int = 65536 # release speed multiplier
+var _ricochet_fp: int = 0         # lateral fraction of release speed
+var _release_dir: int = -1        # vy sign of the RELEASED ball (back down-court)
+var _release_mask: int = 0        # collision mask for the released ball (0 = keep)
+var _woa_armed: bool = false      # one capture per barrier
+
+# Authoritative sim state.
+var _age_ticks: int = 0
+var _capture_remaining: int = 0   # > 0 = a ball is held, charging
+var _captured_speed_fp: int = 0   # |velocity| at capture
+var _captured_ball: Node = null   # node ref (rollback lifecycle debt, see header)
+
+var _visual_root: Node3D
+
+
+func _ready() -> void:
+	# HARDCODED COLLISION LAYERS (graveyard rule: the editor fails to persist
+	# SG layer assignments). The barrier IS a wall: projectiles bounce off it;
+	# it scans nothing itself.
+	collision_layer = PhysicsLayers.LAYER_WALLS
+	collision_mask = 0
+	fixed_rotation = 0
+	_visual_root = get_node_or_null(visual_root_path) as Node3D
+
+
+## Arms the barrier. Called by CardCasterComponent AFTER positioning the body.
+##  - half_w_fp / half_h_fp: collider half-extents, fixed-point sim units
+##    (CardResource.wall_size / 2).
+##  - lifespan_ticks: whole ticks before despawn (ceil of wall_lifetime).
+##  - move_speed_fp: X drift, fixed-point sim units per TICK (0 = static).
+func deploy(half_w_fp: int, half_h_fp: int, lifespan_ticks: int, move_speed_fp: int = 0) -> void:
+	_half_w_fp = half_w_fp
+	_half_h_fp = half_h_fp
+	_lifespan_ticks = lifespan_ticks
+	_move_speed_fp = move_speed_fp
+	_age_ticks = 0
+
+	# Resize the collider to the card's wall_size. The scene's shape resource
+	# is DUPLICATED first: instanced scenes share sub-resources, so mutating
+	# the shared shape would silently resize every other live barrier.
+	var shape_node: SGCollisionShape2D = null
+	for child in get_children():
+		if child is SGCollisionShape2D:
+			shape_node = child
+			break
+	if shape_node != null and shape_node.shape != null:
+		var shape: SGShape2D = shape_node.shape.duplicate()
+		shape.set(&"extents_x", half_w_fp)
+		shape.set(&"extents_y", half_h_fp)
+		shape_node.shape = shape
+	sync_to_physics_engine()
+
+	_sync_visual()
+
+
+## Arms the Window of Affect (called right after deploy()).
+##  - owner_body: the deploying wizard (its own throws are ignored).
+##  - hostile_dir: vy SIGN of incoming hostile balls; the release reverses it.
+##  - woa_fp: 0..ONE block quality measured at deploy.
+##  - hold_ticks / reflect_mult_fp / ricochet_fp: precomputed by the caster
+##    from the CardResource's WOA tuning.
+##  - release_mask: collision mask stamped onto the released ball — it now
+##    belongs to the OWNER's side, so it must pass the owner's one-way walls
+##    and collide with the enemy's (PhysicsLayers.projectile_mask_for).
+func arm_window_of_affect(owner_body: Node, hostile_dir: int, woa_fp: int,
+		hold_ticks: int, reflect_mult_fp: int, ricochet_fp: int,
+		release_mask: int = 0) -> void:
+	_owner_body = owner_body
+	_release_dir = -hostile_dir
+	_woa_fp = woa_fp
+	_hold_ticks = maxi(0, hold_ticks)
+	_reflect_mult_fp = reflect_mult_fp
+	_ricochet_fp = ricochet_fp
+	_release_mask = release_mask
+	_woa_armed = true
+
+
+# =====================================================================
+# ROLLBACK CONTRACT
+# =====================================================================
+
+## One tick: capture/hold/release first, optional X drift, then lifetime.
+func _network_process(_input: Dictionary) -> void:
+	if _capture_remaining > 0:
+		_tick_capture()
+	elif _woa_armed:
+		_try_capture()
+
+	if _move_speed_fp != 0:
+		var pos: SGFixedVector2 = fixed_position
+		pos.x += _move_speed_fp
+		fixed_position = pos
+		sync_to_physics_engine()
+		_sync_visual()
+
+	_age_ticks += 1
+	if _lifespan_ticks > 0 and _age_ticks >= _lifespan_ticks:
+		# A still-held ball is released (weakly) rather than orphaned frozen.
+		if _capture_remaining > 0:
+			_capture_remaining = 1
+			_tick_capture()
+		barrier_expired.emit()
+		# Local lifecycle (SyncManager.despawn() later) — queue_free is
+		# idempotent if expiry re-fires before the free lands.
+		queue_free()
+
+
+## Scan for the FIRST hostile ball touching the wall face and capture it:
+## freeze it in place (launch 0,0 — also restarts its lifespan) and start
+## the anticipation hold. Pure fixed-point int proximity test.
+func _try_capture() -> void:
+	var container: Node = get_parent()
+	if container == null:
+		return
+	var my_pos: SGFixedVector2 = get_global_fixed_position()
+	var band_x: int = _half_w_fp + SGFixed.from_float(28.0)
+	var band_y: int = _half_h_fp + SGFixed.from_float(34.0)
+	for child in container.get_children():
+		if child == self or not child.has_method(&"redirect") or not child.has_method(&"get_hit_source"):
+			continue
+		if child.get_hit_source() == _owner_body:
+			continue  # the owner's own throw: plain physics bounce only
+		var ball_pos: SGFixedVector2 = child.get_global_fixed_position()
+		# SPEED-AWARE BAND (WOA consistency fix): a fast ball can bounce off
+		# the wall and travel a full tick-step before this scan runs (tick
+		# ORDER depends on who entered the container first) — widen the band
+		# by the ball's per-tick speed so one tick of escape never dodges
+		# the capture.
+		var dyn_band_y: int = band_y + absi(child.get_velocity_y())
+		if absi(my_pos.x - ball_pos.x) >= band_x or absi(my_pos.y - ball_pos.y) >= dyn_band_y:
+			continue
+		# BARRIER BREAKER (Spark Bolt): no capture — the wall SHATTERS and
+		# the bolt splits into two 1-damage shards that continue through.
+		if "splits_on_barrier" in child and child.splits_on_barrier:
+			child.split_on_barrier(-_release_dir)
+			_shatter()
+			return
+		# CAPTURE: bank its speed, then freeze it on the wall.
+		var vel: SGFixedVector2 = SGFixed.vector2(child.get_velocity_x(), child.get_velocity_y())
+		_captured_speed_fp = vel.length()
+		_captured_ball = child
+		_capture_remaining = maxi(1, _hold_ticks)
+		_woa_armed = false  # one capture per barrier
+		child.launch(0, 0, SGFixed.ONE)
+		# INTERCEPT FX (pure visual): shield-colored shards FLATTEN against
+		# the wall — fanning UP/ACROSS the wall plane like a snowball hitting
+		# a wall, not toward the target (Creative Director).
+		if _visual_root != null:
+			BurstFX.spawn(get_parent(), _visual_root.global_position + Vector3(0, 0.2, 0),
+					Vector3.UP, Color(0.45, 0.9, 0.6, 0.95), 30, 3.6, 0.07, 80.0)
+		Sfx.play(&"shield_capture")
+		capture_started.emit()
+		return
+
+
+## GLASS SHATTER (a barrier breaker got through): shard burst flattened
+## against the wall plane + the glass crack, then the wall is gone.
+func _shatter() -> void:
+	if _visual_root != null:
+		BurstFX.spawn(get_parent(), _visual_root.global_position + Vector3(0, 0.4, 0),
+				Vector3.UP, Color(0.85, 1.0, 0.92, 0.95), 38, 4.5, 0.055, 85.0)
+	Sfx.play(&"shield_shatter")
+	queue_free()
+
+
+## One held tick: charge toward release; at zero, fling the ball back at
+## reflect_mult x speed with the WOA ricochet angle.
+func _tick_capture() -> void:
+	if _captured_ball == null or not is_instance_valid(_captured_ball):
+		_capture_remaining = 0
+		return
+	_capture_remaining -= 1
+	if _capture_remaining > 0:
+		var total: float = float(maxi(1, _hold_ticks))
+		capture_charging.emit(1.0 - float(_capture_remaining) / total)
+		return
+
+	# RELEASE. Deterministic "random" ricochet sign: parity hash of the
+	# captured ball's fixed X (bit 16 = the 1-sim-unit bit).
+	var ball_pos: SGFixedVector2 = _captured_ball.get_global_fixed_position()
+	var sign_hash: int = 1 if ((ball_pos.x >> 16) & 1) == 1 else -1
+	var speed_out_fp: int = SGFixed.mul(_captured_speed_fp, _reflect_mult_fp)
+	var vx: int = SGFixed.mul(speed_out_fp, _ricochet_fp) * sign_hash
+	var vy: int = speed_out_fp * _release_dir
+
+	if _captured_ball.has_method(&"set_hit_source"):
+		_captured_ball.set_hit_source(_owner_body)
+	if _release_mask != 0:
+		_captured_ball.collision_mask = _release_mask  # now the OWNER's ball
+	if _captured_ball.has_method(&"set_homing"):
+		_captured_ball.set_homing(null, 0)  # a reflected ball flies true
+	_captured_ball.launch(vx, vy, SGFixed.ONE)
+	_captured_ball = null
+	capture_released.emit()
+
+
+func _save_state() -> Dictionary:
+	var pos: SGFixedVector2 = fixed_position
+	return {
+		"age": _age_ticks,
+		"px": pos.x,
+		"py": pos.y,
+		"cap": _capture_remaining,
+		"cs": _captured_speed_fp,
+	}
+
+
+func _load_state(state: Dictionary) -> void:
+	_age_ticks = int(state.get("age", 0))
+	_capture_remaining = int(state.get("cap", 0))
+	_captured_speed_fp = int(state.get("cs", 0))
+	var pos: SGFixedVector2 = fixed_position
+	pos.x = int(state.get("px", pos.x))
+	pos.y = int(state.get("py", pos.y))
+	fixed_position = pos
+	sync_to_physics_engine()
+	_sync_visual()
+
+
+## LOCAL TICK DRIVER — replaced by the rollback SyncManager in a later sprint.
+func _physics_process(_delta: float) -> void:
+	if local_tick_driver_enabled:
+		_network_process({})
+
+
+# =====================================================================
+# Internals
+# =====================================================================
+
+## Places and sizes the 3D wall mesh from the sim state. Presentation only —
+## floats are fine here (the ONLY fixed->float conversion in this script).
+func _sync_visual() -> void:
+	if _visual_root == null:
+		return
+	var pos: SGFixedVector2 = get_global_fixed_position()
+	# fixed (64.16) -> sim units -> meters.
+	var x_m: float = (pos.x / 65536.0) * sim_to_world_scale
+	var z_m: float = (pos.y / 65536.0) * sim_to_world_scale
+	_visual_root.global_position = Vector3(x_m, visual_height * 0.5, z_m)
+	_visual_root.scale = Vector3(
+			maxf(0.05, (_half_w_fp / 65536.0) * 2.0 * sim_to_world_scale),
+			visual_height,
+			maxf(0.05, (_half_h_fp / 65536.0) * 2.0 * sim_to_world_scale))

@@ -1,0 +1,51 @@
+[gd_scene load_steps=8 format=3]
+
+[ext_resource type="Script" uid="uid://dm33g3lgs62aq" path="res://scripts/projectiles/fireball_controller.gd" id="1_ctrl"]
+[ext_resource type="Script" uid="uid://coornnxdnsfbr" path="res://scripts/projectiles/components/projectile_movement_component.gd" id="2_move"]
+[ext_resource type="Script" path="res://scripts/projectiles/components/hit_detection_component.gd" id="3_hit"]
+[ext_resource type="Script" uid="uid://cckf0f2x0ciy6" path="res://scripts/player/components/visual_bridge_component.gd" id="4_bridge"]
+
+[sub_resource type="SGRectangleShape2D" id="SGRectangleShape2D_wave"]
+extents_x = 13107200
+extents_y = 1310720
+
+[sub_resource type="StandardMaterial3D" id="Mat_ice"]
+transparency = 1
+shading_mode = 0
+albedo_color = Color(0.45, 0.75, 1, 0.55)
+emission_enabled = true
+emission = Color(0.3, 0.6, 1, 1)
+emission_energy_multiplier = 0.6
+
+[sub_resource type="BoxMesh" id="BoxMesh_wave"]
+material = SubResource("Mat_ice")
+size = Vector3(4, 0.5, 0.35)
+
+[node name="IceWave" type="SGCharacterBody2D"]
+collision_layer = 2
+collision_mask = 4
+script = ExtResource("1_ctrl")
+
+[node name="SGCollisionShape2D" type="SGCollisionShape2D" parent="."]
+shape = SubResource("SGRectangleShape2D_wave")
+
+[node name="ProjectileMovementComponent" type="Node" parent="."]
+script = ExtResource("2_move")
+terminal_velocity = 2200.0
+lifespan_seconds = 1.5
+
+[node name="HitDetectionComponent" type="Node" parent="."]
+script = ExtResource("3_hit")
+hit_extent_x = 200.0
+hit_extent_y = 20.0
+
+[node name="VisualBridgeComponent" type="Node" parent="." node_paths=PackedStringArray("visual_root")]
+script = ExtResource("4_bridge")
+visual_root = NodePath("../Visual")
+smoothing_enabled = false
+visual_height = 0.8
+
+[node name="Visual" type="Node3D" parent="."]
+
+[node name="WaveMesh" type="MeshInstance3D" parent="Visual"]
+mesh = SubResource("BoxMesh_wave")

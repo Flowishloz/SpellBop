@@ -1,0 +1,121 @@
+## test_match_smoke.gd — Sprint 3 end-to-end smoke test (headless).
+##
+## Boots the REAL match arena (scenes/match_arena.tscn) and lets it run on the
+## wall clock. The AI opponent needs no input devices, so this exercises the
+## full loop unattended: AI brain -> input pipeline -> caster -> fireball
+## spawn -> lifespan expiry. Also verifies the Stack rules:
+##   - the BASE fireball is NOT a card: casting it must NOT open the Stack
+##     window or dilate time (Creative Director directive).
+##   - TheStack itself still dilates/restores when driven directly (the card
+##     system will drive it later).
+##
+## Run: <godot> --headless --path . -s res://tests/test_match_smoke.gd
+extends SceneTree
+
+var _failures: int = 0
+var _opened: int = 0
+var _saw_projectile: bool = false
+var _min_time_scale: float = 1.0
+
+
+func _check(ok: bool, label: String) -> void:
+	if ok:
+		print("PASS: ", label)
+	else:
+		print("FAIL: ", label)
+		_failures += 1
+
+
+func _init() -> void:
+	_run()
+
+
+func _run() -> void:
+	await process_frame
+
+	var stack: Node = root.get_node_or_null("TheStack")
+	_check(stack != null, "TheStack autoload present")
+
+	var packed: PackedScene = load("res://scenes/match_arena.tscn")
+	_check(packed != null, "match_arena.tscn loads")
+	if packed == null or stack == null:
+		quit(1)
+		return
+
+	var arena: Node = packed.instantiate()
+
+	# PIN: base-fireball-only rally. The AI now plays CARDS on an interval
+	# (cards legitimately open the Stack); disabling card play keeps this
+	# suite's "base fireball never dilates time" assertions meaningful.
+	# (tests/test_card_system.gd owns the card-path coverage.)
+	var ai_brain: Node = arena.get_node_or_null("Opponent/AIBrain")
+	_check(ai_brain != null, "Opponent AIBrain present")
+	if ai_brain != null:
+		ai_brain.card_interval_ticks = 0
+		ai_brain.counter_enabled = false
+
+	root.add_child(arena)
+	await process_frame
+
+	stack.stack_opened.connect(func(_d: float) -> void: _opened += 1)
+
+	var projectiles: Node = arena.get_node_or_null("Projectiles")
+	_check(projectiles != null, "Projectiles container present")
+
+	var player_health: Node = arena.get_node_or_null("Player/Health")
+	_check(player_health != null, "Player HealthComponent present")
+
+	# AI first cast lands at tick 150 (~2.5 s). Track the FIRST fireball
+	# instance specifically: it must be freed by its 2.8 s lifespan even
+	# though the AI keeps casting (lifespans overlap, the container never
+	# fully empties — asserting on a specific instance is the honest check).
+	# GOTCHA (cost one false failure already): in Godot 4 a FREED instance
+	# compares == null, so guarding the capture with `first_ball == null`
+	# silently re-captures a fresh ball each time the old one dies. Use a
+	# dedicated bool so the capture happens exactly once.
+	#
+	# Timing (RELEASE-FIRE): the AI starts HOLDING cast at tick 150 (~2.5 s),
+	# holds 45 ticks and THROWS ON RELEASE (~3.3 s) with a partial charge
+	# boost; the boosted ball crosses the ±880 court and strikes the idle
+	# player ~4.5 s (or expires via its 2.2 s lifespan). 9 s covers it all.
+	var first_ball: Node = null
+	var first_ball_captured: bool = false
+	var first_ball_freed: bool = false
+	var deadline: int = Time.get_ticks_msec() + 9000
+	while Time.get_ticks_msec() < deadline:
+		await process_frame
+		_min_time_scale = minf(_min_time_scale, Engine.time_scale)
+		if projectiles != null and projectiles.get_child_count() > 0:
+			_saw_projectile = true
+			if not first_ball_captured:
+				first_ball_captured = true
+				first_ball = projectiles.get_child(0)
+		if first_ball_captured and not is_instance_valid(first_ball):
+			first_ball_freed = true
+			if player_health != null and player_health.get_health() < player_health.max_health:
+				break
+
+	_check(_saw_projectile, "AI cast spawned a projectile into Projectiles (charge cast completed)")
+	_check(_opened == 0, "BASE fireball did NOT open the Stack (opened %d times)" % _opened)
+	_check(is_equal_approx(_min_time_scale, 1.0), "time never dilated during base-fireball rally (min %.3f)" % _min_time_scale)
+	_check(first_ball_freed, "first fireball was freed (player hit or lifespan) while later casts continued")
+	_check(player_health != null and player_health.get_health() < player_health.max_health,
+		"AI fireball damaged the idle player (hp %d/%d)" % [
+			player_health.get_health() if player_health != null else -1,
+			player_health.max_health if player_health != null else -1])
+
+	# TheStack still functions when driven directly (card system arrives later).
+	stack.open_window(0.4)
+	await process_frame
+	_check(_opened == 1, "direct open_window() opens the Stack")
+	_check(is_equal_approx(Engine.time_scale, 0.1), "direct open dilates to 10%% (got %.3f)" % Engine.time_scale)
+	var restore_deadline: int = Time.get_ticks_msec() + 2000
+	while Time.get_ticks_msec() < restore_deadline and not is_equal_approx(Engine.time_scale, 1.0):
+		await process_frame
+	_check(is_equal_approx(Engine.time_scale, 1.0), "window expired and speed restored to 1.0")
+
+	if _failures == 0:
+		print("MATCH SMOKE TEST: ALL PASS")
+	else:
+		print("MATCH SMOKE TEST: %d FAILURES" % _failures)
+	quit(_failures)

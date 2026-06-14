@@ -1,0 +1,15 @@
+[gd_scene load_steps=4 format=3]
+
+[ext_resource type="Script" path="res://scripts/ui/match_hud.gd" id="1_hud"]
+[ext_resource type="Script" path="res://scripts/ui/dash_button_hud.gd" id="2_dash"]
+[ext_resource type="Script" path="res://scripts/ui/cast_button_hud.gd" id="3_cast"]
+
+[node name="MatchHUD" type="CanvasLayer"]
+script = ExtResource("1_hud")
+
+[node name="CastButton" type="Control" parent="."]
+script = ExtResource("3_cast")
+center = Vector2(730, 1690)
+
+[node name="DashButton" type="Control" parent="."]
+script = ExtResource("2_dash")

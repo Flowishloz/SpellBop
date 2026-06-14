@@ -1,0 +1,26 @@
+GRAPHICS AND ENVIRONMENT PIPELINE: WIZARD DODGEBALL
+
+1. THE VISUAL PERSPECTIVE (THE TENNIS COURT METHOD)
+- Camera View: 3rd-person, tilted top-down perspective (reminiscent of Windjammers or Wii Sports Tennis).
+- Camera Positioning: Raised on the Y-axis and pitched downward, framing the opponent at the top of the screen and the player at the bottom to create a trapezoidal play area.
+- Lens Effect: High Field of View (FOV) with fisheye/barrel distortion. This forces incoming projectiles to visually scale up and appear to accelerate as they approach the camera, visually amplifying the reflex-heavy "parry" mechanics.
+
+2. HYBRID 2D/3D ARCHITECTURE
+- Engine Backend: True 3D physics space. Movement and projectiles exist on a flat floor plane (X and Z axes).
+- Art Style: High-quality pixel art (Balatro/Lethal League aesthetic).
+- Implementation Method: Billboarding via Godot's Sprite3D nodes. All characters and spells are flat 2D sprites rendered on planes that automatically rotate to face the 3D camera perfectly.
+- Depth Readability: Hard-edged drop shadows rendered directly beneath sprites onto the 3D floor plane are mandatory. This provides the exact visual anchor players need to read Z-axis depth and time their defensive walls down to the pixel.
+
+3. AIMING AND MOVEMENT SPACE
+- Player Movement: Locked to the X-axis (left and right) along their respective baseline. No forward/backward (Z-axis) movement.
+- Aiming Mechanics: Aiming dictates the horizontal trajectory across the Z-axis. Casting while holding a directional input (e.g., 'left') shoots the fireball diagonally.
+- Arena Bounds: The 3D arena features invisible physical walls on the left and right, allowing for angled trick shots that bounce toward the opponent, bypassing forward-facing defenses.
+
+4. MULTIPLAYER CAMERA SYNC
+- Client-Side Perspective: The camera view is strictly local to ensure fairness. Each player always sees their own wizard at the bottom of the screen and the opponent at the top. The engine natively handles this by rotating Player 2's camera 180 degrees client-side.
+
+5. SOFTWARE WORKFLOW
+- Art Creation: Aseprite for drafting, formatting, and animating all 2D pixel art frames.
+- Engine Integration: Godot 4. Assets are imported into modular scenes utilizing a straightforward artist-friendly node stack (CharacterBody3D -> Sprite3D -> CollisionShape3D -> AnimationPlayer).
+- AI Collaboration: Claude generates text-based Godot Scene structures (.tscn) and GDScript code, which the developer pastes directly into the engine before manually tweaking the visual nodes and physics variables.
+

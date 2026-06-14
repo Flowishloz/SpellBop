@@ -1,0 +1,141 @@
+[gd_scene load_steps=19 format=3]
+
+[ext_resource type="Script" path="res://core/match_controller.gd" id="1_mc"]
+[ext_resource type="PackedScene" uid="uid://ce775qyi5wy6l" path="res://scenes/player.tscn" id="2_pl"]
+[ext_resource type="PackedScene" path="res://scenes/opponent.tscn" id="3_op"]
+[ext_resource type="Script" path="res://scripts/visual/camera_rig.gd" id="5_cam"]
+[ext_resource type="Texture2D" path="res://resources/placeholder/starfield.png" id="6_stars"]
+[ext_resource type="PackedScene" path="res://scenes/ui/match_hud.tscn" id="7_hud"]
+[ext_resource type="Shader" path="res://shaders/retro_lens.gdshader" id="8_retro"]
+[ext_resource type="Script" path="res://scripts/ui/card_hand_hud.gd" id="9_hand"]
+[ext_resource type="Script" path="res://scripts/ui/match_flow_overlay.gd" id="10_flow"]
+[ext_resource type="Script" path="res://scripts/ui/stack_display_hud.gd" id="11_stack"]
+[ext_resource type="Script" path="res://scripts/arena/bounce_wall.gd" id="12_wall"]
+[ext_resource type="Script" path="res://scripts/ui/settings_menu.gd" id="13_menu"]
+[ext_resource type="Script" path="res://scripts/ui/move_joystick_hud.gd" id="14_joy"]
+
+[sub_resource type="StandardMaterial3D" id="Mat_floor"]
+albedo_color = Color(0.16, 0.165, 0.19, 1)
+roughness = 0.85
+
+[sub_resource type="PlaneMesh" id="PlaneMesh_floor"]
+material = SubResource("Mat_floor")
+size = Vector2(9.6, 21)
+
+[sub_resource type="ShaderMaterial" id="ShaderMat_retro"]
+shader = ExtResource("8_retro")
+
+[sub_resource type="SGRectangleShape2D" id="SGRectangleShape2D_sidewall"]
+extents_x = 1310720
+extents_y = 98304000
+
+[sub_resource type="Environment" id="Env_arena"]
+ambient_light_source = 2
+ambient_light_color = Color(0.2, 0.22, 0.32, 1)
+ambient_light_energy = 1.1
+tonemap_mode = 2
+fog_enabled = true
+fog_light_color = Color(0.05, 0.06, 0.12, 1)
+fog_density = 0.012
+fog_sky_affect = 0.0
+
+[node name="MatchArena" type="Node3D"]
+script = ExtResource("1_mc")
+
+[node name="WorldEnvironment" type="WorldEnvironment" parent="."]
+environment = SubResource("Env_arena")
+
+[node name="KeyLight" type="OmniLight3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 7, 2)
+light_color = Color(1, 0.92, 0.8, 1)
+light_energy = 1.4
+omni_range = 22.0
+omni_attenuation = 1.3
+
+[node name="RimLight" type="OmniLight3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 3.5, -8.5)
+light_color = Color(0.45, 0.6, 1, 1)
+light_energy = 1.9
+omni_range = 13.0
+omni_attenuation = 1.2
+
+[node name="NearLight" type="OmniLight3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1.8, 3, 10.5)
+light_color = Color(1, 0.75, 0.55, 1)
+light_energy = 1.0
+omni_range = 9.0
+omni_attenuation = 1.4
+
+[node name="Floor" type="MeshInstance3D" parent="."]
+mesh = SubResource("PlaneMesh_floor")
+
+[node name="Camera3D" type="Camera3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1.45, 5.6, 12.6)
+fov = 71.0
+script = ExtResource("5_cam")
+target_path = NodePath("../Player/WizardRig")
+
+[node name="Starfield" type="Sprite3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 9, -14)
+pixel_size = 0.024
+texture_filter = 0
+texture = ExtResource("6_stars")
+
+[node name="Player" parent="." instance=ExtResource("2_pl")]
+fixed_position_y = 57671680
+position = Vector2(0, 880)
+
+[node name="Opponent" parent="." instance=ExtResource("3_op")]
+fixed_position_y = -57671680
+position = Vector2(0, -880)
+
+[node name="SideWallLeft" type="SGStaticBody2D" parent="."]
+fixed_position_x = -30801920
+script = ExtResource("12_wall")
+
+[node name="SGCollisionShape2D" type="SGCollisionShape2D" parent="SideWallLeft"]
+shape = SubResource("SGRectangleShape2D_sidewall")
+
+[node name="SideWallRight" type="SGStaticBody2D" parent="."]
+fixed_position_x = 30801920
+script = ExtResource("12_wall")
+
+[node name="SGCollisionShape2D" type="SGCollisionShape2D" parent="SideWallRight"]
+shape = SubResource("SGRectangleShape2D_sidewall")
+
+[node name="Projectiles" type="Node" parent="."]
+
+[node name="RetroPostFX" type="CanvasLayer" parent="."]
+layer = 0
+
+[node name="LensRect" type="ColorRect" parent="RetroPostFX"]
+material = SubResource("ShaderMat_retro")
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+
+[node name="MatchHUD" parent="." instance=ExtResource("7_hud")]
+health_path = NodePath("../Player/Health")
+
+[node name="CardHandHUD" type="CanvasLayer" parent="."]
+script = ExtResource("9_hand")
+card_caster_path = NodePath("../Player/CardCasterComponent")
+match_controller_path = NodePath("..")
+
+[node name="StackDisplayHUD" type="CanvasLayer" parent="."]
+script = ExtResource("11_stack")
+player_caster_path = NodePath("../Player/CardCasterComponent")
+opponent_caster_path = NodePath("../Opponent/CardCasterComponent")
+
+[node name="MatchFlowOverlay" type="CanvasLayer" parent="."]
+script = ExtResource("10_flow")
+match_controller_path = NodePath("..")
+
+[node name="MoveJoystickHUD" type="CanvasLayer" parent="."]
+script = ExtResource("14_joy")
+
+[node name="SettingsMenu" type="CanvasLayer" parent="."]
+script = ExtResource("13_menu")

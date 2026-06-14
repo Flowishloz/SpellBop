@@ -1,0 +1,123 @@
+SPELL & CARD ARCHITECTURE SPECIFICATION: WIZARD DODGEBALL
+
+===============================================================================
+1. CORE DATA TEMPLATE (GLOBAL PROPERTIES)
+===============================================================================
+Every single card in the 51-card pool inherits from this base data class 
+(implemented as a Godot Custom Resource).
+
+- spell_name (String): Unique identifier.
+- faction (Enum): RED (Adrenaline), BLUE (Control), GREEN (Momentum).
+- rarity (Enum): COMMON, UNCOMMON, RARE.
+- cast_time (Float): The duration (in seconds) the player must hold the input 
+  to charge and cast the spell. Generates mana sequentially during the hold.
+- is_reactive_only (Bool): Determines if the card can only be played onto the stack.
+- ui_sprite (Texture2D): The 2D card art face displayed during the draft phase.
+- world_sprite (Texture2D): Pixel art sprite used for the projectile/wall in 3D space.
+
+===============================================================================
+2. CATEGORY ARCHITECTURES
+===============================================================================
+
+-------------------------------------------------------------------------------
+CATEGORY A: ATTACK (PROJECTILES) - PROACTIVE
+-------------------------------------------------------------------------------
+Spells designed to cross the arena floor on the Z-axis to inflict damage.
+
+Properties:
+- base_speed (Float): Travel velocity across the court.
+- projectile_size (Float): Multiplier for the 3D collider and sprite scaling.
+- damage (Int): Numeric value applied to opponent's health pool on hit.
+- bounciness (Int): Number of wall ricochets allowed before self-destruction.
+- lifetime (Float): Maximum duration in seconds before the projectile expires.
+- projectile_count (Int): Number of projectiles spawned simultaneously (e.g., spread-shot).
+
+-------------------------------------------------------------------------------
+CATEGORY B: DEFENSE & UTILITY - PROACTIVE
+-------------------------------------------------------------------------------
+Static or dynamic barriers and mobility modifiers deployed in real-time neutral play.
+
+Properties:
+- wall_size (Vector2): The physical width and height of the barrier collider.
+- wall_lifetime (Float): How long the physical shield remains active in the arena.
+- movement_speed (Float): Lateral (X-axis) speed of the wall if it moves.
+- is_exploding (Bool): If true, detonates on impact, disrupting nearby projectile physics.
+- rebound_window (Float): Frame window for a "Perfect Parry" to trigger hyper-speed returns.
+- healing_absorb (Bool): Converts incoming projectile damage straight into player health.
+
+*SPECIAL SUB-TYPE: CHARGING-SYNERGY UTILITY*
+Designed for heavy high-mana value decks to mitigate the risk of long cast times.
+- cast_while_charging (Bool): If true, this card can be cast for FREE without breaking 
+  your current mana-charging channel for another spell.
+- movement_dash_distance (Float): Instantly surges the player left/right along the baseline.
+- conditional_draw (Int): Number of cards drawn instantly upon successful execution.
+- Example Use-Case: Cast a heavy Green spell -> hold down button (slowed movement) -> 
+  opponent fires an attack -> fire this card to instantly dash away safely and draw a card 
+  without dropping your heavy spell charge.
+
+-------------------------------------------------------------------------------
+CATEGORY C: COUNTER (REFLEX & PHASE) - REACTIVE ONLY
+-------------------------------------------------------------------------------
+Cards locked during neutral play, accessible ONLY during the Time-Slow Stack Window.
+
+Properties:
+- opportunity_window (Float): Active frames allowed to resolve the counter spell.
+- teleport_distance (Float): Instantly offsets player X-axis position to clear an lane.
+- freeze_duration (Float): Temporarily stops opponent movement or tracking mid-match.
+- speed_modifier (Float): Flat velocity multiplier applied to redirected projectiles.
+- phase_immunity (Float): Inflicts brief, total iframe duration to phase through damage.
+
+===============================================================================
+3. BALANCING BASELINE: THE BASE FIREBALL
+===============================================================================
+Every player possesses an infinite-use Base Fireball that does not occupy a card slot.
+
+- Damage: 1 Unit (Health resets each round; 6 Base Fireball hits = Round KO).
+- Speed: Medium.
+- Size: Small.
+- Cast Time: Minimal/Standard.
+- Interaction: 2 Uncommon Large Fireballs (3 Units Damage each) = Round KO.
+
+===============================================================================
+4. STATE MACHINE & STACK RESOLUTION
+===============================================================================
+
+NEUTRAL STATE (Real-Time 100% Speed)
+- Players move left/right on baseline.
+- Can cast Attack and Proactive Defense/Utility cards.
+- Counter cards are locked/greyed out.
+
+THE STACK STATE (Triggered on Attack/Defense Cast)
+- Global engine time slows down drastically to 10% speed.
+- Cast card displays clearly along the top of the screen.
+- Target player's Counter cards instantly unlock.
+- Opportunity window counts down. If Counter is cast, execute reactive logic. 
+  If window expires, resume 100% real-time speed for physical dodging/wall parrying.
+
+===============================================================================
+5. POOL DISTRIBUTIONS & FACTION THEMES
+===============================================================================
+Total Launch Pool: 51 Cards (17 per Faction) | Deck Size: 15 Cards.
+
+- COMMONS (39 Total, 13 per Faction): Generic, readable, clean standard visual animations.
+- UNCOMMONS (9 Total, 3 per Faction): Low-effort, minor bespoke character animations.
+- RARES (3 Total, 1 per Faction): High-effort, screen-shaking, fully custom mechanical logic.
+
+FACTION PATHS:
+- RED (Adrenaline): Excels in high speed, fast cast times, and "Near Miss" synergy modifiers.
+- BLUE (Control): Focuses heavily on Reactive Counters, freeze states, and projectile trajectory manipulation.
+- GREEN (Momentum): Slow speeds, massive health/colliders, healing absorption, and charging-synergy dashes.
+
+===============================================================================
+6. MOBILE UI & INPUT ERGONOMICS (THE CASTING BUFFER)
+===============================================================================
+Optimized explicitly for a dual-thumb mobile control layout (Left Thumb = Character Movement, Right Thumb = Card Selection & Casting).
+
+- Screen Layout: During active gameplay rounds, the player's hand of cards is docked vertically along the right side of the screen.
+- Card Minimal State: To prevent screen clutter, cards in the round UI are partially hidden/collapsed. They display only two critical pieces of information: their Spell Type (Attack, Defense, Counter) and their casting cost represented as a small 1, 2, or 3 segment gauge bar.
+- The Mid-Cast Buffer (0.5 to 1.0 Second Grace Period):
+  * When a player lifts their right thumb off a card mid-charge, the engine does NOT instantly cancel the spell or erase their gathered mana progress.
+  * The game freezes and caches the current casting state and mana progress for a strict 0.5 to 1.0 second window.
+  * Function A (Ergonomic Execution): This allows the player to lift their thumb off a heavy casting spell, instantly tap an adjacent "Charging-Synergy Utility" card (such as a free evasive dash) to dodge danger, and not drop their primary spell's channel.
+  * Function B (Accidental Release Protection): Protects players from touch-screen friction or sweaty thumbs. If contact is accidentally broken, they can resume casting seamlessly by re-pressing the card before the buffer window expires.
+

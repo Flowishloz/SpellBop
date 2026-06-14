@@ -1,0 +1,21 @@
+# Normalize EOL for all files that Git considers text files.
+* text=auto eol=lf
+
+# Never EOL-normalize binaries — protects the cross-compiled Android/Windows/Linux
+# sim libs (corruption here hard-crashes the game on device) and all media/fonts.
+*.so   binary
+*.so.* binary
+*.dll  binary
+*.dylib binary
+*.a    binary
+*.lib  binary
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.webp binary
+*.ico  binary
+*.ttf  binary
+*.otf  binary
+*.wav  binary
+*.ogg  binary
+*.mp3  binary

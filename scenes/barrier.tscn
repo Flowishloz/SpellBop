@@ -1,0 +1,29 @@
+[gd_scene load_steps=5 format=3]
+
+[ext_resource type="Script" path="res://scripts/arena/barrier_controller.gd" id="1_bar"]
+
+[sub_resource type="SGRectangleShape2D" id="SGRectangleShape2D_barrier"]
+extents_x = 9830400
+extents_y = 1310720
+
+[sub_resource type="StandardMaterial3D" id="Mat_barrier"]
+transparency = 1
+shading_mode = 0
+albedo_color = Color(0.35, 0.85, 0.55, 0.45)
+
+[sub_resource type="BoxMesh" id="BoxMesh_barrier"]
+material = SubResource("Mat_barrier")
+size = Vector3(1, 1, 1)
+
+[node name="Barrier" type="SGStaticBody2D"]
+collision_layer = 4
+collision_mask = 0
+script = ExtResource("1_bar")
+
+[node name="SGCollisionShape2D" type="SGCollisionShape2D" parent="."]
+shape = SubResource("SGRectangleShape2D_barrier")
+
+[node name="Visual" type="Node3D" parent="."]
+
+[node name="WallMesh" type="MeshInstance3D" parent="Visual"]
+mesh = SubResource("BoxMesh_barrier")

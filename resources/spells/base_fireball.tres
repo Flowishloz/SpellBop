@@ -1,0 +1,9 @@
+[gd_resource type="Resource" script_class="SpellResource" format=3 uid="uid://b6ireohf3omuk"]
+
+[ext_resource type="PackedScene" uid="uid://bp3pelwpq4i7s" path="res://scenes/fireball.tscn" id="1_creob"]
+[ext_resource type="Script" uid="uid://botbkg8vrqi78" path="res://resources/spell_resource.gd" id="1_spellres"]
+
+[resource]
+script = ExtResource("1_spellres")
+display_name = "Base Fireball"
+projectile_scene = ExtResource("1_creob")

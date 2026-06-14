@@ -1,0 +1,84 @@
+[gd_scene format=3 uid="uid://bp3pelwpq4i7s"]
+
+[ext_resource type="Script" uid="uid://dm33g3lgs62aq" path="res://scripts/projectiles/fireball_controller.gd" id="1_3s14c"]
+[ext_resource type="Script" path="res://scripts/projectiles/components/hit_detection_component.gd" id="6_hit"]
+[ext_resource type="Script" uid="uid://coornnxdnsfbr" path="res://scripts/projectiles/components/projectile_movement_component.gd" id="2_43lgj"]
+[ext_resource type="Texture2D" path="res://resources/placeholder/fireball_orb.png" id="3_86oub"]
+[ext_resource type="Script" uid="uid://cckf0f2x0ciy6" path="res://scripts/player/components/visual_bridge_component.gd" id="3_vqoxj"]
+[ext_resource type="Texture2D" uid="uid://wwm6xori8t3j" path="res://resources/SVG/Fireball_Shadow.png" id="4_86oub"]
+[ext_resource type="Script" uid="uid://d1g836cxah0aa" path="res://scripts/visual/drop_shadow_component.gd" id="5_qaphm"]
+
+[sub_resource type="SGCircleShape2D" id="SGCircleShape2D_mi4h5"]
+radius = 1572864
+
+[sub_resource type="StandardMaterial3D" id="Mat_trail"]
+transparency = 1
+shading_mode = 0
+albedo_color = Color(1, 0.55, 0.15, 0.7)
+billboard_mode = 3
+billboard_keep_scale = true
+
+[sub_resource type="QuadMesh" id="QuadMesh_trail"]
+material = SubResource("Mat_trail")
+size = Vector2(0.14, 0.14)
+
+[node name="Fireball" type="SGCharacterBody2D" unique_id=1057270607]
+collision_layer = 2
+collision_mask = 4
+script = ExtResource("1_3s14c")
+
+[node name="SGCollisionShape2D" type="SGCollisionShape2D" parent="." unique_id=385320413]
+shape = SubResource("SGCircleShape2D_mi4h5")
+
+[node name="ProjectileMovementComponent" type="Node" parent="." unique_id=1775680337]
+script = ExtResource("2_43lgj")
+terminal_velocity = 3400.0
+lifespan_seconds = 2.2
+
+[node name="HitDetectionComponent" type="Node" parent="."]
+script = ExtResource("6_hit")
+
+[node name="VisualBridgeComponent" type="Node" parent="." unique_id=407462586 node_paths=PackedStringArray("visual_root")]
+script = ExtResource("3_vqoxj")
+visual_root = NodePath("../Visual")
+smoothing_enabled = false
+visual_height = 1.2
+
+[node name="ShadowSprite" type="Sprite3D" parent="." unique_id=1725472676]
+transform = Transform3D(1, 0, 0, 0, -4.371139e-08, 1, 0, -1, -4.371139e-08, 0, 0, 0)
+pixel_size = 0.0008
+alpha_cut = 1
+texture_filter = 0
+texture = ExtResource("4_86oub")
+
+[node name="DropShadowComponent" type="Node" parent="." unique_id=1698321650]
+script = ExtResource("5_qaphm")
+shadow_path = NodePath("../ShadowSprite")
+target_path = NodePath("../Visual")
+
+[node name="Visual" type="Node3D" parent="." unique_id=348430158]
+
+[node name="Sprite3D" type="Sprite3D" parent="Visual" unique_id=973540081]
+pixel_size = 0.0025
+billboard = 1
+texture_filter = 0
+texture = ExtResource("3_86oub")
+
+[node name="GlowLight" type="OmniLight3D" parent="Visual"]
+light_color = Color(1, 0.6, 0.25, 1)
+light_energy = 1.6
+omni_range = 2.8
+omni_attenuation = 1.4
+
+[node name="TrailParticles" type="CPUParticles3D" parent="Visual"]
+amount = 18
+lifetime = 0.35
+mesh = SubResource("QuadMesh_trail")
+direction = Vector3(0, 0, 0)
+spread = 12.0
+gravity = Vector3(0, 0.2, 0)
+initial_velocity_min = 0.05
+initial_velocity_max = 0.2
+scale_amount_min = 0.4
+scale_amount_max = 1.0
+color = Color(1, 0.55, 0.15, 0.7)

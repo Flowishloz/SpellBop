@@ -1,0 +1,46 @@
+[gd_scene format=3 uid="uid://dpg1hskhsk031"]
+
+[ext_resource type="PackedScene" uid="uid://ce775qyi5wy6l" path="res://scenes/player.tscn" id="2_vtm10"]
+[ext_resource type="PackedScene" uid="uid://dy66snij0rnwm" path="res://scenes/wall.tscn" id="3_vtm10"]
+
+[sub_resource type="PlaneMesh" id="PlaneMesh_a0f05"]
+size = Vector2(25, 10)
+
+[node name="TestArea" type="Node3D" unique_id=2139694056]
+
+[node name="Camera3D" type="Camera3D" parent="." unique_id=1131738965]
+transform = Transform3D(0.99026805, -0.055049296, 0.12782302, 0, 0.91844636, 0.3955455, -0.1391731, -0.3916961, 0.9095081, 1.416, 5.616, 14.9)
+fov = 67.66235
+
+[node name="MeshInstance3D" type="MeshInstance3D" parent="." unique_id=28196165]
+transform = Transform3D(-4.371139e-08, 0.019197444, 0.9998157, 0, 0.9998157, -0.019197444, -1, -8.391469e-10, -4.370333e-08, 0, 0, 0.7979069)
+mesh = SubResource("PlaneMesh_a0f05")
+
+[node name="Player" parent="." unique_id=1552629103 instance=ExtResource("2_vtm10")]
+fixed_position_y = 72089600
+position = Vector2(0, 1100)
+
+[node name="Movement" parent="Player" index="2" unique_id=1547170097]
+max_speed = 2000.0
+acceleration = 10000.0
+friction = 8000.0
+arena_half_width = 500.0
+
+[node name="Sprite3D" parent="Player/WizardRig" index="0"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.85, 0)
+pixel_size = 0.0066
+
+[node name="ShadowSprite" parent="Player" index="7"]
+pixel_size = 0.0015
+
+[node name="Projectiles" type="Node" parent="." unique_id=2028228776]
+
+[node name="Wall" parent="." unique_id=667296326 instance=ExtResource("3_vtm10")]
+fixed_position_y = -65536000
+position = Vector2(0, -1000)
+
+[node name="Node3D" parent="Wall" index="1" unique_id=849388879]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0, -10)
+
+[editable path="Player"]
+[editable path="Wall"]

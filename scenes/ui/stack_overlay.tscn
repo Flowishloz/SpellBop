@@ -1,0 +1,60 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://scripts/ui/stack_overlay.gd" id="1_so"]
+
+[sub_resource type="StyleBoxFlat" id="StyleBoxFlat_card"]
+bg_color = Color(0.13, 0.15, 0.32, 0.95)
+border_width_left = 4
+border_width_top = 4
+border_width_right = 4
+border_width_bottom = 4
+border_color = Color(0.85, 0.72, 0.35, 1)
+corner_radius_top_left = 18
+corner_radius_top_right = 18
+corner_radius_bottom_right = 18
+corner_radius_bottom_left = 18
+
+[node name="StackOverlay" type="CanvasLayer"]
+script = ExtResource("1_so")
+
+[node name="Card" type="Panel" parent="."]
+anchor_left = 0.5
+anchor_right = 0.5
+offset_left = -180.0
+offset_top = -570.0
+offset_right = 180.0
+offset_bottom = -66.0
+theme_override_styles/panel = SubResource("StyleBoxFlat_card")
+
+[node name="Title" type="Label" parent="Card"]
+anchor_right = 1.0
+offset_top = 24.0
+offset_bottom = 64.0
+theme_override_font_sizes/font_size = 30
+text = "SPELL ON THE STACK"
+horizontal_alignment = 1
+
+[node name="Art" type="ColorRect" parent="Card"]
+anchor_left = 0.5
+anchor_top = 0.5
+anchor_right = 0.5
+anchor_bottom = 0.5
+offset_left = -120.0
+offset_top = -110.0
+offset_right = 120.0
+offset_bottom = 90.0
+color = Color(0.85, 0.3, 0.15, 1)
+
+[node name="Countdown" type="Label" parent="Card"]
+anchor_left = 0.5
+anchor_top = 1.0
+anchor_right = 0.5
+anchor_bottom = 1.0
+offset_left = -100.0
+offset_top = -96.0
+offset_right = 100.0
+offset_bottom = -16.0
+theme_override_font_sizes/font_size = 56
+text = "0.0"
+horizontal_alignment = 1
+vertical_alignment = 1

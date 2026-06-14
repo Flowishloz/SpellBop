@@ -1,0 +1,86 @@
+[gd_scene load_steps=10 format=3]
+
+[ext_resource type="Script" uid="uid://dm33g3lgs62aq" path="res://scripts/projectiles/fireball_controller.gd" id="1_ctrl"]
+[ext_resource type="Script" path="res://scripts/projectiles/components/hit_detection_component.gd" id="6_hit"]
+[ext_resource type="Script" uid="uid://coornnxdnsfbr" path="res://scripts/projectiles/components/projectile_movement_component.gd" id="2_move"]
+[ext_resource type="Texture2D" path="res://resources/placeholder/spark_bolt.png" id="3_spark"]
+[ext_resource type="Script" uid="uid://cckf0f2x0ciy6" path="res://scripts/player/components/visual_bridge_component.gd" id="3_bridge"]
+[ext_resource type="Texture2D" uid="uid://wwm6xori8t3j" path="res://resources/SVG/Fireball_Shadow.png" id="4_shadow"]
+[ext_resource type="Script" uid="uid://d1g836cxah0aa" path="res://scripts/visual/drop_shadow_component.gd" id="5_drop"]
+
+[sub_resource type="SGCircleShape2D" id="SGCircleShape2D_spark"]
+radius = 1572864
+
+[sub_resource type="StandardMaterial3D" id="Mat_lightning"]
+transparency = 1
+shading_mode = 0
+albedo_color = Color(0.6, 0.9, 1, 0.85)
+billboard_mode = 3
+billboard_keep_scale = true
+
+[sub_resource type="QuadMesh" id="QuadMesh_lightning"]
+material = SubResource("Mat_lightning")
+size = Vector2(0.26, 0.045)
+
+[node name="SparkBolt" type="SGCharacterBody2D"]
+collision_layer = 2
+collision_mask = 4
+script = ExtResource("1_ctrl")
+
+[node name="SGCollisionShape2D" type="SGCollisionShape2D" parent="."]
+shape = SubResource("SGCircleShape2D_spark")
+
+[node name="ProjectileMovementComponent" type="Node" parent="."]
+script = ExtResource("2_move")
+terminal_velocity = 2400.0
+lifespan_seconds = 2.2
+
+[node name="HitDetectionComponent" type="Node" parent="."]
+script = ExtResource("6_hit")
+
+[node name="VisualBridgeComponent" type="Node" parent="." node_paths=PackedStringArray("visual_root")]
+script = ExtResource("3_bridge")
+visual_root = NodePath("../Visual")
+smoothing_enabled = false
+visual_height = 1.2
+
+[node name="ShadowSprite" type="Sprite3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, -4.371139e-08, 1, 0, -1, -4.371139e-08, 0, 0, 0)
+pixel_size = 0.0008
+alpha_cut = 1
+texture_filter = 0
+texture = ExtResource("4_shadow")
+
+[node name="DropShadowComponent" type="Node" parent="."]
+script = ExtResource("5_drop")
+shadow_path = NodePath("../ShadowSprite")
+target_path = NodePath("../Visual")
+
+[node name="Visual" type="Node3D" parent="."]
+
+[node name="Sprite3D" type="Sprite3D" parent="Visual"]
+pixel_size = 0.0025
+billboard = 1
+texture_filter = 0
+texture = ExtResource("3_spark")
+
+[node name="GlowLight" type="OmniLight3D" parent="Visual"]
+light_color = Color(0.55, 0.8, 1, 1)
+light_energy = 1.8
+omni_range = 3.0
+omni_attenuation = 1.4
+
+[node name="TrailParticles" type="CPUParticles3D" parent="Visual"]
+amount = 26
+lifetime = 0.22
+mesh = SubResource("QuadMesh_lightning")
+direction = Vector3(0, 0, 0)
+spread = 180.0
+gravity = Vector3(0, 0, 0)
+initial_velocity_min = 0.4
+initial_velocity_max = 1.6
+angle_min = -180.0
+angle_max = 180.0
+scale_amount_min = 0.4
+scale_amount_max = 1.3
+color = Color(0.6, 0.9, 1, 0.85)

@@ -1,0 +1,184 @@
+[gd_scene load_steps=27 format=3 uid="uid://ce775qyi5wy6l"]
+
+[ext_resource type="Script" uid="uid://ctjddc26l65yq" path="res://scripts/player/player_controller.gd" id="1_dqkch"]
+[ext_resource type="Script" uid="uid://li0253mkwbpb" path="res://scripts/player/components/input_buffer_component.gd" id="2_qlg0r"]
+[ext_resource type="Script" uid="uid://dnsqgnejwl8bc" path="res://scripts/player/components/movement_component.gd" id="3_tuyoq"]
+[ext_resource type="Script" uid="uid://cckf0f2x0ciy6" path="res://scripts/player/components/visual_bridge_component.gd" id="4_fjrip"]
+[ext_resource type="Script" uid="uid://cubbwkvifimoa" path="res://scripts/player/components/spell_caster_component.gd" id="5_tuyoq"]
+[ext_resource type="Resource" uid="uid://b6ireohf3omuk" path="res://resources/spells/base_fireball.tres" id="6_fjrip"]
+[ext_resource type="Script" uid="uid://d1g836cxah0aa" path="res://scripts/visual/drop_shadow_component.gd" id="7_shdw"]
+[ext_resource type="Texture2D" path="res://resources/placeholder/wizard_blue.png" id="8_wiz"]
+[ext_resource type="Texture2D" uid="uid://wwm6xori8t3j" path="res://resources/SVG/Fireball_Shadow.png" id="9_shdw"]
+[ext_resource type="Script" path="res://scripts/player/components/health_component.gd" id="10_hp"]
+[ext_resource type="Script" path="res://scripts/visual/cast_charge_vfx_component.gd" id="11_vfx"]
+[ext_resource type="Script" path="res://scripts/player/components/card_caster_component.gd" id="12_cards"]
+[ext_resource type="Script" path="res://scripts/player/components/counter_field_component.gd" id="13_counter"]
+[ext_resource type="Resource" path="res://resources/cards/basic_attack.tres" id="14_atk"]
+[ext_resource type="Resource" path="res://resources/cards/basic_defense.tres" id="15_def"]
+[ext_resource type="Resource" path="res://resources/cards/basic_counter.tres" id="16_cnt"]
+[ext_resource type="Script" path="res://scripts/visual/wizard_animator_component.gd" id="17_anim"]
+[ext_resource type="Script" path="res://scripts/visual/ice_cube_vfx_component.gd" id="18_ice"]
+
+[sub_resource type="SGRectangleShape2D" id="SGRectangleShape2D_smehm"]
+extents_x = 3440640
+extents_y = 1048576
+
+[sub_resource type="StandardMaterial3D" id="Mat_cast_spark"]
+transparency = 1
+shading_mode = 0
+albedo_color = Color(1, 1, 1, 1)
+vertex_color_use_as_albedo = true
+billboard_mode = 3
+billboard_keep_scale = true
+
+[sub_resource type="QuadMesh" id="QuadMesh_cast_spark"]
+material = SubResource("Mat_cast_spark")
+size = Vector2(0.09, 0.09)
+
+[sub_resource type="StandardMaterial3D" id="Mat_card_spark"]
+transparency = 1
+shading_mode = 0
+albedo_color = Color(0.7, 0.45, 1, 0.9)
+billboard_mode = 3
+billboard_keep_scale = true
+
+[sub_resource type="QuadMesh" id="QuadMesh_card_spark"]
+material = SubResource("Mat_card_spark")
+size = Vector2(0.1, 0.1)
+
+[sub_resource type="StandardMaterial3D" id="Mat_dust"]
+transparency = 1
+shading_mode = 0
+albedo_color = Color(0.55, 0.55, 0.65, 0.5)
+billboard_mode = 3
+billboard_keep_scale = true
+
+[sub_resource type="QuadMesh" id="QuadMesh_dust"]
+material = SubResource("Mat_dust")
+size = Vector2(0.12, 0.12)
+
+[node name="Player" type="SGCharacterBody2D" unique_id=1552629103]
+script = ExtResource("1_dqkch")
+
+[node name="SGCollisionShape2D" type="SGCollisionShape2D" parent="." unique_id=1043421215]
+shape = SubResource("SGRectangleShape2D_smehm")
+
+[node name="InputBuffer" type="Node" parent="." unique_id=747636731]
+script = ExtResource("2_qlg0r")
+
+[node name="Movement" type="Node" parent="." unique_id=1547170097]
+script = ExtResource("3_tuyoq")
+max_speed = 700.0
+acceleration = 5600.0
+friction = 9800.0
+arena_half_width = 400.0
+
+[node name="VisualBridge" type="Node" parent="." unique_id=958922667 node_paths=PackedStringArray("visual_root")]
+script = ExtResource("4_fjrip")
+visual_root = NodePath("../WizardRig")
+
+[node name="SpellCasterComponent" type="Node" parent="." unique_id=1841255386]
+script = ExtResource("5_tuyoq")
+spell = ExtResource("6_fjrip")
+cooldown_time = 1.8
+spawn_offset_y = 70.0
+projectile_container_path = NodePath("../../Projectiles")
+
+[node name="Health" type="Node" parent="."]
+script = ExtResource("10_hp")
+
+[node name="WizardRig" type="Node3D" parent="."]
+
+[node name="Sprite3D" type="Sprite3D" parent="WizardRig"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.13, 0)
+pixel_size = 0.0082
+billboard = 2
+texture_filter = 0
+texture = ExtResource("8_wiz")
+
+[node name="CastParticles" type="CPUParticles3D" parent="WizardRig"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.3, 0.1)
+emitting = false
+amount = 24
+lifetime = 0.5
+mesh = SubResource("QuadMesh_cast_spark")
+direction = Vector3(0, 1, 0)
+spread = 35.0
+gravity = Vector3(0, 0, 0)
+initial_velocity_min = 0.8
+initial_velocity_max = 1.8
+scale_amount_min = 0.6
+scale_amount_max = 1.0
+color = Color(1, 0.6, 0.2, 1)
+
+[node name="ShadowSprite" type="Sprite3D" parent="."]
+transform = Transform3D(1, 0, 0, 0, -4.371139e-08, 1, 0, -1, -4.371139e-08, 0, 0, 0)
+pixel_size = 0.0018
+alpha_cut = 1
+texture_filter = 0
+texture = ExtResource("9_shdw")
+
+[node name="DropShadowComponent" type="Node" parent="."]
+script = ExtResource("7_shdw")
+shadow_path = NodePath("../ShadowSprite")
+target_path = NodePath("../WizardRig")
+
+[node name="CastChargeVFX" type="Node" parent="."]
+script = ExtResource("11_vfx")
+particles_path = NodePath("../WizardRig/CastParticles")
+caster_path = NodePath("../SpellCasterComponent")
+
+[node name="CardCasterComponent" type="Node" parent="."]
+script = ExtResource("12_cards")
+card_slot_1 = ExtResource("14_atk")
+card_slot_2 = ExtResource("15_def")
+card_slot_3 = ExtResource("16_cnt")
+projectile_container_path = NodePath("../../Projectiles")
+spawn_offset_y = 70.0
+
+[node name="CounterFieldComponent" type="Node" parent="."]
+script = ExtResource("13_counter")
+
+[node name="CardParticles" type="CPUParticles3D" parent="WizardRig"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.1, 0.15)
+emitting = false
+amount = 20
+lifetime = 0.6
+mesh = SubResource("QuadMesh_card_spark")
+direction = Vector3(0, 1, 0)
+spread = 60.0
+gravity = Vector3(0, 0, 0)
+initial_velocity_min = 0.6
+initial_velocity_max = 1.6
+scale_amount_min = 0.7
+scale_amount_max = 1.1
+color = Color(0.7, 0.45, 1, 1)
+
+[node name="CardChargeVFX" type="Node" parent="."]
+script = ExtResource("11_vfx")
+particles_path = NodePath("../WizardRig/CardParticles")
+caster_path = NodePath("../CardCasterComponent")
+level_colors = Array[Color]([Color(0.7, 0.45, 1, 0.85), Color(0.55, 0.35, 1, 1), Color(0.85, 0.4, 1, 1), Color(1, 0.55, 1, 1)])
+level_speed_scales = Array[float]([1.0, 1.8, 2.6, 3.2])
+level_velocity_max = Array[float]([1.6, 2.4, 3.2, 4.0])
+
+[node name="DustParticles" type="CPUParticles3D" parent="WizardRig"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.06, 0.1)
+emitting = false
+amount = 14
+lifetime = 0.45
+mesh = SubResource("QuadMesh_dust")
+direction = Vector3(0, 1, 0)
+spread = 80.0
+gravity = Vector3(0, 0.4, 0)
+initial_velocity_min = 0.3
+initial_velocity_max = 0.9
+scale_amount_min = 0.5
+scale_amount_max = 1.0
+color = Color(0.55, 0.55, 0.65, 0.5)
+
+[node name="WizardAnimator" type="Node" parent="."]
+script = ExtResource("17_anim")
+
+[node name="IceCubeVFX" type="Node" parent="."]
+script = ExtResource("18_ice")

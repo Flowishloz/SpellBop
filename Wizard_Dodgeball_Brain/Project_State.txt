@@ -1,0 +1,1154 @@
+PROJECT STATE — WIZARD DODGEBALL
+Last sync: 2026-06-12 | Sprint 16 COMPLETE (Art-Only Stack Cards + Screenshot-Driven Card Audit) — Closing Ceremony by Agent Delta. Autonomy Protocol active.
+
+===========================================================
+COMPLETED SYSTEMS
+===========================================================
+[SPRINT 1 — Agent Alpha] 2.5D Bridge & Deterministic Movement Controller
+- Command Pattern input pipeline: InputCommand (RefCounted, int-only dicts)
+  -> InputBufferComponent ring buffer (tick -> input, capacity 64, last-known-input
+  prediction baseline for rollback).
+- MovementComponent: fully fixed-point (SGFixed 64.16, ONE=65536) X-axis mover.
+  Float @exports converted ONCE in _ready(); hot path is integer-only. Arena clamp
+  zeroes velocity + sync_to_physics_engine().
+- Rollback contract implemented (Bimdav conventions, plugin NOT yet enabled):
+  _get_local_input / _network_process / _save_state / _load_state. State dicts
+  are int-only. Determinism smoke test PASSED (save -> ticks -> load -> replay
+  = bit-identical).
+- VisualBridgeComponent: ONLY fixed->float conversion point. sim X -> visual X,
+  sim Y -> visual Z (sim_to_world_scale=0.01 => 12m court). Optional exponential
+  smoothing (visual-only, never writes to sim).
+- PlayerController (extends SGCharacterBody2D): thin coordinator + LOCAL tick
+  driver in _physics_process (marked for replacement by rollback SyncManager).
+- project.godot: [input] actions — move_left (A / Left), move_right (D / Right).
+
+[SPRINT 2 — Agent Alpha + Agent Gamma] The Core Interaction: Fireball vs Wall
+Agent Alpha (deterministic physics):
+- project.godot: new `cast_spell` input action (Space, physical keycode 32).
+- input_command.gd: cast bit added — dict key "c" (1 = held this tick, omitted
+  otherwise); InputCommand.get_cast(input) -> int. Capture uses is_action_pressed
+  (held state — correct rollback prediction baseline; edge detection is the
+  consumer's job).
+- ProjectileMovementComponent (scripts/projectiles/components/): fixed-point
+  ballistic mover. launch(velocity_x_fp, velocity_y_fp, bounciness_fp=65536) in
+  sim-units-per-TICK; move_and_collide per tick; deterministic reflection via
+  SGFixedVector2.bounce(normal) scaled by imul(bounciness). terminal_velocity
+  @export (1600 u/s default) converted once to a per-tick fixed cap, enforced
+  every tick AND post-bounce via fixed length()/normalized()/imul(). Signals:
+  state_updated(fixed_x, fixed_y), bounced(normal_x, normal_y).
+  _save_state {"px","py","vx","vy","b"} int-only.
+- FireballController (extends SGCharacterBody2D): thin coordinator + LOCAL tick
+  driver (marked for replacement by rollback SyncManager); launch() passthrough;
+  aggregate save/load.
+- BounceWall (extends SGStaticBody2D): static defensive/arena wall, no per-tick
+  logic/state; human adds SGCollisionShape2D child in editor.
+- PlayerController GENERALIZED tick driver: now drives ALL children with
+  _network_process in scene-tree child order (MovementComponent must stay
+  earliest); _save_state aggregates per-component dicts keyed by child node
+  name ("tick" reserved).
+- tests/test_determinism.gd: kept, re-runnable headless. Sprint 2 result:
+  PASS 10/10 — speed cap clamps over-cap launch to exactly 1747626 (1600/60 in
+  64.16); bounce normal exactly (-65536, 0); save -> 40 ticks through a bounce
+  -> load -> replay = bit-identical dicts.
+Agent Gamma (gameplay systems & visuals):
+- SpellResource (resources/spell_resource.gd, Custom Resource, data-only):
+  display_name, projectile_scene: PackedScene, base_speed (u/s),
+  damage: int = 1 (6 hits = KO per Manifesto), projectile_size (sim-unit
+  radius), bounciness (1.0 = lossless).
+- base_fireball.tres (resources/spells/): Base Fireball — damage 1,
+  base_speed 800, projectile_size 24, bounciness 1.0. projectile_scene
+  assigned by human per Sprint 2 hotfix 4.
+- SpellCasterComponent (scripts/player/components/): rollback-safe tick cooldown
+  (@export cooldown_time: float = 0.5 -> ceil to whole ticks, min 1; only
+  mutable state is int _ticks_until_ready; _save_state {"cd"}). Exports:
+  tick_rate=60, cast_direction_y (+1 P1 / -1 P2), projectile_container_path,
+  spawn_offset_y=48 (updated to 70 per Sprint 2 hotfix 4), body_path. Spawns at
+  caster pos + offset (int math), sync_to_physics_engine() after teleport,
+  launches down-court. spell_cast(projectile) signal (UI/SFX read-only hook).
+- VisualBridgeComponent extended: @export visual_height (default 0.0 =
+  unchanged behavior) for purely-visual hover; movement lookup now duck-typed
+  on the state_updated signal so the same bridge serves player AND projectile.
+- DropShadowComponent (scripts/visual/): pure-visual hard drop shadow; tracks
+  target X/Z at floor_y=0.01, forced flat each frame; header documents the
+  hard-edge Sprite3D recipe (billboard OFF, -90 deg X, Alpha Cut Discard,
+  filter Nearest, unshaded).
+[SPRINT 2 HOTFIX ROUND 4 — 2026-06-11] Full scene-scale realignment performed.
+  Canonical court: lane x = +/-500 sim units = 10m floor width; player baseline
+  y=+1100 = z+11m; wall face y=-1000 = z-10m; 1 sim unit = 1cm. Measured art
+  drove collider sizes: orb 1000px at 0.001 = 1m -> radius 50 units; wall.jpg
+  rescaled to pixel_size 0.003 = 11.5x6.5m -> extents 576x30 units; player SVG
+  100x125px at 0.004 = 0.4x0.5m -> footprint extents 20x12 units. spawn_offset_y
+  raised to 70 (player depth 12 + ball radius 50 + gap 8). base_fireball.tres
+  explicit stats restored: speed 800 / damage 1 / size 50 / bounciness 1.0.
+  ProjectileMovementComponent.launch() emits state_updated immediately (center-
+  flash fix). Determinism/spawn/collision regression tests all pass.
+
+[SPRINT 3 — Agent Gamma + Agent Alpha + Orchestrator] The Stack, The Opponent, The Phone
+Closes The Stack Window + AI Opponent + Portrait Camera infrastructure. All four headless test
+suites pass including new end-to-end match smoke test (test_match_smoke.gd).
+
+Completed deliverables:
+- core/the_stack.gd — TheStack autoload: NORMAL<->STACK_WINDOW state machine;
+  Engine.time_scale = 0.1 in window; wall-clock (Time.get_ticks_msec) timing
+  so UI runs 100%; signals stack_opened/stack_tick/stack_closed;
+  default_window_seconds 1.5; rollback-safe (re-paces presentation, tick math
+  untouched); netplay note: window will convert to tick-counted in rollback
+  sprint.
+- core/match_controller.gd — MatchController: arena orchestration seam; wires
+  every SpellCasterComponent.spell_cast -> TheStack.open_window(); future home
+  of rounds/draft-breaks/KO logic.
+- scripts/ai/ai_brain_component.gd — AIBrainComponent: deterministic AI INPUT
+  SOURCE (returns InputCommand dicts; PlayerController._get_local_input() asks
+  brain when present — AI inputs roll back like human inputs). Dodges nearest
+  incoming fireball (int math threat scan via get_velocity_y + global positions),
+  shadows player X otherwise, casts every cast_interval_ticks (150). No RNG, no
+  floats in decisions. Expansion seam: decide().
+- scripts/ui/stack_overlay.gd + scenes/ui/stack_overlay.tscn — Stack telegraph
+  UI: placeholder card panel + countdown slides from top, animated on wall clock
+  (immune to time_scale).
+- scenes/player.tscn — now SELF-CONTAINED (WizardRig + Sprite3D + ShadowSprite
+  + DropShadowComponent + VisualBridge wiring inside); child indices 0-4
+  preserved for existing overrides.
+- scenes/opponent.tscn — player.tscn instance + AIBrain child + cast_direction_y
+  +1 + red tint placeholder.
+- scenes/match_arena.tscn — NEW MAIN SCENE: portrait camera (0,13,19, -33 deg
+  pitch, fov 72), 12x24m floor at y=0, Player y=+1100 / Opponent y=-1100
+  (fixed 72089600), Projectiles container, StackOverlay.
+- projectile updates: despawn_distance 1500 (expired signal -> controller
+  queue_free; SyncManager.despawn later), get_velocity_x/y read-only accessors.
+- project.godot: portrait 1080x1920 viewport (window override 486x864,
+  orientation portrait, canvas_items/keep), TheStack autoload, main scene =
+  match_arena.tscn.
+- tests/test_match_smoke.gd — end-to-end headless: AI casts (verified spawn at
+  -1030 from -1100), Stack opens, time_scale hits exactly 0.100, restores to
+  1.0. ALL suites pass.
+
+[SPRINT 3 HOTFIX — ARENA VISUALS — 2026-06-11]
+- Root cause: transposed hand-written camera basis (row-major .tscn Transform3D)
+  pointed the camera at the sky — world rendered as flat grey.
+- Rebuilt match_arena.tscn per Creative Director's "Punch-Out" directive: Camera3D
+  at (0, 2, 13), IDENTITY basis looking straight down -Z, fov 70, with new
+  scripts/visual/camera_rig.gd (PunchOutCameraRig: eases camera X toward the
+  player rig, follow_strength 0.85, max_offset_x 4 — pure visual, set
+  follow_strength 0 for fixed).
+- New placeholder art (resources/placeholder/): starfield.png (2048x1024,
+  generated) as far-wall backdrop Sprite3D at z=-14; wizard_blue.png /
+  wizard_red.png (128x256, generated) replacing the unusable noun-man SVG
+  (imported 4x oversized and solid black — invisible on the dark court). Player
+  sprite now 1.69m tall (pixel_size 0.0066, center y 0.85); collider widened to
+  extents 42x16 sim units to match; opponent overrides texture to red.
+- default_clear_color set to dark navy (blends with starfield); floor 12x26
+  unshaded dark grey.
+- Verification: screenshot probe confirms correct composition (blue wizard
+  over-the-shoulder bottom-center, red AI on far baseline, starfield sky); match
+  smoke test still ALL PASS.
+- New tooling note: tests/screenshot_probe.gd = visual ground-truth tool
+  (non-headless; saves tests/_screenshot.png).
+
+[SPRINT 3 TUNING — CREATIVE DIRECTOR APPROVED — 2026-06-11]
+- Camera (Punch-Out v2): position (0.9, 3.4, 14.5) — pulled back, raised, over the
+  player's RIGHT shoulder; pitch now an @export pitch_degrees = -14 applied from
+  camera_rig.gd in _ready() (scene keeps identity basis per the row-major
+  Transform3D graveyard rule).
+- Movement snappier: player.tscn Movement defaults now max_speed 700 /
+  acceleration 5600 / friction 9800 (was 400/2000/2400 script defaults).
+- Base Fireball reclassified as DEFAULT ATTACK, not a card: new SpellResource.is_card
+  flag (false for base fireball); spell_cast signal now carries (projectile, spell);
+  MatchController opens the Stack ONLY for is_card spells — base fireball no longer
+  telegraphs or slows time (card system arrives later and will set is_card = true).
+- Base Fireball resized: collider radius 50 -> 24 sim units, sprite + shadow scaled
+  to match (0.48 m orb); cooldown_time 0.5 -> 1.8 s; new deterministic lifespan:
+  ProjectileMovementComponent.lifespan_seconds (rollback-safe _age_ticks counted in
+  _save_state as "age"), base fireball = 2.8 s — dies just past the opposing
+  baseline, never returns to caster.
+- Verification: all four suites pass (smoke test rewritten: asserts base fireball
+  does NOT open Stack / NOT dilate time, first fireball freed by lifespan, TheStack
+  still dilates when driven directly); screenshot probe confirms the new framing.
+
+[SPRINT 4 — THE COMBAT LOOP — 2026-06-11]
+Charge casting, hit detection + health system, HUD, camera v3, arena resize.
+All four test suites pass end-to-end (AI charge-cast crossed the court and damaged
+the idle player to 5/6 in the smoke test).
+
+CHARGE CAST (Manifesto: casting slows movement, adds risk):
+- SpellResource.cast_time (base fireball 0.5 s) flows through whole ticks
+  (SpellCasterComponent.cooldown_time).
+- Cast input must be HELD: InputCommand / _get_local_input captures cast bit as
+  is_action_pressed("cast_spell") — held state, not rising edge; consumers detect
+  transition via state machine.
+- SpellCasterComponent state machine: int _charge_ticks (progress counter), saved
+  as "ch" in _save_state. On cast-bit release, charge DRAINS 1 tick/tick instead
+  of resetting (GRAVEYARD: never lose charge progress instantly on breaking contact).
+  Signals: cast_charge_started, cast_charge_canceled.
+- MOVEMENT PENALTY: MovementComponent._speed_scale_fp (fixed-point, saved as "ss"),
+  set_speed_scale() method. While SpellCasterComponent is charging, casting_speed_scale
+  @export (0.45, 45% of max speed) is applied to max_speed + acceleration; friction
+  is NOT scaled (deceleration remains rapid).
+
+CAST VFX:
+- CPUParticles3D "CastParticles" on the WizardRig — orange sparks, QuadMesh
+  billboard mode. CastChargeVFXComponent (pure visual, no sim state) toggles
+  visibility and emission_enabled via cast_charge_started/canceled signals.
+
+DAMAGE LOOP:
+- HitDetectionComponent (new) on each fireball — deterministic int rect-vs-circle
+  overlap testing vs the "wizards" group. PlayerController registers into the group.
+  Collision masks/layers deliberately NOT used — damage is a query, not physics.
+- HitDetectionComponent.set_hit_source(body) excludes the caster; on hit, calls
+  body.apply_damage(damage).
+- FireballController.damage set from SpellResource.damage; new hit/freed behavior:
+  on HitDetectionComponent.area_hit -> queue_free (vanishes on hit).
+- HealthComponent (new, on each player): max 6 HP (int sim state "hp"), saved in
+  _save_state. apply_damage(amount) decrements, clamps to 0. Signals:
+  health_changed(new_hp), knocked_out. PLACEHOLDER: auto-reset on KO until round
+  flow arrives (MatchController will manage KO->round_end transition).
+
+HUD:
+- scenes/ui/match_hud.tscn: vertical 6-cell health bar, top-left of 1080x1920 canvas.
+- scripts/ui/match_hud.gd: drains top-first (cell 0 = topmost), reads ONLY via
+  HealthComponent.health_changed signals (no polling).
+
+CAMERA v3 (matched to Creative Director's hand-tuned TestArena camera):
+- Position: (1.45, 5.6, 12.6) — further right, higher, closer than v2.
+- Pitch: -23.3 degrees.
+- NEW YAW: +8 degrees (dynamic horizontal tilt applied by script).
+- FOV: 67.7 degrees.
+- All rotation script-applied in camera_rig.gd _ready() (identity basis in .tscn
+  per graveyard rule).
+
+ARENA RESIZE (-20% / -20%):
+- Lane width: +/-400 sim units (was 500, now 8m floor width).
+- Baselines: +/-880 sim units (fixed 57671680, was 1100, now 8.8m court half-length).
+- Floor: 9.6m × 21.6m (rescaled walls/colliders to match).
+- Fireball lifespan: 2.2 s (dies mid-court, shorter than 2.8 s to suit tight court).
+
+WIZARDS TALLER:
+- Sprite: 2.1 m (pixel_size 0.0082, center y 1.05).
+- Collider extents: 52.5 × 16 sim units (oval footprint).
+- Drop shadow scaled to match.
+
+AI HOLD-TO-CAST BEHAVIOR:
+- AIBrainComponent.cast_hold_ticks = 45 ticks. The AI brain returns "c" = 1 in
+  InputCommand for 45 consecutive ticks (holding Space like a human), then releases
+  for the cooldown. This is INPUT-SOURCE state, not sim state (the casting state
+  machine is sim-side).
+- Effective rhythm: charge 0.5 s (30 ticks) + cooldown 1.8 s (108 ticks) = 138 ticks
+  (2.3 s cycle). cast_interval_ticks remains 150 for scheduling the decision.
+
+TESTS:
+- test_spawn_offset.gd: pins cast_time=0 for instant-cast regression path.
+- test_match_smoke.gd extended: AI charge-cast completes, base fireball spawned
+  (no Stack), charge-cast projectile hits idle player, player damaged 5/6 HP,
+  ball freed by hit / lifespan.
+
+VERIFICATION:
+- Human playtest — hold-to-cast feel (0.5 s charge + 45% speed penalty while charging
+  + particle cue), 1.8 s cooldown rhythm vs AI pressure, health bar readability at
+  top-left, camera v3 framing over-the-shoulder, hit feedback (ball vanishes on hit,
+  no VFX yet).
+
+[SPRINT 6 — STAGED CASTS, WOA, ROUNDS, PRESENTATION — 2026-06-12]
+Creative Director mega-directive. SIX test suites now pass (new:
+test_round_flow.gd; test_card_system.gd rewritten) + screenshot probe.
+Full mechanics detail in Wizard_Dodgeball_Brain/CARD_FRAMEWORK.md.
+
+SIM CORE:
+- Health 5 points (was 6). HealthComponent: knocked_out fires ONCE on the
+  0-transition (auto-reset placeholder REMOVED — round flow owns resets via
+  new reset()); new damaged(amount) signal.
+- STAGED ATTACK CASTS: channel -> spell goes ON THE STACK (spell_staged
+  signal; MatchController opens the 2.5 s / 10% countdown window; NO
+  projectile yet; caster moves freely to AIM) -> CardResource.stage_ticks
+  (15 sim ticks) elapse -> projectile fires FROM THE CASTER'S CURRENT
+  POSITION. Counters get their reaction window during the countdown.
+- DEFENSE/COUNTER are INSTANT on the key PRESS EDGE (edge derived from the
+  previous tick's card input, saved as sim state "pr"). Cost pips remain as
+  data/UI. CardCaster sim state now {"cd","sl","cc","st","sr","pr"}.
+- WINDOW OF AFFECT (WOA, 0..1, scales any attribute):
+  * Defense WOA = proximity of nearest incoming ball at deploy
+    (CardResource.woa_range 600). BarrierController CAPTURES the first
+    hostile ball, holds it charging woa x woa_max_hold_seconds (0.6 s) with
+    building camera rumble (capture_started/charging/released signals),
+    then reflects at 1 + woa x 1.5 (max 2.5x) with woa x 0.8 lateral
+    ricochet; the "random" ricochet sign is a parity hash of the capture
+    position (deterministic). Own throws just bounce off your own wall.
+  * Counter WOA = 1 - TheStack.window_fraction_remaining() (new getter) —
+    later counter = stronger effect.
+- COUNTER REWORKED: "Frost Front" (was Mirror Ward) — instant court-wide
+  ice wave (scenes/ice_wave.tscn): 400 sim units wide (rect hit extents —
+  HitDetectionComponent gained hit_extent_x/y), 1600 u/s (2x default
+  fireball), damage 0; applies a TIMED SLOW to the struck wizard:
+  MovementComponent.apply_timed_slow (sim state "slt"/"sls", min-composed,
+  slow_started/slow_ended signals), 3 s duration, strength 0.6 -> 0.3 by
+  WOA. IceCubeVFXComponent renders a translucent ice cube + Label3D
+  countdown above the slowed wizard's head. FireballController gained
+  slow payload fields (slow_ticks/slow_scale_fp) + get_hit_source().
+- CounterFieldComponent retained as a legacy/framework reflect-field (no
+  baseline card arms it now).
+
+ROUNDS (best of 3):
+- MatchController: MatchState ROUND_ACTIVE/POST_ROUND/MATCH_OVER; KO ->
+  round_ended (score, 15 s post_round_seconds break) -> healths/positions/
+  casters reset via PlayerController.reset_for_round (new MovementComponent
+  .halt(), HealthComponent.reset(), caster reset_cast_state()) -> first to
+  2 -> match_ended + victory screen; SPACE = rematch. Sim parked between
+  rounds by toggling local_tick_driver_enabled; projectiles cleared.
+- scripts/ui/match_flow_overlay.gd: round call-outs, post-round countdown
+  banner, VICTORY/DEFEAT screen + rematch hint (wall-clock).
+- Stack window now opens ONLY on spell_staged (attack telegraphs); instant
+  defense/counter casts never open or extend it.
+
+PRESENTATION PASS:
+- CardHandHUD (scripts/ui/card_hand_hud.gd): 3 cards fanned/tilted at the
+  right screen edge (§6 minimal state: type color + cost pips), charging
+  card swells + reveals, STAGED card flies to top-center with the live
+  countdown, post-round EXPANDED study view with full description + damage;
+  reject shake; underdamped wall-clock springs everywhere (slow-in/out,
+  anticipation kicks, follow-through); hand root sways against camera pan.
+- MatchHUD rewritten: player bar (5 cells) on a swaying spring mount;
+  FLOATING opponent health bar above the opponent's head (3D unproject +
+  spring chase = sway/follow-through), impact kicks on damage.
+- CardResource.description authored on all 3 baseline cards (rules + DMG).
+- WizardAnimatorComponent: procedural placeholder animations — run bob +
+  directional lean (Running L/R), turn whip (Turning), charge crouch+pulse
+  (Charging), cast recoil (Casting), DAMAGE FLICKER (wall-clock alpha
+  strobe + red flash). Movement dust particles under the rig.
+- Top-heavy wizard sprites regenerated (big hat / medium torso / small
+  legs — big-medium-small principle), blue + red.
+- LIGHTING: WorldEnvironment (ambient color, filmic tonemap, subtle depth
+  fog) + 3 OmniLights (warm key, cool far rim, near warm) — position-only
+  lights, no rotated transforms (graveyard rule); floor now shaded.
+  Fireball carries an OmniLight glow + trail particles. Mobile-light:
+  no shadow maps, 3 static lights + 1 per projectile.
+- StackOverlay node removed from match_arena (the staged HUD card + its
+  countdown is the telegraph now; files kept).
+- Camera fov 71 retained; retro lens unchanged.
+
+TESTS (SIX suites + probe):
+- test_card_system.gd rewritten: staging (no projectile during countdown,
+  release fires after), instant defense + WOA capture (freeze + faster
+  reflect verified: |-721357| > 546133), counter reactive lock + instant
+  frost wave (exact 1600 u/s, 180-tick slow lands, 0 damage), 4x full
+  charge exact. Press-edge note: instant casts need a release gap between
+  taps (the test models the human key release).
+- test_round_flow.gd NEW: KO -> round end -> park -> reset -> round 2 ->
+  match over -> rematch via injected input. ALL PASS.
+- test_match_smoke.gd: passes unchanged (hp 4/5 with the 5-point pool).
+
+[SPRINT 7 — THE STACK REWORK + MOVEMENT TECH — 2026-06-12]
+Creative Director playtest fixes + new tech. SIX suites pass (card suite
+extended with a DASH phase) + screenshot probe. Details in CARD_FRAMEWORK.md.
+
+THE STACK (MTG-style, fixes "spell releases as soon as the card appears"):
+- Release is now DRIVEN BY THE WINDOW CLOSING: MatchController keeps
+  _stack_entries (casters in slap order); on TheStack.stack_closed it calls
+  each caster's release_staged() LIFO. The countdown and the release are the
+  same event by construction — the timer can no longer desync.
+- COUNTER SLAP: a counter cast during an enemy window now STAGES onto the
+  stack (spell_staged) instead of firing instantly; MatchController's
+  open_window() refresh RESETS the timer (new spell on the stack). Its WOA
+  is LATCHED at the slap moment (sim state "wo"). Resolution is LIFO: the
+  frost wave fires before the bolt it answered.
+- StackDisplayHUD (NEW scripts/ui/stack_display_hud.gd): BOTH players'
+  staged cards render top-center — large/legible (330x440), slapped-on
+  overlap + opposing tilt per response, shared countdown rides the top
+  card, very stiff underdamped springs (slow-in/out, violent in between),
+  entries fly off at resolution. The hand card HIDES while on the stack
+  (CardHandHUD) and returns at card_cast.
+- KO ordering guard: match_state changes BEFORE close_window() so a KO
+  never releases staged spells into the round break.
+
+PER-SLOT COOLDOWNS:
+- CardCasterComponent: cooldown_time 4.0 s PER SLOT (sim state
+  "cd1"/"cd2"/"cd3"), starting at stage/deploy. Cooling cards dim in the
+  hand; pressing one fires card_rejected once. Placeholder economy until
+  the deck system makes cards limited-use.
+
+ONE-WAY SHIELDS:
+- PhysicsLayers: LAYER_BARRIER_P1=8 / LAYER_BARRIER_P2=16 +
+  barrier_layer_for()/projectile_mask_for() helpers. Barriers sit on their
+  OWNER's layer; every projectile's mask = WALLS + the ENEMY's barrier
+  layer only — owners shoot straight through their own walls. A WOA-
+  reflected ball is re-stamped with the new owner's mask and its homing is
+  cleared.
+
+DASH (Left Shift):
+- InputCommand "d" bit + dash action (physical Shift). MovementComponent:
+  press edge + held direction -> 35% of the arena width in 10% of the
+  normal travel time (3 ticks), 5 s cooldown, 0.8 s 90% landing slow (own
+  sim field "dsl" — deliberately does NOT trigger the frost ice-cube VFX).
+  Sim state "dt"/"dd"/"dcd"/"dsl"/"pd"; halt() clears all.
+- DashButtonHUD (NEW scripts/ui/dash_button_hud.gd, mounted in
+  match_hud.tscn): translucent circle bottom-left + ">>" chevrons +
+  clock-style cooldown pie fill + seconds countdown.
+
+HOMING:
+- CardResource.homing_strength (0..1); ProjectileMovementComponent steers
+  the velocity a fixed-point blend (strength x 3 / tick_rate) toward the
+  enemy wizard each tick, preserving speed ("hb" in _save_state; target
+  node ref = same lifecycle debt as spawning). Arcane Bolt = 0.2 — a
+  gentle seeking arc. (Replaced the mouse-aim camera idea — Creative
+  Director chose homing as the more elegant approach.)
+
+TUNING / FIXES:
+- AI SOFTENED (Creative Director: too difficult): cast_interval 150->210,
+  hold_variation 22->12 (weaker charges), card_interval 540->660,
+  reaction_distance 1400->1000, dodge_radius 160->140, reactive wall now
+  gated to (tick/20)%3==0 time slices (misses roughly half its blocks).
+- Card rules text no longer breaks the card container (clip_contents +
+  clip_text + font 17 on hand faces; stack faces clip too).
+- Card descriptions updated (Arcane Bolt mentions seeking).
+
+TESTS:
+- test_card_system.gd: Phase C now proves the SLAP (staged not fired, no
+  wave during countdown, timer reset opens=3, LIFO release at expiry);
+  Phase B asserts the one-way P1-barrier layer (8); NEW Phase E proves the
+  dash end-to-end through the input pipeline (exactly 280.0 units, cooldown
+  running). ALL SIX suites pass.
+
+[SPRINT 8 — PLAYTEST POLISH — 2026-06-12]
+Five Creative Director playtest directives. SIX suites pass + probe.
+
+AI REACTION TIME (still too strong -> human-ish delays, all deterministic):
+- AIBrainComponent: reaction_delay_ticks 24 (0.4 s of "noticing" before any
+  dodge or reactive wall — threat-first-seen tick tracked as input-source
+  state) and counter_delay_ticks 10 (reading the slapped card takes a
+  moment; those sim ticks stretch further inside slow-mo).
+
+COUNTDOWN (1 s longer, raised, frantic):
+- TheStack.default_window_seconds 3.5 (was 2.5).
+- StackDisplayHUD: countdown now lives at a FIXED raised spot (y=36, above
+  the card pile) and is re-fronted after every slap so cards never cover
+  it; as it nears zero the timer AND the top card shake harder and faster
+  (franticness = (1-fraction)^2 -> amplitude + frequency + red shift) —
+  telegraphing the counter Window-of-Affect peaking.
+
+DASH FIX + RELOCATION:
+- Root causes: the binding carried shift_pressed=true + location LEFT
+  (fragile modifier matching), and the dash REQUIRED a direction held the
+  same tick (a bare Shift tap did nothing). FIX: binding normalized
+  (shift_pressed=false, location 0) and MovementComponent falls back to the
+  LAST nonzero movement direction (new sim state "lx") so Shift always
+  dashes. DashButtonHUD default moved to the bottom-RIGHT (930,1690).
+
+ARENA SIDE WALLS:
+- Two invisible BounceWall SGStaticBody2D at fixed x = +/-470 sim units
+  (extents 20 x 1500) in match_arena — WOA-ricocheted balls now bounce back
+  into play off the court edges instead of flying out to despawn.
+
+SETTINGS MENU + LEFT-HANDED MODE:
+- GameSettings autoload (core/game_settings.gd): left_handed flag +
+  handedness_changed signal + mirror_x() helper. Registered in project.godot.
+- scripts/ui/settings_menu.gd (ESC / ui_cancel): pauses the tree (menu runs
+  PROCESS_MODE_ALWAYS), dim + Left-handed CheckButton + resume hint.
+- Left-handed consumers (live re-flow on toggle): PunchOutCameraRig mirrors
+  base X and yaw (LEFT shoulder); MatchHUD player bar -> top-right;
+  DashButtonHUD -> bottom-left; CardHandHUD fans from the LEFT edge
+  (positions mirrored, rotations negated, springs glide across); the
+  StackDisplay player-slap origin mirrors. Pure presentation — sim untouched.
+
+VERIFICATION: all SIX suites pass unchanged; probe confirms the dash button
+bottom-right and centered ROUND banner.
+
+[SPRINT 9 — HOME SCREEN + STATS + REACTION FIX — 2026-06-12]
+Five Creative Director directives. SIX suites pass; probes verify both the
+arena and the new home screen.
+
+HUD SWAY CLAMP (bug: health bar exited the screen at the far lane):
+- match_hud.gd / card_hand_hud.gd: the camera-pan lean TARGET and the
+  integrated spring offset are both clamped (bar max_sway_px 22, hand +/-32)
+  — sway survives, escape doesn't. On handedness toggle both re-base their
+  camera reference and zero the springs (stale-base lean fixed).
+
+AI REACTION FIX (still countered/defended instantly):
+- ROOT CAUSE: the threat clock only reset when ALL threats cleared — mid-
+  rally the AI stayed "pre-reacted" and answered every new ball instantly.
+  FIX: _hostile_ball_count() re-arms the clock whenever a NEW hostile joins
+  (every throw gets its own human delay). reaction_delay_ticks 30.
+- Counter: counter_delay_ticks 14 (≈2.3 real s of the 3.5 s window is the
+  player's alone) and NEW counter_every_n_windows = 2 (deterministic cycle
+  — the AI saves its counter every other window).
+
+MATCH STATS (results screens):
+- MatchController tracks throws (damaging launches only), hits, damage
+  dealt/taken (damaged signal now bound with side); get_stats() returns
+  {own_hp, foe_hp, throws, hits, accuracy, damage_dealt, damage_taken};
+  stats reset on rematch. MatchFlowOverlay shows a stats line on BOTH the
+  round-break and victory screens: "life left — you X, foe Y • accuracy
+  N% (h/t) • dealt D / taken T".
+
+SETTINGS "LEAVE MATCH":
+- settings_menu.gd: new Leave match button (export show_leave_match —
+  match scenes true, home screen false) -> unpauses + change_scene to the
+  home screen. New public open() for the gear button.
+
+SPELL BOP HOME SCREEN (scenes/home_screen.tscn + scripts/ui/home_screen.gd
+— NEW MAIN SCENE in project.godot):
+- "SPELL BOP" along the top: per-letter extruded TextMesh (ThemeDB fallback
+  font), Y2K chrome material (metallic + emission), floating with per-letter
+  sin wobble (position.y + rotation.y/z phases) — all rotations script-
+  applied per the row-major graveyard rule.
+- Diorama: wizard sprite mid-left (~2 m); low-poly deck of cards half its
+  size to the right, angled with a lazy sway, 3 stray cards poking out the
+  top at untidy tilts; two firefly CPUParticles3D layers (preprocessed);
+  grounding floor + 2 OmniLights; same Environment fog + retro lens shader
+  as the arena.
+- UI: STORY MODE (launches match_arena) + ONLINE MATCH (disabled, Nakama
+  later) at the bottom; DECKS / INVENTORY / SHOP placeholder row beneath;
+  custom-drawn gear icon top-right opening the SettingsMenu (inner GearIcon
+  Control class — no texture assets).
+- tests/screenshot_probe.gd: accepts a scene override via user args
+  (++ res://scenes/x.tscn) — used to pixel-verify the home screen.
+- Test suites unaffected (they load match_arena.tscn explicitly).
+
+[SPRINT 10 — MENU/CARD/CAMERA POLISH — 2026-06-12]
+Eight Creative Director directives + audit. SIX suites pass; both scenes
+probe-verified.
+
+HOME SCREEN:
+- Deck now lies FACE-DOWN like cards on a table (footprint X/Z, thickness Y;
+  purple back plate over white edge block; strays slid out FLAT at lazy
+  yaws) and HOVERS beside the wizard with a gentle bob — clear of the
+  button row. Wizard -0.62 / deck 0.62 (both pulled toward center).
+- "SPELL BOP" kerning: the word gap advances 0.16 vs 0.36 letter spacing.
+
+IN-ROUND CARDS (hand HUD):
+- NO TEXT in-round (no one reads while dodging): faces are type-color
+  header + cost pips + ART ONLY (placeholder: the fireball orb tinted per
+  type). Name/type/damage/description labels exist but show ONLY in the
+  post-round EXPANDED study view (art ducks to 16% alpha under the text).
+  The StackDisplay keeps its full text — the defender must read the
+  incoming attack.
+- COUNTER GLOW: while an ENEMY spell sits on the stack and the counter is
+  castable (window open, not own staging, off cooldown), the counter card
+  pulses bright cyan — "use me NOW".
+
+BALANCE:
+- Defense wall width -20% (CardResource.wall_size default 240x40 — NOTE:
+  the editor's .tres re-saves strip default-valued fields, so class
+  defaults ARE the live baseline values now).
+- Ricochet steeper: every WOA block gets a 0.3 lateral base + woa x
+  woa_ricochet (default raised 0.8 -> 1.2, may exceed 1) — reflected balls
+  carom off the new arena side walls.
+
+POST-MATCH SCREEN:
+- MatchFlowOverlay: framed "MATCH STATS" panel section (gold border, 3
+  lines: LIFE LEFT / ACCURACY / DAMAGE) in the upper half; the hand HUD's
+  EXPANDED row is now SMALLER cards in a horizontal line at y 1300 beneath.
+
+DYNAMIC SHOULDER CAMERA:
+- PunchOutCameraRig: same angles/perspective, but the camera GLIDES to the
+  LEFT shoulder when the wizard plays the left side (player |x| > 0.7 m,
+  hysteresis holds the side near center; glide 2.4/s on scaled delta —
+  cinematic in slow-mo). Handedness now just picks the preferred/starting
+  shoulder; base X and yaw mirror together.
+
+SCRIPT-ERROR AUDIT ("failed to load script" on project open):
+- Reproduced via headless --editor --quit: ZERO script load failures
+  remain — the spam was stale UID/class caches, healed by the routine
+  --import passes. Remaining console noise is the known benign SG
+  GDExtension editor-binding errors (EditorDock/DPITexture family).
+- res://test_suite (nested project.godot from repo clutter) now carries a
+  .gdignore — its scan warning is gone.
+
+[SPRINT 11 — FEEL & FX POLISH — 2026-06-12]
+Eleven Creative Director directives. SIX suites pass; both scenes probed.
+
+CAMERA KEEP-IN-VIEW LEASH:
+- PunchOutCameraRig.keep_in_view_max_dx (1.55 m): after the soft pan and
+  shoulder glide, the camera X hard-clamps to within the leash of the
+  player — momentum survives inside the band; a dash DRAGS the camera at
+  the edge. The sprite can be half out of frame, never fully.
+
+WOA CONSISTENCY FIX (anticipation sometimes missing on last-second blocks):
+- ROOT CAUSE: container tick ORDER. When the barrier entered the container
+  BEFORE the ball, the barrier scanned first each frame — a fast ball could
+  physics-bounce and travel a full tick-step out of the capture band
+  between scans. FIX: the capture band widens by the ball's per-tick speed
+  (dyn_band_y = band + |vy|), so one tick of escape can never dodge the
+  capture. RULE logged in HANDOFF (see EDIT F).
+
+DASH x SLOW-MO:
+- dash_time_fraction default 0.04 -> the dash resolves in a SINGLE sim
+  tick (an instant blink) so the Stack's 10% dilation can't smear it into
+  a slow glide; the VisualBridge render-frame smoothing still sweeps the
+  sprite. Landing root and 5 s cooldown unchanged.
+
+BALANCE: wall_lifetime default halved 3.0 -> 1.5 s (walls are a beat).
+
+NEW FX (scripts/visual/burst_fx.gd — BurstFX.spawn static helper,
+self-freeing one-shot CPUParticles3D with a dominant direction):
+- WIZARD HIT: burst that CARRIES THE PROJECTILE'S MOMENTUM (water-balloon
+  read) — sprays along the flight direction; fire-colored for bolts, icy
+  for frost waves. Spawned by FireballController._on_hit.
+- SHIELD INTERCEPT: shield-green shards spray back off the wall face at
+  capture (BarrierController), distinct from charge sparks.
+
+CARD ART & HAND:
+- Bespoke per-type art: bolt orb / NEW shield_icon.png / NEW ice_icon.png
+  (resources/placeholder, generated). Used by the hand AND the stack
+  display — ON THE STACK the art sits at 30% alpha UNDER the returning
+  rules text (consistency directive).
+- Charging card raised + shrunk (y~600, scale 1.12 — still bigger than
+  docked) so mid-cast doesn't cover the court.
+- Natural fan: top card tucked deepest (x 1102, -50 deg), middle (1074,
+  -63), bottom most exposed (1040, -78); moved ~10% down (y 1010+175i);
+  blanket gradient alpha top 1.0 / middle 0.8 / bottom 0.6 (docked only).
+
+HOME SCREEN DECK:
+- card_back.png (centered gold oval emblem on purple) on the top face and
+  strays; deck_side.png (subtle horizontal card lines) on the edge block —
+  the pile finally reads as stacked cards. Both textures generated.
+
+[SPRINT 12 — AIMED THROWS + INPUT LATCH + SFX — 2026-06-12]
+Nine Creative Director directives + the placeholder audio pass. SIX suites
+pass; both scenes probed.
+
+AIMED THROWS (new sim mechanic):
+- MovementComponent tracks the held movement direction and its duration
+  (sim state "ad"/"at"; decays 1 tick/tick while idle). Both casters tilt
+  a projectile's launch X by aim_dir x forward_speed x aim_max_fraction
+  (0.5) x min(held, 24)/24 — hold a direction longer at release = steeper
+  throw. Applies to the fireball release-fire AND the staged bolt release.
+  Mobile note: the virtual joystick's push distance will feed this later.
+
+SLOW-MO INPUT LATCH (dash "waits for the slow mo to finish"):
+- ROOT CAUSE: inside the 10% window the sim samples the keyboard ~6x/s — a
+  quick Shift/card TAP could fall entirely between two ticks and be lost.
+  FIX: PlayerController._process polls press EDGES at render rate and
+  latches them (_dash_press_latched/_card_press_latched); the next tick's
+  input consumes the latch. Local input collection only — per-tick dicts
+  stay the deterministic/netplay artifact.
+
+CAMERA: follow pan + shoulder glide now run on the WALL clock (the camera
+read as "locked" during slow-mo on scaled delta). Leash unchanged.
+
+TUNING: ricochet lateral base 0.3 -> 0.6 (~+15 deg); shield width -15%
+(wall_size 204x40); shield intercept particles now FLATTEN up the wall
+plane (BurstFX gained a spread parameter; snowball-on-wall read); menu deck
+lowered 15% (hover 0.72) so its top face reads.
+
+WALL PULSE: BurstFX.spawn_wall_pulse — a subtle 20%-opacity quad blooms and
+fades at side-wall impacts (oriented into the court, script rotation; the
+retro lens pixelates it). Triggered from FireballController._on_bounced on
+X-facing normals.
+
+PLACEHOLDER SFX PASS (15 synthesized WAVs in res://audio/sfx/, RMS ~ -21
+dBFS ~= -18/-20 LUFS ballpark):
+- SoundFX autoload (core/sound_fx.gd) loads the set; play(name) is fire-
+  and-forget; PROCESS_MODE_ALWAYS (menu clicks while paused).
+- COMPILE-SAFE GATEWAY: scripts call Sfx.play() (scripts/audio/sfx.gd,
+  class_name Sfx, static) which looks the autoload up at call time — bare
+  autoload identifiers fail standalone --check-only compilation (the old
+  "Failed to load script" noise class).
+- Full trigger map + replacement workflow in Wizard_Dodgeball_Brain/
+  AUDIO_GUIDE.md (NEW master context file): cast/release/slap/shield x3/
+  counter wave/hits x2/dash/wall bounce/round jingles/victory/ui click.
+
+[SPRINT 13 — IDENTITY & JUICE — 2026-06-12]
+Fifteen Creative Director directives. SIX suites pass; both scenes probed.
+
+SPARK BOLT (was Arcane Bolt):
+- Renamed; NEW scenes/spark_bolt.tscn projectile (uncontained-energy sprite
+  resources/placeholder/spark_bolt.png, LIGHTNING trail — thin elongated
+  cyan quads at random angles — electric-blue glow light, terminal 2400).
+- basic_attack.tres: base_speed 1050 (+50%), projectile_size 31 (+30%),
+  description updated; card art = NEW spark_icon.png (hand + stack).
+- Base fireball got its own new sprite too: fireball_orb.png (layered
+  pixel-y fire orb with blocky flame licks) at pixel_size 0.0025.
+
+IN-ROUND CARDS = FRAME + ART + RUNES:
+- Cost pips REMOVED; names render as VAGUE PIXEL HIEROGLYPHS (RuneStrip
+  inner class, deterministic per card name hash) in the header strip.
+- Real name/meta/description appear ONLY in the post-game EXPANDED view —
+  formatting audited (name inside header, meta below, desc clear; clip
+  everywhere; art ducks to 16%). Stack faces keep art+text (defender reads).
+
+POST-GAME PODIUM (match end):
+- MatchFlowOverlay: winner's wizard on a tall gold box under CONFETTI rain
+  (CPUParticles2D, 3-color initial ramp), loser on a short gray box; layout
+  restacked (title/score top, podium 330-940, framed MATCH STATS panel at
+  980, hint, card row pushed to y 1620 via CardHandHUD._expanded_row_y).
+  Round-break layout unchanged (panel back at 580, row 1300).
+- Post-round break 15 s -> 6 s (MatchController.post_round_seconds).
+
+FEEL:
+- ARENA BOUNCE: the lane-edge clamp now REFLECTS velocity (restitution 0.6,
+  capped at max_speed) instead of zeroing — a dash into the wall bounces
+  you away; an in-flight dash ends at the wall and hands over to the bounce.
+- Slow-mo window 3.5 -> 3.0 s.
+- SHIELD AIM AUDIT: confirmed NO aim is applied to barriers (only thrown
+  projectiles tilt); the wall deploys at the caster's exact sim X. No code
+  change needed — documented for the record.
+- Menu deck lowered another 10% (hover 0.65) + a THIRD stray card near the
+  TOP of the pile, slid the OPPOSITE side, poking out least.
+
+AUDIO:
+- SoundFX CROSSFADE: retriggering the SAME sound fades the old instance out
+  over 0.12 s (different sounds layer freely) — fixes cut-offs.
+- 3 NEW cues (audio/sfx/, AUDIO_GUIDE.md updated): tape_slow.wav (slow-mo
+  ENGAGE only — refresh-safe via MatchController._window_open_flag),
+  stopwatch_tick.wav (per countdown second, StackDisplayHUD),
+  slap_on_card.wav (card landing ON TOP of another, layers over stage_slap).
+
+[SPRINT 14 — PERFORMANCE & FEEL TRUTH — 2026-06-12]
+Nine Creative Director directives. SIX suites pass; home screen probed.
+
+SLOW-MO EXIT LAG SPIKE (fixed):
+- ROOT CAUSE: the first stack resolution instantiated projectile scenes
+  (meshes, lights, particle materials) whose shaders/pipelines compile ON
+  FIRST DRAW — one hitch exactly as time snapped back to 1.0. Worse,
+  BurstFX built a NEW material per burst.
+- FIX: MatchController._warm_up_render_pipelines() draws every projectile/
+  barrier scene + one of each burst/pulse just UNDER the floor at round
+  start (rendered, occluded, freed after 0.4 s); BurstFX now caches one
+  mesh+material per (color,size) and wall pulses duplicate a compiled
+  template (no fresh pipeline mid-fight).
+
+DASH:
+- WALL REBOUND: dashing into the lane edge now mirrors into a HALF-STEP
+  blink away from the wall (sim state "dbr") — held input can no longer
+  cancel the reflected velocity ("still loses all speed" fixed).
+- SLOW-MO LOOK: VisualBridge boosts its smoothing 4x for 0.45 SCALED
+  seconds on the dashed signal — the sprite's catch-up reads as a blink at
+  full speed and as the SAME blink proportionally slowed inside the window.
+
+SHIELD PLACEMENT (recurring report):
+- PROVEN sim-exact: test_card_system Phase B now taps the wall WHILE
+  HOLDING a movement direction and asserts the barrier lands within one
+  tick-step of the caster's X. No directional aim exists for shields.
+- wall_offset_y 160 -> 120: a closer wall suffers less perspective shear
+  from the shoulder-yaw camera (the likely source of the perception).
+
+AUDIO:
+- tape_slow.wav REGENERATED as Matrix bullet-time: deep exponential sub
+  drop (180->42 Hz) + airy reversed-swell shimmer (no goofy warble).
+- Stopwatch cue now ticks every HALF second of the countdown (double rate).
+
+HOME SCREEN COMPOSITION:
+- Deck lowered to hover 0.55; bottom stray pulled 20% inward; top stray
+  pushed 20% of a card toward the camera.
+- Title kerning: per-glyph advances (L = 0.28 vs 0.38 default, space 0.18)
+  — BOP no longer clips and sits centered.
+- THREE floating card-backs behind the title: 35% taller than the letters,
+  20% of their depth, fanned, DIMMED and pushed deep (z -3.6) as a backdrop
+  layer, drifting on their own elliptical loop distinct from the letter
+  wobble.
+
+[SPRINT 15 — TRUE STACK SEMANTICS + SHATTER — 2026-06-12]
+Six Creative Director directives. SIX suites pass.
+
+THE STACK, FINAL FORM:
+- SHARED CLOCK: a spell slapped on top of an open window NO LONGER restarts
+  the countdown — MatchController only open_window()s when the window is
+  CLOSED; everything on the pile resolves together at the one expiry
+  (test-asserted: "the slap did NOT restart the shared clock").
+- MULTI-SPELL: CardCasterComponent now holds a staged QUEUE (capacity 3 —
+  the per-slot cooldown that starts at staging forbids duplicates; sim
+  state "sq1-3"/"wo1-3" padded ints). release_staged() pops NEWEST;
+  MatchController entries are no longer deduped, so its reversed walk
+  composes per-caster pops into global LIFO across any number of spells.
+- RESUME RAMP: TheStack.close_window no longer snaps time_scale to 1.0 —
+  a wall-clock exponential ramp (resume_ramp_rate 7/s, ~0.5 s) accelerates
+  the world back up smoothly; a fresh window cancels any in-flight ramp.
+
+SPARK BOLT vs WALLS (barrier breaker):
+- CardResource.barrier_breaker (Spark Bolt true): instead of being captured
+  the bolt SHATTERS the wall — BarrierController._shatter() plays a glass
+  burst (BurstFX flattened shards) + NEW shield_shatter.wav — and
+  FireballController.split_on_barrier() spawns TWO 0.75-size copies (1 DMG
+  each, homing cleared, fanned ±190 u/s) continuing through toward the
+  defender; the original frees. Duplicated copies re-run _ready (layers
+  re-hardcode); only payload fields are re-armed.
+
+POST-GAME CARD LAYOUT (MTG-style):
+- EXPANDED faces: art sits in its own TOP slot; beneath it TWO bordered
+  containers (gold-trimmed dark panels) — A: name + type/damage line,
+  B: rules text. In-round faces unchanged (frame + art + runes).
+
+RENAMES: Verdant Bulwark -> "Gaea's Wall"; Frost Front -> "Icey Retort"
+(descriptions updated; Spark Bolt's mentions the wall-shatter split).
+
+[SPRINT 16 — STACK MIRROR + CARD TEXT AUDIT — 2026-06-12]
+Two Creative Director directives. SIX suites pass; post-game screens
+pixel-audited via a NEW dedicated probe.
+
+ART-ONLY STACK CARDS:
+- StackDisplayHUD faces now MIRROR the in-round hand cards: owner-colored
+  frame, type header with the same deterministic RUNE glyphs, full-strength
+  art — NO text. Rules text exists only between rounds and post-match.
+
+SCREENSHOT-DRIVEN CARD AUDIT (new tooling + three real bugs):
+- NEW tests/screenshot_postgame.gd: boots the arena, forces a round-end
+  and a match-end, saves _screenshot_postround.png/_postmatch.png; cards
+  were then cropped + 4x upscaled for inspection.
+- BUG 1 — autowrap never engaged: Label size was set BEFORE enabling
+  autowrap, so minimum width snapped to the full single-line text width
+  and descriptions rendered as ONE clipped line escaping the panel. FIX:
+  property ORDER (autowrap + clip_contents + font BEFORE size/text).
+  (Also: clip_text is a single-line ellipsis mode — replaced with
+  clip_contents for wrapped labels.)
+- BUG 2 — the VICTORY title was invisible: the ROUND-N call-out fade tween
+  kept running and faded the just-set title to alpha 0 whenever a KO
+  landed within ~2 s of a round start. FIX: the call-out tween is stored
+  and killed on round_ended/match_ended.
+- BUG 3 — layout collisions at match end: dim raised to 0.88 (the player
+  wizard no longer pokes between the card row), card row 1620 -> 1560,
+  round-break dim 0.55; desc font 12 with panel growing 2 px so five
+  wrapped lines clear the border.
+- Final zoom verifies the MTG face: art slot, name+stats container, full
+  five-line rules text inside its border.
+
+===========================================================
+ACTIVE FILE STRUCTURE
+===========================================================
+res://
+├── addons/
+│   ├── sg-physics-2d/               (GDExtension, Windows binaries OK)
+│   ├── com.heroiclabs.nakama/       (Nakama client, autoloaded)
+│   ├── delta-rollback-master/       (UNZIPPED SOURCE REPO — NOT built/enabled; needs SCons build + plugin enable)
+│   ├── godot_state_charts/          (present on disk — NOT enabled in project.godot)
+│   └── phantom_camera/              (present on disk — NOT enabled in project.godot)
+├── core/
+│   ├── the_stack.gd                 (TheStack autoload — time dilation state machine)
+│   ├── match_controller.gd          (MatchController — arena orchestration seam)
+│   ├── game_settings.gd             (GameSettings autoload — preferences)
+│   ├── sound_fx.gd                  (SoundFX autoload — SFX dispatcher)
+│   └── .gdkeep
+├── scenes/
+│   ├── match_arena.tscn             (match arena — portrait camera, arena layout)
+│   ├── home_screen.tscn             (SPELL BOP home — MAIN SCENE)
+│   ├── player.tscn                  (SELF-CONTAINED — WizardRig + components)
+│   ├── opponent.tscn                (player.tscn instance + AIBrain)
+│   ├── fireball.tscn                (projectile prefab, terminal 3400)
+│   ├── spark_bolt.tscn              (Spark Bolt projectile — lightning trail)
+│   ├── barrier.tscn                 (card barrier prefab)
+│   ├── ice_wave.tscn                (Frost Front wave projectile)
+│   ├── wall.tscn                    (arena wall)
+│   ├── test_area.tscn               (legacy test arena)
+│   ├── ui/
+│   │   ├── stack_overlay.tscn       (Stack telegraph UI)
+│   │   ├── match_flow_overlay.gd    (rounds banner + victory screen)
+│   │   ├── card_hand_hud.gd         (fanned hand HUD)
+│   │   ├── stack_display_hud.gd     (THE STACK display — both players)
+│   │   ├── dash_button_hud.gd       (dash cooldown button)
+│   │   ├── settings_menu.gd         (ESC settings — left-handed mode)
+│   │   └── match_hud.tscn           (player health bar)
+│   └── .gdkeep
+├── resources/
+│   ├── spell_resource.gd            (SpellResource custom resource class)
+│   ├── card_resource.gd             (CardResource — Attack/Defense/Counter framework)
+│   ├── cards/
+│   │   ├── basic_attack.tres        (Arcane Bolt — RED ATTACK, cost 2)
+│   │   ├── basic_defense.tres       (Verdant Bulwark — GREEN DEFENSE, cost 2)
+│   │   └── basic_counter.tres       (Mirror Ward — BLUE COUNTER, cost 2)
+│   ├── spells/
+│   │   └── base_fireball.tres       (Base Fireball — projectile_scene assigned)
+│   ├── SVG/                         (art assets)
+│   ├── audio/sfx/                   (15 placeholder WAVs — see AUDIO_GUIDE.md)
+│   └── .gdkeep
+├── scripts/
+│   ├── physics_layers.gd            (collision layer/mask constants)
+│   ├── player/
+│   │   ├── input_command.gd         (InputCommand — x move + c cast bit)
+│   │   ├── player_controller.gd     (PlayerController : SGCharacterBody2D)
+│   │   └── components/
+│   │       ├── input_buffer_component.gd   (InputBufferComponent)
+│   │       ├── movement_component.gd       (MovementComponent)
+│   │       ├── spell_caster_component.gd   (SpellCasterComponent — Mario-Kart charge)
+│   │       ├── card_caster_component.gd    (CardCasterComponent — 3-slot hand)
+│   │       ├── counter_field_component.gd  (CounterFieldComponent — reflect window)
+│   │       ├── ...                          (movement: timed slow; health: 5 pts + reset)
+│   │       └── visual_bridge_component.gd  (VisualBridgeComponent)
+│   ├── projectiles/
+│   │   ├── fireball_controller.gd   (FireballController : SGCharacterBody2D)
+│   │   └── components/
+│   │       └── projectile_movement_component.gd (ProjectileMovementComponent)
+│   ├── arena/
+│   │   ├── bounce_wall.gd           (BounceWall : SGStaticBody2D)
+│   │   └── barrier_controller.gd    (BarrierController — card barrier)
+│   ├── ai/
+│   │   └── ai_brain_component.gd    (AIBrainComponent — deterministic AI)
+│   ├── ui/
+│   │   ├── stack_overlay.gd         (Stack telegraph UI logic)
+│   │   ├── match_flow_overlay.gd    (rounds banner + victory screen)
+│   │   ├── card_hand_hud.gd         (fanned hand HUD)
+│   │   ├── home_screen.gd           (home diorama + menu buttons)
+│   └── visual/
+│       ├── drop_shadow_component.gd (DropShadowComponent)
+│       ├── camera_rig.gd             (PunchOutCameraRig — follow/trauma model)
+│       ├── cast_charge_vfx_component.gd (CastChargeVFXComponent — charge VFX)
+│       ├── wizard_animator_component.gd (procedural anims + damage flicker)
+│       ├── ice_cube_vfx_component.gd    (frost prison + countdown)
+│       └── burst_fx.gd              (BurstFX — one-shot momentum bursts)
+├── audio/
+│   └── sfx.gd                       (Sfx — compile-safe SFX gateway)
+├── shaders/
+│   └── retro_lens.gdshader          (GameCube retro post + curvilinear lens)
+├── tests/
+│   ├── test_determinism.gd          (Sprint 1 determinism — PASS 10/10)
+│   ├── test_collision_layers.gd     (Sprint 2 hotfix — PASS)
+│   ├── test_spawn_offset.gd         (Sprint 2 hotfix — 16 checks, PASS)
+│   ├── test_match_smoke.gd          (Sprint 3 end-to-end — PASS)
+│   ├── test_card_system.gd          (Sprint 5 card framework — PASS)
+│   ├── test_round_flow.gd           (Sprint 6 rounds — PASS)
+│   └── screenshot_postgame.gd       (post-round/match screen pixel audits)
+├── Wizard_Dodgeball_Brain/          (Master Context Files + HANDOFF.md + this file)
+└── project.godot                    (Godot 4.6, Jolt 3D, D3D12, Nakama autoload, TheStack autoload, main scene match_arena.tscn, portrait 1080x1920 viewport)
+
+===========================================================
+KNOWN VERIFICATIONS PENDING (carry into next sprint)
+===========================================================
+1. Art-only stack faces: does the telegraph still read without text
+   (art + header color + owner border)?
+2. Post-game card text at native resolution (12 px desc font).
+3. Stack feel: shared clock multi-spell piles, LIFO order readability.
+4. Spark Bolt vs Gaea's Wall shatter/split balance.
+5. Resume ramp + bullet-time cue pacing.
+
+[SPRINT 5 — THE CARD SYSTEM — 2026-06-11]
+Charge 2.0 (Mario-Kart), Attack/Defense/Counter card framework + 3 baseline
+cards (keys 8/9/0), 2.5 s slow-mo on card casts, camera shake, GameCube retro
+post shader + curvilinear lens. FIVE test suites pass (new
+tests/test_card_system.gd) + screenshot probe verified.
+
+CHARGE 2.0 (release-fire, supersedes Sprint 4 flat penalty):
+- SpellCasterComponent: hold past cast_time keeps charging to max_charge_time
+  (1.5 s); movement ramps linearly to FULLY STATIONARY at full charge; the
+  throw happens ON RELEASE with velocity 1x->4x (max_speed_multiplier, capped
+  by fireball terminal_velocity, raised to 3400 u/s). Release below minimum
+  still drains (graveyard). New signal cast_charge_level_changed(0-3).
+- 3 charge phases drive CastChargeVFXComponent (color/speed/intensity per
+  phase: orange -> orange-red -> gold -> white-blue) + camera rumble.
+- MovementComponent.apply_speed_penalty(): MIN-COMPOSING self-resetting
+  accumulator replaced single-writer set_speed_scale (two casters can overlap).
+- AI varies hold length per cast (cycle 45/67/89 ticks) to show all 3 levels.
+
+CARD FRAMEWORK (see Wizard_Dodgeball_Brain/CARD_FRAMEWORK.md for the full
+authoring guide — parameters-only card design, no bespoke card code):
+- CardResource extends SpellResource (resources/card_resource.gd): card_type
+  ATTACK/DEFENSE/COUNTER, faction, rarity, casting_cost 1-3 (hold = cost x
+  0.5 s, auto-fires at cost, movement ramps to stationary, NO velocity bonus),
+  is_reactive_only, rarity animation hooks (cast_vfx_scene,
+  cast_animation_name, screen_shake_intensity), full Cards_Spells.txt
+  Category A/B/C parameter blocks incl. charging-synergy data fields.
+- CardCasterComponent (3 slots, keys 8/9/0 via InputCommand "k" bit +
+  card_slot_1/2/3 actions in project.godot); reactive lock: counters only
+  START channeling while the Stack window is open (card_rejected signal).
+- BarrierController + scenes/barrier.tscn: SGStaticBody2D deployed on WALLS
+  layer (balls bounce via existing wall path), wall_size/lifetime/drift,
+  shape sub-resource duplicated before resize.
+- CounterFieldComponent: armed opportunity_window; reflects ONE hostile ball
+  via FireballController.redirect() at exactly speed_modifier (2x baseline),
+  hit source swaps to the counterer; MatchController closes the Stack early
+  on a catch.
+- Baseline cards (resources/cards/, all cost 2): Arcane Bolt (RED ATTACK,
+  700 u/s, damage 2), Verdant Bulwark (GREEN DEFENSE, 300x40 wall 3 s),
+  Mirror Ward (BLUE COUNTER, 1 s window, 2x).
+- AI plays cards: alternates attack/defense every card_interval_ticks (540),
+  holds counter when a Stack window opens with a hostile ball incoming.
+
+STACK / PRESENTATION:
+- TheStack default_window_seconds 1.5 -> 2.5 (every card cast = 2.5 s at 10%;
+  CPUParticles inherit the dilation automatically via scaled delta).
+- Camera shake: PunchOutCameraRig trauma model (add_trauma bursts decay on
+  the WALL clock; set_rumble sustained floor). MatchController wires: player
+  charge rumble per level, cast bursts (cards bigger, + per-card
+  screen_shake_intensity), damage hits (player 0.5 / opponent 0.25), counter
+  catch 0.45. HealthComponent gained damaged(amount) signal.
+- GameCube retro shader (shaders/retro_lens.gdshader on RetroPostFX
+  CanvasLayer layer 0 in match_arena): curvilinear barrel lens (corners
+  pinned), 480-row pixelation, edge chromatic aberration, color quantization
+  + Bayer dither, subtle scanlines/vignette. HUD layers (1+) stay crisp.
+  Camera fov 67.7 -> 71.
+- Sprint 2 spawn-offset debug print stripped from SpellCasterComponent.
+
+TESTS (all FIVE suites pass + screenshot probe):
+- test_card_system.gd NEW: scripted brain drives the player's REAL input
+  pipeline; proves attack card (Stack opens, 10% dilation, damage 2 lands),
+  barrier (WALLS layer, exact fixed-point placement 47185920, lifetime
+  expiry), counter (reactive lock rejection in neutral, EXACT 2x reflect
+  -1092266, return ball strikes original caster, Stack closes on catch),
+  full charge (EXACT 4x velocity -3495252), base fireball never opens Stack.
+- test_match_smoke.gd: AI card play pinned OFF (card_interval_ticks = 0) to
+  keep base-fireball-only assertions honest; release-fire timing notes.
+
+[SPRINT 17 — ANDROID APK + MOBILE TOUCH CONTROLS (2026-06-13)]
+Directive: Package and export the game as a playable Android APK. Priority #1:
+touch screen controls translate well. Add a pressable fireball button to the LEFT
+of the dodge button (same format as the dodge button, fireball inside). Make the
+cards all pressable/holdable to charge their spells.
+
+TOUCH CONTROLS (all NEW UI drives the SAME InputMap actions the keyboard drives,
+via Input.action_press()/action_release() — the deterministic sim, the render-rate
+press latch, and every action consumer are 100% untouched; touch is just another
+input source. Graveyard-safe: no new pathway into the sim):
+- scripts/ui/touch_action_button.gd (NEW) — class_name TouchActionButton, shared
+  base for the circular thumb buttons. Multitouch: hit-tests each touch against its
+  own disc and tracks the owning finger by index (so two thumbs work at once); also
+  accepts mouse for desktop testing. Press swell animation, optional progress ring,
+  countdown label, handedness mirror across x=540, releases the action on
+  focus-out / app pause so it can't stick.
+- scripts/ui/cast_button_hud.gd (NEW) — the FIREBALL CAST button. Same disc/ring
+  format as the dash button, with a flame glyph + a charge ring that grows
+  cool->hot while held. Positioned at canvas (730,1690), just LEFT of the dash
+  button (930,1690). Drives the "cast_spell" action: press = begin Mario-Kart
+  charge, hold = bank power, release = throw — identical to holding/releasing the
+  spacebar. Doubles as the match-end REMATCH button (cast_spell is the rematch
+  action).
+- scripts/player/components/spell_caster_component.gd — added public
+  charge_fraction() -> float (PRESENTATION-only getter, never read by sim) so the
+  cast button can draw its charge ring.
+- scripts/ui/dash_button_hud.gd — REWRITTEN to extend TouchActionButton; now a real
+  pressable button (drives "dash") while keeping its exact ">>" chevron look + clock
+  cooldown wedge + seconds label.
+- scripts/ui/move_joystick_hud.gd (NEW) — floating virtual movement joystick
+  (a CanvasLayer node in match_arena). Lower-LEFT activation zone (mirrors to
+  lower-RIGHT in left-handed mode, since dash/cast/cards move left there). Springs
+  up under the thumb on touch-down; horizontal drag past a deadzone drives
+  move_left/move_right (sim X axis is digital -1/0/+1, so a push == holding the
+  arrow key; the held-direction AIM system works identically). Releases both on
+  lift / focus-out / pause.
+- scripts/ui/card_hand_hud.gd — the fanned cards are now PRESS-AND-HOLDABLE to
+  charge their spells. Manual canvas-space hit-test of each rotated/scaled card
+  face; the owning finger is tracked by index and the release is caught GLOBALLY
+  (not via _gui_input) because a charging card swells and slides up from under the
+  thumb — a _gui_input release would be dropped and the spell would charge forever.
+  Drives card_slot_1/2/3. Guarded off during the between-rounds study spread.
+- scenes/ui/match_hud.tscn — added CastButton (center 730,1690) as a sibling left
+  of DashButton.
+- scenes/match_arena.tscn — added MoveJoystickHUD CanvasLayer.
+- scripts/ui/match_flow_overlay.gd — rematch hint changed from "press SPACE for a
+  rematch" to "tap the fireball to play again" (no spacebar on a phone; the
+  fireball button is the rematch trigger).
+- VERIFICATION: tests/test_touch_controls.gd (NEW, headless, 16 assertions:
+  geometry hit-tests for all three widgets; full fireball loop press->hold->release
+  SPAWNS a projectile; joystick left-push moves the player's fixed x DOWN; card
+  hold drives its slot action). tests/screenshot_touch.gd (NEW visual probe ->
+  tests/_screenshot_touch.png, shows the lit cast button + deflected joystick).
+  All 7 suites pass (the 6 originals + touch controls).
+
+ANDROID EXPORT PIPELINE:
+- Toolchain installed at D:\Games\GODOT\android-tools\: Temurin JDK 17.0.19+10;
+  Android SDK (cmdline-tools, platform-tools, build-tools;34.0.0,
+  platforms;android-34); debug.keystore (alias androiddebugkey / pass android);
+  Godot 4.6.1 export templates at
+  %APPDATA%\Godot\export_templates\4.6.1.stable.
+- %APPDATA%\Godot\editor_settings-4.6.tres export/android/* paths point to the
+  toolchain above.
+- export_presets.cfg (NEW): Android preset, arm64-v8a ONLY, non-gradle (prebuilt
+  template APK), package com.flowishloz.spellbop, name "Spell Bop", immersive
+  portrait, version 1.0(1), minSdk 24; exclude_filter trims unused addons
+  (delta_rollback, phantom_camera, godot_state_charts) + tests + Brain docs +
+  root cruft (demo, godot-cpp, src, codegen, test_suite, godot_state_charts_examples).
+- project.godot: renderer/rendering_method.mobile="mobile" (desktop stays
+  forward_plus); textures/vram_compression/import_etc2_astc=true. The arena
+  Environment uses only depth fog + filmic tonemap (no volumetric/SDFGI/SSAO) so
+  it's Mobile-renderer clean.
+- OUTPUT: D:\Games\GODOT\Wizard Dodgeball\SpellBop.apk — 51.1 MB, signed (APK
+  Signature Scheme v2 + v3, verified), arm64. Contains
+  lib/arm64-v8a/libsgphysics2d.android.template_debug.arm64.so.
+
+[SPRINT 17 HOTFIX — SPAWN BOUNDS: NO PROJECTILE SPAWNS OUTSIDE THE MAP (2026-06-13)]
+Bug (Creative Director): "Icey Retort's counter wave sometimes spawns outside the map — possibly the aiming mechanic based on last input. Keep it aimable, but NO projectile should spawn outside the map."
+Root cause: every spawn site placed the object at caster_pos.x with NO arena-bounds clamp. The aim mechanic (_aim_vx_fp) only tilts launch VELOCITY, never spawn position — so the out-of-bounds was the WIDE object's centre sitting at the lane edge (where holding a direction to bank aim also parks the caster). The Icey Retort frost wave is ±200u half-width (ice_wave.tscn); spawned at the +400u player edge its body reached ~+600u, ~150u past the ±450u side walls.
+Fix (deterministic, rollback-safe, fixed-point): added MovementComponent.arena_half_width_fp() accessor + a STATIC MovementComponent.clamp_spawn_x_fp(x_fp, half_extent_fp, bound_fp) that returns clampi(x, -(bound-half), +(bound-half)) with the limit floored at 0 (objects wider than the lane pin to centre). Applied at ALL FIVE spawn sites, clamping the spawn ORIGIN only so the object's FULL extent stays inside the arena bound; launch velocity (the aim tilt) is left untouched so spells stay fully aimable:
+  1. card_caster_component.gd _resolve_counter (Icey Retort wave, half = card.projectile_size 200) — THE HEADLINE FIX.
+  2. card_caster_component.gd _resolve_attack (Spark Bolt fan, half = card.projectile_size 31; clamped once before the fan loop since the fan is velocity-only).
+  3. card_caster_component.gd _resolve_defense (Gaea's Wall, half = card.wall_size.x*0.5 = 102).
+  4. spell_caster_component.gd _spawn_projectile (base fireball, half = spell.projectile_size 24).
+  5. fireball_controller.gd split_on_barrier (barrier-breaker shards, half = BASE_RADIUS_UNITS*0.75 = 18, clamped per shard AFTER the ±28 fan offset).
+Bound source: each caster reads its sibling MovementComponent.arena_half_width_fp() AT SPAWN TIME (post-_ready, always resolved) so scene overrides win (400 in match_arena via player.tscn; 500 test_area; 600 script default); the projectile shard (no mover of its own) reads the bound from the "wizards" group deterministically (scene-tree order). The clamp targets the per-caster MOVEMENT bound (±400), which is 50u inside the physical ±450 walls — strictly inside the map.
+Verification: NEW tests/test_spawn_bounds.gd (24 assertions: counter/defense/attack/base fireball at BOTH lane edges with full-extent containment read from each object's ACTUAL collider; mid-lane no-op proving spawn x == 0 exactly; AIM PRESERVED proving the edge cast's launch vx is byte-identical to a mid-lane cast; barrier-breaker shards in-bounds). All 8 suites pass; determinism stays BIT-IDENTICAL; test_card_system's defense-placement proof still holds (clamp inert mid-court). Audited via a 5-facet parallel workflow + a 3-lens adversarial review (2 lenses solid; determinism lens raised only forward-looking caveats — see HANDOFF).
+
+[SPRINT 18 — GAMEPLAY PHASE: CARDS COMMIT ON PRESS + FIREBALL CHARGE REWORK — 2026-06-14]
+Creative Director directive: eliminate card hold-to-channel. Cards now commit on the PRESS EDGE.
+The base fireball's 3-gauge charge gains visual feedback (color-coded ring, escalating shake) and
+size scaling. NINE test suites pass; determinism BIT-IDENTICAL (new tests/test_charge_mechanics.gd
+asserts gauge sizes/staging). All changes verified by a 3-lens adversarial review + pixel screenshot
+audit of the button.
+
+A) CARDS COMMIT ON PRESS — no more channel/charge time:
+- CardCasterComponent: ATTACK now stages on the press EDGE (was hold-to-channel for
+  casting_cost x cost_tier_seconds). DEFENSE stays instant off-stack; COUNTER stays
+  reactive-slap. REMOVED: the channel state (_active_slot/_channel_ticks), the cost
+  machinery (cost_tier_seconds @export, _tier_ticks), _channel_level(), _movement_scale_fp(),
+  the per-tick casting-cost movement penalty, and the "sl"/"cc" keys from _save_state/
+  _load_state. cost_ticks_for_slot() now returns 0 (every card is a tap; the AI taps).
+  The cast_charge_started/canceled/level_changed signals are KEPT as vestigial
+  declarations (CastChargeVFX/WizardAnimator/CardHandHUD auto-connect to BOTH caster
+  types). The CardHandHUD CHARGING swell is now dormant for cards (press -> staged/hidden
+  directly).
+
+B) FIREBALL CHARGE FEEDBACK REWORK (base spell still charges — only CARDS lost charging):
+- Cast BUTTON ring segmented into THIRDS, each lit in its gauge colour: yellow (gauge 1) / red
+  (gauge 2) / blue (gauge 3); a reached gauge glows solid, the gauge currently filling pulses,
+  unreached are a faint track. scripts/ui/cast_button_hud.gd, driven by new
+  SpellCasterComponent.charge_level(). Flame icon tints to the current gauge colour.
+  (Verified in pixels: L1 = gauge1 yellow solid, L2 = +gauge2 red, L3 = all three.)
+- In-game charge PARTICLES recoloured: gauge 1 YELLOW, gauge 2 RED, gauge 3 BLUE
+  (scripts/visual/cast_charge_vfx_component.gd level_colors; index 0 = faint warm pre-glow).
+- SCREEN shake escalates per gauge: core/match_controller.gd charge_rumble_levels now
+  [0.06, 0.22, 0.4, 0.62] + a new charge_pop_trauma (0.1) one-shot KICK on each RISING
+  gauge edge (scaled by gauge number) in _on_player_charge_level (tracks _prev_charge_level).
+- WIZARD SPRITE shake escalates per gauge: scripts/visual/wizard_animator_component.gd
+  jitters _sprite.position (NOT the rig X/Z owned by the VisualBridge) with amplitude/
+  frequency scaling by _charge_level; resets to zero when not charging.
+
+C) FIREBALL SIZE BY GAUGE: gauge 1 = base, gauge 2 = +10%, gauge 3 = +25%.
+   scripts/player/components/spell_caster_component.gd CHARGE_SIZE_MULTIPLIERS = [1.0, 1.0, 1.10,
+   1.25] (index = charge level). _spawn_projectile captures the fired gauge (BEFORE the charge
+   reset) and applies the charged radius to BOTH the spawn-bounds clamp (so a bigger bolt still
+   stays in the lane) and apply_size. Base fireball projectile_size 24 -> gauge 2 = 26.4u, gauge
+   3 = 30u (verified exactly).
+
+VERIFICATION: tests/test_charge_mechanics.gd (NEW): fireball size 24/26.4/30 exact per gauge; the
+charged gauge-3 bolt still clamps in-bounds at the lane edge; ATTACK stages on the FIRST press
+tick. All 9 suites pass; determinism BIT-IDENTICAL. A test-fragility note (record it): the touch-
+controls fireball assertion was made robust — a fixed idle-frame hold is unreliable headless
+(idle frames != physics ticks) AND, now that AI attacks stage instantly, an AI stage opens the
+slow-mo Stack window mid-charge and starves the charge; the test now pins the opponent AI cards
+off and polls the real charge gauge before releasing.
+
+[SPRINT 18 FOLLOW-UP FIXES — 2026-06-14]
+All four amendments verified by pixel screenshots + 7 headless suites still pass (determinism BIT-IDENTICAL).
+- 1) CAST BUTTON GLOW: scripts/ui/touch_action_button.gd implements a _draw_glow() hook; cast_button_hud.gd
+  overrides it with a soft halo matched to the CURRENT charge gauge colour (yellow/red/blue) with intensity
+  scaling by charge level.
+- 2) CHARGE PARTICLES RECOLOUR FIX: the previous colour change wasn't visible because Mat_cast_spark had fixed
+  orange albedo + no vertex_color_use_as_albedo. FIX: albedo_color = white, vertex_color_use_as_albedo = true.
+  Now the per-gauge colour from cast_charge_vfx_component.gd shows (verified blue at gauge 3).
+- 3) FLOOR CLIPPING FIXED: wizard_animator_component.gd was zeroing _sprite.position every frame while charging
+  and resetting it otherwise, which overwrote the Sprite3D's authored offset (0, 1.13, 0), dropping the sprite
+  centre to y=0 and sinking its bottom half into the floor plane. FIX: capture _sprite_base_pos in _ready() and
+  jitter AROUND the base (reset TO the base, never to zero). Also hardened: scenes/player.tscn billboard = 2
+  (Y-axis, stays upright) + sprite offset 1.05 -> 1.13; opponent inherits both. Verified: both wizards stand fully
+  on the floor, idle and charging.
+- 4) SIZE PERCENTAGES UPDATED: CHARGE_SIZE_MULTIPLIERS now [1.0, 1.0, 1.15, 1.35] — gauge 2 = +15% (was +10%),
+  gauge 3 = +35% (was +25%). Base 24u -> gauge 2 = 27.6u, gauge 3 = 32.4u (test_charge_mechanics.gd asserts exactly).
+
+[SPRINT 18 — PLAY AGAIN BUTTON + APK RE-EXPORT (2026-06-14)]
+- POST-MATCH "PLAY AGAIN" BUTTON: scripts/ui/match_flow_overlay.gd now shows a gold-bordered PLAY AGAIN Button directly under the MATCH STATS panel on the victory/defeat screen (position ~ (330,1340), size 420x110), wired to a new public MatchController.request_rematch() (core/match_controller.gd — the rematch reset was extracted from _process). The match-end card-study row was lowered (card_hand_hud.gd _on_match_ended _expanded_row_y 1560 -> 1660) so the button clears beneath the stats. The "tap the fireball to play again" hint was removed.
+- FIREBALL NO LONGER REMATCHES ON MOBILE: the in-match touch controls now STAND DOWN while a round isn't live (between rounds / on the match-end screen): scripts/ui/touch_action_button.gd (cast + dash) and scripts/ui/move_joystick_hud.gd gained an @export match_controller_path and gate their _input on round_started (active) vs round_ended/match_ended (inactive, releasing any held press). This (a) stops the cast button from casting/rematching on the victory screen and (b) stops the joystick from eating the PLAY AGAIN button's touch. Desktop SPACE still rematches (MatchController._process still checks cast_spell -> request_rematch, used by test_round_flow).
+- VERIFICATION: new tests/test_play_again.gd asserts a 2-0 KO -> MATCH_OVER, the button is shown, emitting its pressed signal restarts the match (ROUND_ACTIVE, scoreboard 0-0). All 10 suites pass; determinism unchanged (no sim edits — UI + a rematch-method extraction only).
+- APK RE-EXPORTED: D:\Games\GODOT\Wizard Dodgeball\SpellBop.apk rebuilt (overwrote the previous), 51.1 MB, signed (v2+v3), arm64, sg-physics-2d android .so packaged, includes all Sprint 18 + the PLAY AGAIN button.
+
+===========================================================
+NEXT IMMEDIATE TASKS (Sprint 17 candidates)
+===========================================================
+1. Story Mode structure (opponent ladder, AI difficulty presets).
+2. Draft phase + DECKS screen (limited-use cards replace cooldowns).
+3. Bimdav rollback compile + SyncManager -> Nakama ONLINE MATCH.
+4. Touch controls (virtual joystick feeds aim; dash/card touch buttons).
+5. Audio pass proper + real card art; stack-resolution choreography.
+
+===========================================================
+NOTES
+===========================================================
+- Headless `-s` SceneTree test scripts must await process_frame before node
+  _ready() fires (relevant to all future headless tests).
+- All four test suites pass headless: test_determinism.gd, test_collision_layers.gd,
+  test_spawn_offset.gd, test_match_smoke.gd.
+- Autonomy Protocol (2026-06-11): Orchestrator has full autonomous authority over
+  all code, scene, and resource files; the human is Creative Director + playtester
+  and is no longer asked to perform editor wiring.
