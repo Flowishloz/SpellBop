@@ -39,6 +39,15 @@ extends Node
 @export var flicker_seconds: float = 0.5
 @export var flicker_hz: float = 9.0
 
+## DEATH ANIMATION (Phase 4): on a LETHAL hit the wizard is flung BACKWARD off
+## its own baseline edge — a visual physics arc on the SPRITE (the sim is parked
+## on KO; the VisualBridge owns rig X/Z, so the death fling lives on the sprite's
+## local offset). Reset when the round restarts (health refills).
+@export var death_back_speed: float = 4.6    # m/s backward, off the edge
+@export var death_up_speed: float = 3.3      # m/s upward kick
+@export var death_gravity: float = 9.5       # m/s^2 fall
+@export var death_spin_speed: float = 9.0    # flat-spin rate (scale.x flip)
+
 var _rig: Node3D
 var _sprite: Node3D
 var _sprite_base_pos: Vector3 = Vector3.ZERO  # the sprite's authored local offset
@@ -54,6 +63,11 @@ var _charge_level: int = 0
 var _recoil: float = 0.0
 var _flicker_until_msec: int = 0
 var _wall_last_msec: int = 0
+# DEATH state (visual only).
+var _dead: bool = false
+var _death_vel: Vector3 = Vector3.ZERO
+var _death_off: Vector3 = Vector3.ZERO
+var _death_t: float = 0.0
 
 
 func _ready() -> void:
@@ -70,6 +84,8 @@ func _ready() -> void:
 	var health: Node = get_node_or_null(health_path)
 	if health != null:
 		health.damaged.connect(_on_damaged)
+		health.knocked_out.connect(_on_knocked_out)
+		health.health_changed.connect(_on_health_changed)
 
 	for sibling in get_parent().get_children():
 		if sibling is SpellCasterComponent or sibling is CardCasterComponent:
@@ -85,6 +101,11 @@ func _process(delta: float) -> void:
 	var now: int = Time.get_ticks_msec()
 	var wall_dt: float = clampf(float(now - _wall_last_msec) / 1000.0, 0.0, 0.05)
 	_wall_last_msec = now
+
+	# DEATH fling overrides all normal animation (the wizard is knocked off).
+	if _dead:
+		_update_death(wall_dt)
+		return
 
 	# --- locomotion read (visual X only — never sim) -------------------
 	var x: float = _rig.position.x
@@ -160,6 +181,52 @@ func _process(delta: float) -> void:
 
 func _on_damaged(_amount: int) -> void:
 	_flicker_until_msec = Time.get_ticks_msec() + int(flicker_seconds * 1000.0)
+
+
+## LETHAL hit: fling the wizard BACKWARD off its own baseline edge (the side of
+## the court it stands on) on a gravity arc. Pure visual — the sim is already
+## parked by the round flow. Reset on the next round when health refills.
+func _on_knocked_out() -> void:
+	if _dead or _sprite == null:
+		return
+	_dead = true
+	_death_t = 0.0
+	_death_off = Vector3.ZERO
+	var back: float = signf(_rig.global_position.z) if _rig != null else 1.0
+	if back == 0.0:
+		back = 1.0
+	_death_vel = Vector3(0.0, death_up_speed, back * death_back_speed)
+	if _rig != null:
+		BurstFX.spawn(_rig.get_parent(), _rig.global_position + Vector3(0.0, 1.0, 0.0),
+				Vector3(0.0, 0.5, back), Color(1.0, 0.5, 0.3, 0.95), 32, 5.5)
+	Sfx.play(&"hit_wizard")
+
+
+## Advances the death fling: gravity arc on the sprite's local offset, a flat-
+## spin (scale.x flip — the Y-billboard ignores node rotation), shrink + fade.
+func _update_death(wall_dt: float) -> void:
+	if _sprite == null:
+		return
+	_death_vel.y -= death_gravity * wall_dt
+	_death_off += _death_vel * wall_dt
+	_sprite.position = _sprite_base_pos + _death_off
+	_death_t += wall_dt
+	var spin: float = sin(_death_t * death_spin_speed)
+	var shrink: float = clampf(1.0 - _death_t * 0.32, 0.18, 1.0)
+	_sprite.scale = Vector3(spin * shrink, shrink, shrink)
+	var a: float = clampf(1.0 - _death_t * 0.5, 0.0, 1.0)
+	_sprite.set(&"modulate", Color(1.0, 0.55, 0.5, a))
+
+
+## Round restart (health refilled): clear the death state and restore the sprite.
+func _on_health_changed(current: int, _max_health: int) -> void:
+	if _dead and current > 0:
+		_dead = false
+		_death_t = 0.0
+		_death_off = Vector3.ZERO
+		_sprite.position = _sprite_base_pos
+		_sprite.scale = Vector3.ONE
+		_sprite.set(&"modulate", Color.WHITE)
 
 
 func _on_charge_started(_spell: Resource) -> void:

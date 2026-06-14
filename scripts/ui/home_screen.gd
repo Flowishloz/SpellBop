@@ -42,6 +42,7 @@ class GearIcon extends Control:
 
 
 func _ready() -> void:
+	_build_backdrop()
 	_build_title()
 	_build_title_cards()
 	_build_diorama()
@@ -96,6 +97,82 @@ func _process(_delta: float) -> void:
 # =====================================================================
 # 3D content
 # =====================================================================
+
+## 80s-style SPACE + PLANET backdrop (Phase 4, Creative Director): a synthwave
+## gradient sky, a big ringed planet, a small second planet, and a star field —
+## all script-built and unshaded/emissive so they glow past the scene fog.
+func _build_backdrop() -> void:
+	# Synthwave sunset sky (deep purple -> magenta -> hot orange), unshaded.
+	var grad := Gradient.new()
+	grad.set_color(0, Color(0.10, 0.02, 0.20))
+	grad.add_point(0.45, Color(0.42, 0.08, 0.5))
+	grad.add_point(0.72, Color(0.95, 0.28, 0.45))
+	grad.set_color(1, Color(1.0, 0.55, 0.22))
+	var grad_tex := GradientTexture2D.new()
+	grad_tex.gradient = grad
+	grad_tex.width = 8
+	grad_tex.height = 256
+	grad_tex.fill_from = Vector2(0, 0)
+	grad_tex.fill_to = Vector2(0, 1)
+	var sky_mat := StandardMaterial3D.new()
+	sky_mat.albedo_texture = grad_tex
+	sky_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	var sky_quad := QuadMesh.new()
+	sky_quad.size = Vector2(46, 30)
+	sky_quad.material = sky_mat
+	var sky := MeshInstance3D.new()
+	sky.mesh = sky_quad
+	sky.position = Vector3(0, 6, -13)
+	add_child(sky)
+
+	# Star field over the sky.
+	var stars := Sprite3D.new()
+	stars.texture = load("res://resources/placeholder/starfield.png")
+	stars.pixel_size = 0.032
+	stars.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
+	stars.modulate = Color(1, 1, 1, 0.85)
+	stars.position = Vector3(0, 6.5, -12.4)
+	add_child(stars)
+
+	# Big ringed planet upper-right (emissive teal) + small amber planet lower-left.
+	_add_planet(Vector3(3.4, 6.4, -10.0), 1.7, Color(0.18, 0.72, 0.85), Color(0.1, 0.45, 0.75), true)
+	_add_planet(Vector3(-3.6, 2.4, -8.5), 0.85, Color(0.95, 0.55, 0.3), Color(0.7, 0.3, 0.12), false)
+
+
+## One emissive planet sphere; with_ring adds a tilted neon torus (script
+## rotation — graveyard rule: no hand-authored rotated .tscn transforms).
+func _add_planet(pos: Vector3, radius: float, albedo: Color, emit: Color, with_ring: bool) -> void:
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = albedo
+	mat.roughness = 0.55
+	mat.emission_enabled = true
+	mat.emission = emit
+	mat.emission_energy_multiplier = 0.9
+	var sphere := SphereMesh.new()
+	sphere.radius = radius
+	sphere.height = radius * 2.0
+	sphere.material = mat
+	var planet := MeshInstance3D.new()
+	planet.mesh = sphere
+	planet.position = pos
+	add_child(planet)
+	if not with_ring:
+		return
+	var ring_mat := StandardMaterial3D.new()
+	ring_mat.albedo_color = Color(0.95, 0.6, 0.95)
+	ring_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	ring_mat.emission_enabled = true
+	ring_mat.emission = Color(0.9, 0.5, 0.95)
+	var torus := TorusMesh.new()
+	torus.inner_radius = radius * 1.25
+	torus.outer_radius = radius * 1.75
+	torus.material = ring_mat
+	var ring := MeshInstance3D.new()
+	ring.mesh = torus
+	ring.position = pos
+	ring.rotation = Vector3(deg_to_rad(76.0), 0.0, deg_to_rad(20.0))
+	add_child(ring)
+
 
 func _build_title() -> void:
 	var chrome := StandardMaterial3D.new()

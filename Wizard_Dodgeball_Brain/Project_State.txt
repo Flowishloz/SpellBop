@@ -1284,6 +1284,60 @@ VERIFICATION:
 - Screenshot probe confirms the zoomed framing during slow-mo.
 - All 13 original + 1 new headless suites pass; determinism BIT-IDENTICAL.
 
+[SPRINT 19 — PHASE 3: USER INTERFACE (2026-06-14)]
+Five UI/presentation changes. All 14 headless test suites pass; determinism
+BIT-IDENTICAL (all changes are visual-only, no sim state). Five screenshots confirm
+each change. Phase 3 committed to GitHub https://github.com/Flowishloz/SpellBop.git
+(main).
+
+(1) FIREBALL CAST BUTTON ENLARGEMENT:
+- scripts/ui/touch_action_button.gd / scripts/ui/cast_button_hud.gd: radius
+  increased 70% (84 -> 142.8 sim units). Repositioned to bottom-right corner of
+  canvas (scenes/ui/match_hud.tscn); visual: larger flame glyph, more prominent
+  charge ring, easier mobile touch target.
+
+(2) CARD HAND VISUAL REORDERING:
+- scripts/ui/card_hand_hud.gd: NEW VISUAL_ORDER constant that remaps the on-screen
+  layout of the three fanned cards. DEFENSE card anchored at the BOTTOM of the fan
+  (most exposed), COUNTER takes the MIDDLE position, ATTACK at the top. The
+  card-caster SLOTS (keys 8/9/0) are UNCHANGED — the input pipeline and casting
+  mechanics are untouched. Only the visual _dock_pos/_dock_rot/z_index/gradient/_card_hit
+  calculations respect the reordered layout. Effect: DEFENSE is the most accessible
+  card visually; experienced players can "see" the layout without reading.
+
+(3) STAGED CARD CASTING FEEDBACK:
+- scripts/ui/stack_display_hud.gd: every staged attack or counter card now GLOWS
+  its type colour (red for attacks, blue for counters) via StandardMaterial3D bloom
+  (self_modulate components pushed above 1.0). The glow INTENSIFIES as the countdown
+  nears zero (franticness ramp = (1 - window_fraction)^2 drives amplitude + frequency
+  + red hue shift). Visual effect: hand feedback that the stack is heating up; players
+  see the approaching deadline visually.
+
+(4) STACK WINNER BANNER:
+- NEW stack-resolution banner in scripts/ui/match_flow_overlay.gd: the instant
+  MatchController emits stack_winner_decided(player_won), a bold "YOU WIN THE STACK!"
+  or "FOE WINS THE STACK!" label pops (scale pop + fade-out on the wall clock, 1.2 s
+  total). Font 64, bright gold text. Driven by the Phase-1 stack_winner_decided signal
+  (no new signals required).
+
+(5) ROUND-START BOLD CALL-OUT WITH LIGHTNING FRAME:
+- NEW in scripts/ui/match_flow_overlay.gd inner class _RoundLightning: a BOLD "ROUND N"
+  label (font 104, kept off the _title Control so post-round result screens retain their
+  size) framed by two procedurally-drawn horizontal lightning bolts. The TOP bolt shoots
+  right; the BOTTOM shoots left. Both are animated on the wall clock (animated.tscn-style
+  via script, no external assets). Drawn as thick 2D lines with a jagged procedural path
+  (sine-wave subdivisions + random jitter). Effect: dramatic round opener, thematic to
+  the card-casting fantasy.
+
+VERIFICATION:
+- All 14 original + 3 Phase-1 headless suites pass (14 total, BIT-IDENTICAL).
+- tests/test_stack_resolution.gd + test_ice_shatter.gd + test_emerald.gd unaffected
+  (visual changes only).
+- Five pixel screenshots verify: (a) enlarged cast button bottom-right, (b) card hand
+  visual order (DEFENSE bottom, COUNTER middle), (c) staged card glow escalating toward
+  countdown zero, (d) stack winner banner pop, (e) ROUND N with lightning bolts.
+- GitHub commit: main branch, all code+scenes+tests up to date.
+
 ===========================================================
 NOTES
 ===========================================================

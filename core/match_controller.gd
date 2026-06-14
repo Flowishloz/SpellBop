@@ -183,6 +183,7 @@ func _ready() -> void:
 
 	round_started.emit(round_number)
 	_warm_up_render_pipelines()
+	_build_arena_borders()
 
 
 ## LAG-SPIKE FIX (slow-mo exit hitch): the first stack resolution used to
@@ -216,6 +217,37 @@ func _warm_up_render_pipelines() -> void:
 		for inst in parked:
 			if is_instance_valid(inst):
 				inst.queue_free())
+
+
+## GLOWING ARENA BORDERS (Phase 4, Creative Director): a neon perimeter framing
+## the floor. Script-built emissive strips just above the floor plane (the floor
+## is 9.6 x 21, centred at the origin).
+func _build_arena_borders() -> void:
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = Color(0.2, 0.9, 1.0)
+	mat.emission_enabled = true
+	mat.emission = Color(0.3, 0.95, 1.0)
+	mat.emission_energy_multiplier = 2.4
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	var half_x: float = 4.75
+	var half_z: float = 10.4
+	var thick: float = 0.12
+	var tall: float = 0.16
+	var y: float = 0.08
+	var edges: Array = [
+		[Vector3(thick, tall, half_z * 2.0), Vector3(-half_x, y, 0.0)],   # left
+		[Vector3(thick, tall, half_z * 2.0), Vector3(half_x, y, 0.0)],    # right
+		[Vector3(half_x * 2.0, tall, thick), Vector3(0.0, y, half_z)],    # near
+		[Vector3(half_x * 2.0, tall, thick), Vector3(0.0, y, -half_z)],   # far
+	]
+	for edge in edges:
+		var box := BoxMesh.new()
+		box.size = edge[0]
+		box.material = mat
+		var mi := MeshInstance3D.new()
+		mi.mesh = box
+		mi.position = edge[1]
+		add_child(mi)
 
 
 func _process(_delta: float) -> void:
