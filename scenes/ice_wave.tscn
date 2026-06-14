@@ -32,7 +32,7 @@ shape = SubResource("SGRectangleShape2D_wave")
 [node name="ProjectileMovementComponent" type="Node" parent="."]
 script = ExtResource("2_move")
 terminal_velocity = 2200.0
-lifespan_seconds = 1.5
+lifespan_seconds = 3.0
 
 [node name="HitDetectionComponent" type="Node" parent="."]
 script = ExtResource("3_hit")

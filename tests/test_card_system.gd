@@ -24,19 +24,13 @@ class ScriptedBrain extends AIBrainComponent:
 	var hold_card_slot: int = 0
 	var hold_card_ticks: int = 0
 	var hold_cast_ticks: int = 0
-	var hold_dash_ticks: int = 0
-	var dash_dir: int = 1
 	var move_dir: int = 0  # held alongside any action (aim/drift testing)
 
 	func decide(_tick: int) -> Dictionary:
 		var input: Dictionary = {}
 		if move_dir != 0:
 			input[InputCommand.KEY_X] = move_dir
-		if hold_dash_ticks > 0:
-			hold_dash_ticks -= 1
-			input[InputCommand.KEY_X] = dash_dir
-			input[InputCommand.KEY_DASH] = 1
-		elif hold_card_ticks > 0:
+		if hold_card_ticks > 0:
 			hold_card_ticks -= 1
 			input[InputCommand.KEY_CARD] = hold_card_slot
 		elif hold_cast_ticks > 0:
@@ -74,6 +68,10 @@ func _run() -> void:
 		return
 
 	var arena: Node = packed.instantiate()
+	# Isolate the card/charge mechanics from the Phase-1 STACK WINNER reward: a
+	# 1.0x multiplier makes the next-throw boost a no-op (its own coverage lives
+	# in tests/test_stack_resolution.gd). Set BEFORE add_child so _ready caches it.
+	arena.stack_winner_speed_multiplier = 1.0
 
 	# Neutralize the REAL AI completely (cast_interval/card_interval <= 0
 	# disables fireballs and ALL card play incl. reactive walls/counters).
@@ -261,23 +259,6 @@ func _run() -> void:
 				"D: velocity EXACTLY 4x base (vy=%d, want %d)" % [charged.get_velocity_y(), want])
 	_check(_stack_opens == opens_final, "D: base fireball never opens the Stack")
 	await _await_condition(func() -> bool: return projectiles.get_child_count() == 0, 6000)
-
-	# =================================================================
-	# PHASE E — DASH (Left Shift): 35% of the arena in a blink + cooldown.
-	# =================================================================
-	print("--- PHASE E: dash ---")
-	var player_body: Node = arena.get_node("Player")
-	var player_movement: Node = arena.get_node("Player/Movement")
-	var x_before: int = player_body.get_global_fixed_position().x
-	brain.dash_dir = 1
-	brain.hold_dash_ticks = 2
-	var dashed: bool = await _await_condition(func() -> bool:
-		return player_body.get_global_fixed_position().x - x_before > 16000000, 2000)
-	_check(dashed, "E: dash blinked the wizard right (x %d -> %d)" % [x_before, player_body.get_global_fixed_position().x])
-	var dx: int = player_body.get_global_fixed_position().x - x_before
-	_check(dx >= 17000000 and dx <= 19000000,
-			"E: distance ~35%% of the arena (280 units; got %.1f)" % (dx / 65536.0))
-	_check(player_movement.dash_cooldown_fraction() > 0.5, "E: dash cooldown running (%.2f)" % player_movement.dash_cooldown_fraction())
 
 	if _failures == 0:
 		print("CARD SYSTEM TEST: ALL PASS")

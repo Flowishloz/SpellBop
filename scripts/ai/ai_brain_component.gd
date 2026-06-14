@@ -13,12 +13,13 @@
 ## decisions, NO RNG. Float @exports are converted once in _ready(), same
 ## tuning model as MovementComponent.
 ##
-## CURRENT BRAIN (Sprint 3 — "simple AI for starters"): dodge the nearest
-## incoming fireball laterally; otherwise shadow the target player's X
-## (rally positioning); cast on a fixed tick interval (the caster's cooldown
-## still gates it). EXPANSION SEAM: decide() is the single entry point —
-## card play and strategic thinking later replace/extend its internals
-## without touching the input pipeline.
+## CURRENT BRAIN (Sprint 19 — independent opponent): dodge the nearest incoming
+## fireball laterally; otherwise move on its OWN agenda — a deterministic patrol
+## sweep across its court (NO mirroring of the player's X), lining up a straight
+## down-court shot on a healing emerald while hurt; cast on a fixed tick interval
+## (the caster's cooldown still gates it). EXPANSION SEAM: decide() is the single
+## entry point — card play and strategic thinking extend its internals without
+## touching the input pipeline.
 class_name AIBrainComponent
 extends Node
 
@@ -43,9 +44,22 @@ extends Node
 ## "aimed at me" and triggers a dodge. Tune ~ ball radius + body width + margin.
 @export var dodge_radius: float = 140.0
 
-## Deadzone, in sim units, around the target's X before the AI bothers to
-## shadow-step. Prevents jittery left/right oscillation.
+## Deadzone, in sim units, around the AI's current target X before it bothers to
+## step. Prevents jittery left/right oscillation.
 @export var track_deadzone: float = 40.0
+
+## INDEPENDENT MOVEMENT (Sprint 19, Phase 1 — Creative Director: the opponent must
+## act on its OWN agenda, not shadow the player). With no incoming threat the brain
+## patrols its court on a deterministic triangle sweep across ±patrol_amplitude
+## instead of mirroring the player's X. No floats in the decision, no RNG.
+@export var patrol_amplitude: float = 300.0
+
+## Whole ticks for ONE full left->right->left patrol sweep (240 = 4 s @ 60 Hz).
+@export var patrol_period_ticks: int = 240
+
+## When hurt (HP below max), steer to line up a straight down-court shot on a
+## healing emerald if one is on the field (its lane crosses the AI's own X).
+@export var emerald_seek_enabled: bool = true
 
 ## Cast the equipped spell every N ticks (the SpellCasterComponent cooldown
 ## still applies). Deterministic counter — no RNG. <= 0 disables casting.
@@ -99,6 +113,7 @@ extends Node
 var _reaction_fp: int = 0
 var _dodge_fp: int = 0
 var _deadzone_fp: int = 0
+var _patrol_amp_fp: int = 0
 
 # Remaining ticks of the current "button hold". Input-source state, NOT sim
 # state: the brain produces inputs (like a human's fingers); under rollback
@@ -124,6 +139,7 @@ var _body: SGCharacterBody2D
 var _container: Node
 var _target: SGCharacterBody2D
 var _card_caster: CardCasterComponent
+var _health: Node
 var _stack: Node
 
 
@@ -135,12 +151,15 @@ func _ready() -> void:
 	_reaction_fp = SGFixed.from_float(maxf(0.0, reaction_distance))
 	_dodge_fp = SGFixed.from_float(maxf(0.0, dodge_radius))
 	_deadzone_fp = SGFixed.from_float(maxf(0.0, track_deadzone))
+	_patrol_amp_fp = SGFixed.from_float(maxf(0.0, patrol_amplitude))
 	# The brain sizes its card "button holds" from the caster's cost math
-	# (reading static tuning, not sim state).
+	# (reading static tuning, not sim state); it also reads its own health to
+	# decide whether chasing a healing emerald is worthwhile.
 	for child in _body.get_children():
 		if child is CardCasterComponent:
 			_card_caster = child
-			break
+		elif child is HealthComponent:
+			_health = child
 	_stack = get_node_or_null(^"/root/TheStack")
 
 
@@ -166,7 +185,7 @@ func decide(tick: int) -> Dictionary:
 	var has_reacted: bool = _threat_since_tick != -1 \
 			and tick - _threat_since_tick >= reaction_delay_ticks
 
-	var x_dir: int = _decide_x(my_pos, has_reacted)
+	var x_dir: int = _decide_x(my_pos, has_reacted, tick)
 	if x_dir != 0:
 		input[InputCommand.KEY_X] = x_dir
 
@@ -274,9 +293,11 @@ func _hostile_ball_count(my_pos: SGFixedVector2, within_fp: int) -> int:
 # =====================================================================
 
 ## Dodge the nearest incoming fireball if one is aimed at us (only once the
-## reaction delay has elapsed — has_reacted); otherwise shadow the target
-## player's X. Returns -1 | 0 | 1.
-func _decide_x(my_pos: SGFixedVector2, has_reacted: bool) -> int:
+## reaction delay has elapsed — has_reacted); otherwise move toward the brain's
+## OWN independent target (patrol / emerald-seek), never the player's X.
+## Returns -1 | 0 | 1.
+func _decide_x(my_pos: SGFixedVector2, has_reacted: bool, tick: int) -> int:
+	# 1) SURVIVAL FIRST: dodge the nearest incoming ball aimed at us.
 	var threat_x: int = 0
 	var threat_found: bool = false
 	var best_dist: int = _reaction_fp
@@ -307,12 +328,54 @@ func _decide_x(my_pos: SGFixedVector2, has_reacted: bool) -> int:
 			return -1 if dx > 0 else 1
 		return 0  # Incoming but already clear of it: hold the lane.
 
-	if _target != null:
-		var tx: int = _target.get_global_fixed_position().x - my_pos.x
-		if absi(tx) > _deadzone_fp:
-			return 1 if tx > 0 else -1
-
+	# 2) OWN AGENDA: step toward the brain's self-directed target X (never the
+	# player's position). Move only past the deadzone so we don't jitter.
+	var goal_x: int = _independent_target_x(my_pos, tick)
+	var gdx: int = goal_x - my_pos.x
+	if absi(gdx) > _deadzone_fp:
+		return 1 if gdx > 0 else -1
 	return 0
+
+
+## The AI's self-directed target X (fixed-point), with NO reference to the
+## player's position. Priority: line up a healing emerald while hurt, else patrol.
+func _independent_target_x(_my_pos: SGFixedVector2, tick: int) -> int:
+	if emerald_seek_enabled and _is_hurt():
+		var emerald: Node = _find_emerald()
+		if emerald != null:
+			# A straight down-court throw from our X crosses center at our X, so
+			# matching the emerald's X lines up the shot to heal.
+			return emerald.get_global_fixed_position().x
+	return _patrol_target_x(tick)
+
+
+## Deterministic triangle-wave patrol across ±_patrol_amp_fp over
+## patrol_period_ticks. Pure int math off the tick counter — identical on every
+## peer, and completely independent of the player (no mirroring).
+func _patrol_target_x(tick: int) -> int:
+	var period: int = maxi(2, patrol_period_ticks)
+	var half: int = period / 2
+	var phase: int = tick % period
+	var t: int = phase if phase < half else period - phase  # 0..half..0 ramp
+	# Linear interp -amp -> +amp -> -amp (fixed-point; t/half is the 0..1 ramp).
+	return -_patrol_amp_fp + (2 * _patrol_amp_fp * t) / maxi(1, half)
+
+
+## True while this wizard is below max health (so a heal would help). Defensive:
+## no HealthComponent resolved -> treat as not hurt (skip emerald seeking).
+func _is_hurt() -> bool:
+	if _health == null:
+		return false
+	return _health.get_health() < _health.max_health
+
+
+## The healing emerald currently on the field (group "pickups"), or null. The
+## group walk is scene-tree order — deterministic, like the wizards-group scans.
+func _find_emerald() -> Node:
+	for node in get_tree().get_nodes_in_group(&"pickups"):
+		if node is SGFixedNode2D:
+			return node
+	return null
 
 
 func _resolve_body() -> SGCharacterBody2D:

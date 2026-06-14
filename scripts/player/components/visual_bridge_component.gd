@@ -129,13 +129,6 @@ var _facing_deadzone_fp: int = 0
 var _target_yaw: float = 0.0
 
 
-# DASH SNAP BOOST: while > 0 the smoothing rate is multiplied, so the
-# sprite's catch-up matches the sim's blink character. Counted down with the
-# SCALED frame delta — inside slow-mo the boosted sweep dilates with the
-# world (Creative Director: the dash must look accurate at that speed).
-var _smoothing_boost_t: float = 0.0
-
-
 func _ready() -> void:
 	# Belt-and-braces re-derive: the facing_deadzone setter keeps this cache
 	# fresh, but member-initializer order can clobber its default-init write
@@ -145,8 +138,6 @@ func _ready() -> void:
 	var movement: Node = _resolve_movement()
 	assert(movement != null, "VisualBridgeComponent needs a component emitting state_updated (set movement_path or add one as a sibling).")
 	movement.state_updated.connect(_on_state_updated)
-	if movement.has_signal(&"dashed"):
-		movement.dashed.connect(func() -> void: _smoothing_boost_t = 0.45)
 
 
 ## Receives fixed-point sim coordinates each tick. This is the single
@@ -184,13 +175,7 @@ func _process(delta: float) -> void:
 	if not smoothing_enabled or not _has_snapped:
 		return
 	# Framerate-independent exponential approach toward the sim position.
-	# A recent dash boosts the rate 4x so the sweep reads as a BLINK — and
-	# because both the boost window and the delta are time-scaled, the same
-	# blink plays back proportionally slower inside the Stack window.
 	var rate: float = smoothing_speed
-	if _smoothing_boost_t > 0.0:
-		_smoothing_boost_t -= delta
-		rate *= 4.0
 	var t: float = 1.0 - exp(-rate * delta)
 	var pos: Vector3 = visual_root.position
 	pos.x = lerpf(pos.x, _target_x, t)

@@ -47,6 +47,11 @@ var slow_scale_fp: int = 65536
 ## CardCasterComponent from CardResource.barrier_breaker.
 var splits_on_barrier: bool = false
 
+## MAX-CHARGE ICE BREAKER (Phase 1): a fully-charged (gauge 3) base fireball
+## SHATTERS the Icey Retort frost wave on contact and powers through it. Armed by
+## SpellCasterComponent when the fired charge level is 3.
+var shatters_ice: bool = false
+
 var _movement: ProjectileMovementComponent
 var _hit_detection: HitDetectionComponent
 
@@ -97,6 +102,8 @@ func _physics_process(_delta: float) -> void:
 	# Order matters (deterministic contract): move first, THEN scan for hits at
 	# the post-move position.
 	_movement._network_process({})
+	if shatters_ice:
+		_scan_ice_shatter()
 	if _hit_detection != null:
 		_hit_detection._network_process({})
 
@@ -164,6 +171,63 @@ func _spawn_impact_burst() -> void:
 	var color: Color = Color(0.55, 0.8, 1.0, 0.95) if slow_ticks > 0 else Color(1.0, 0.55, 0.2, 0.95)
 	BurstFX.spawn(get_parent(), visual.global_position, vel_3d,
 			color, 26, maxf(3.0, vel_3d.length()))
+
+
+## MAX-CHARGE ICE SHATTER (Phase 1): a fully-charged fireball scans its sibling
+## projectiles for the ENEMY's frost wave (Icey Retort) and SHATTERS it on
+## overlap — reusing the broken-defense glass burst — then powers through (this
+## ball is NOT consumed). Pure fixed-point overlap test, widened by both bodies'
+## per-tick Y step so a fast head-on closing speed can't tunnel between scans.
+func _scan_ice_shatter() -> void:
+	var parent: Node = get_parent()
+	if parent == null:
+		return
+	var my_pos: SGFixedVector2 = get_global_fixed_position()
+	var my_half: SGFixedVector2 = get_collider_half_extents()
+	var my_step: int = absi(get_velocity_y())
+	var my_source: Node = get_hit_source()
+	for child in parent.get_children():
+		if child == self or not ("slow_ticks" in child) or child.slow_ticks <= 0:
+			continue
+		if not child.has_method(&"get_collider_half_extents") or not child.has_method(&"get_velocity_y"):
+			continue
+		# Never shatter our OWN frost (friendly); only the enemy's counter wave.
+		if child.has_method(&"get_hit_source") and child.get_hit_source() == my_source:
+			continue
+		var their_pos: SGFixedVector2 = child.get_global_fixed_position()
+		var their_half: SGFixedVector2 = child.get_collider_half_extents()
+		var band_x: int = my_half.x + their_half.x
+		var band_y: int = my_half.y + their_half.y + my_step + absi(child.get_velocity_y())
+		if absi(my_pos.x - their_pos.x) < band_x and absi(my_pos.y - their_pos.y) < band_y:
+			child.shatter_ice()
+			return  # one shatter per tick; this ball powers through
+
+
+## The body's collider half-extents (fixed-point): a circle returns
+## (radius, radius); a rectangle (the ice wave) returns (extents_x, extents_y).
+## Read by the ice-shatter overlap test on both bodies.
+func get_collider_half_extents() -> SGFixedVector2:
+	for child in get_children():
+		if child is SGCollisionShape2D and child.shape != null:
+			var shape: SGShape2D = child.shape
+			var ex: Variant = shape.get(&"extents_x")
+			if ex != null:
+				return SGFixed.vector2(int(ex), int(shape.get(&"extents_y")))
+			var r: Variant = shape.get(&"radius")
+			if r != null:
+				return SGFixed.vector2(int(r), int(r))
+	return SGFixed.vector2(0, 0)
+
+
+## SHATTER this frost wave: the broken-defense glass burst + shatter SFX, then
+## the wave is gone (called by a max-charge fireball that broke through it).
+func shatter_ice() -> void:
+	var visual: Node3D = get_node_or_null(^"Visual") as Node3D
+	if visual != null:
+		BurstFX.spawn(get_parent(), visual.global_position + Vector3(0, 0.3, 0),
+				Vector3.UP, Color(0.78, 0.95, 1.0, 0.95), 34, 4.4, 0.06, 84.0)
+	Sfx.play(&"shield_shatter")
+	queue_free()
 
 
 # =====================================================================
@@ -282,6 +346,8 @@ func apply_size(radius_units: float) -> void:
 ## rollback framework calls on network-synced nodes.
 func _network_process(input: Dictionary) -> void:
 	_movement._network_process(input)
+	if shatters_ice:
+		_scan_ice_shatter()
 	if _hit_detection != null:
 		_hit_detection._network_process(input)
 

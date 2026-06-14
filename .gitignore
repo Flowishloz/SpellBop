@@ -12,3 +12,6 @@
 
 # Local-only Claude settings (personal permission grants)
 .claude/settings.local.json
+
+# Test screenshot artifacts (regenerable by the screenshot_* probes)
+tests/_screenshot*.png

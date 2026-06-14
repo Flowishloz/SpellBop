@@ -19,7 +19,7 @@ const NAMES: Array[StringName] = [
 	&"cast_fireball", &"release_bolt", &"stage_slap",
 	&"shield_deploy", &"shield_capture", &"shield_release",
 	&"counter_wave", &"hit_wizard", &"frost_hit",
-	&"dash", &"wall_bounce",
+	&"wall_bounce", &"heal",
 	&"round_win", &"round_lose", &"victory", &"ui_click",
 	&"tape_slow", &"stopwatch_tick", &"slap_on_card", &"shield_shatter",
 ]

@@ -34,7 +34,9 @@ signal stack_opened(duration_s: float)
 ## Emitted every rendered frame while the window is open. REAL seconds left.
 signal stack_tick(remaining_s: float)
 
-## Window expired; normal speed restored.
+## Window closed (expired or forced). On the normal expiry path the dilation is
+## HELD for the staggered resolution; the listener (MatchController) drives the
+## releases and calls resume_speed() after the last spell.
 signal stack_closed
 
 enum State { NORMAL, STACK_WINDOW }
@@ -64,6 +66,10 @@ var _window_total_s: float = 0.0
 var _resuming: bool = false
 var _resume_last_msec: int = 0
 
+# True between window expiry and resume_speed(): the dilation is HELD while the
+# stack resolves spell-by-spell (MatchController drives the staggered releases).
+var _resolving: bool = false
+
 
 ## Opens the time-slow window (or refreshes the deadline if already open).
 ## Called by arena orchestration (MatchController) whenever any caster fires.
@@ -89,16 +95,39 @@ func window_fraction_remaining() -> float:
 	return clampf(remaining_seconds() / _window_total_s, 0.0, 1.0)
 
 
-## Closes the window. Speed does NOT snap back — it RAMPS up over a few
-## tenths of a second (wall clock) so the exit reads as a fast smooth
-## acceleration instead of a jarring jump (Creative Director).
+## Closes the window IMMEDIATELY and ramps speed back up — the instant snap-back
+## path, used on a KO / forced close. The NORMAL end-of-stack path is
+## _expire_window(), which holds the dilation while the stack resolves spell by
+## spell. Speed RAMPS rather than jumping (Creative Director).
 func close_window() -> void:
 	if state != State.STACK_WINDOW:
 		return
 	state = State.NORMAL
+	resume_speed()
+	stack_closed.emit()
+
+
+## Window timer expired: close the window but HOLD the time dilation so the stack
+## can resolve one spell at a time in slow motion. MatchController releases the
+## staged entries with a real-time gap between each, then calls resume_speed()
+## after the last. NETPLAY NOTE: the resolve cadence is wall-clock presentation
+## today; it becomes tick-counted with the rollback sprint (same seam as the
+## window timer).
+func _expire_window() -> void:
+	if state != State.STACK_WINDOW:
+		return
+	state = State.NORMAL
+	_resolving = true
+	stack_closed.emit()
+
+
+## Begins the smooth wall-clock ramp back to 1.0. Called by MatchController AFTER
+## the staggered resolution finishes (resume after the FINAL spell), and by
+## close_window() for the instant KO / forced path.
+func resume_speed() -> void:
+	_resolving = false
 	_resuming = true
 	_resume_last_msec = Time.get_ticks_msec()
-	stack_closed.emit()
 
 
 ## REAL seconds until the window closes (0.0 when closed).
@@ -125,4 +154,4 @@ func _process(_delta: float) -> void:
 	var remaining: float = remaining_seconds()
 	stack_tick.emit(remaining)
 	if remaining <= 0.0:
-		close_window()
+		_expire_window()

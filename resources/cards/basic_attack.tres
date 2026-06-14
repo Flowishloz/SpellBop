@@ -7,7 +7,7 @@
 script = ExtResource("1_card")
 casting_cost = 2
 description = "Hold to channel a ball of uncontained energy onto the stack. It SEEKS its target - and SHATTERS walls, splitting into two 1-DMG shards. 2 DMG."
-lifetime = 2.8
+lifetime = 5.6
 homing_strength = 0.2
 barrier_breaker = true
 display_name = "Spark Bolt"

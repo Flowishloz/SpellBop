@@ -1,5 +1,5 @@
-## touch_action_button.gd — Shared base for the on-screen thumb buttons (dash
-## + fireball cast). One translucent circle, a custom icon, an optional
+## touch_action_button.gd — Shared base for the on-screen thumb button (the
+## fireball cast). One translucent circle, a custom icon, an optional
 ## progress viz, and a countdown label — but the important part is INPUT:
 ##
 ## A press anywhere inside the circle drives an InputMap ACTION via
@@ -173,7 +173,7 @@ func _draw() -> void:
 
 # --- subclass hooks ---------------------------------------------------
 
-## The InputMap action this button drives (e.g. &"dash", &"cast_spell").
+## The InputMap action this button drives (e.g. &"cast_spell").
 func _button_action() -> StringName:
 	return &""
 

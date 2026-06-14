@@ -1,6 +1,6 @@
-## screenshot_touch.gd — visual proof of the Sprint 17 touch controls: holds the
-## fireball CAST button (charge ring lit) and deflects the movement JOYSTICK so
-## both render active beside the dash button. Saves tests/_screenshot_touch.png.
+## screenshot_touch.gd — visual proof of the touch controls: holds the fireball
+## CAST button (charge ring lit) and deflects the movement JOYSTICK so both
+## render active. Saves tests/_screenshot_touch.png.
 ## NOT headless (needs a window/GPU). Run: <godot> --path . -s res://tests/screenshot_touch.gd
 extends SceneTree
 

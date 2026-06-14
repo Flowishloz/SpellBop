@@ -26,6 +26,10 @@ signal damaged(amount: int)
 ## Health reached zero. MatchController will own round flow off this signal.
 signal knocked_out
 
+## Health was restored (amount > 0). Feedback hook (heal VFX/SFX). Fired BEFORE
+## health_changed so listeners can react to the heal event itself.
+signal healed(amount: int)
+
 ## Hit points per round (5 per Creative Director; Base Fireball = 1 damage).
 @export var max_health: int = 5
 
@@ -54,6 +58,17 @@ func apply_damage(amount: int) -> void:
 	health_changed.emit(_health, max_health)
 	if _health == 0 and was_alive:
 		knocked_out.emit()
+
+
+## Restores [param amount] health (int), capped at max_health. No-op at full
+## health or for amount <= 0. Deterministic given deterministic callers (e.g.
+## the healing emerald's projectile-strike pickup).
+func apply_heal(amount: int) -> void:
+	if amount <= 0 or _health >= max_health:
+		return
+	_health = mini(max_health, _health + amount)
+	healed.emit(amount)
+	health_changed.emit(_health, max_health)
 
 
 ## Refills to max (round start). Called by MatchController between rounds.

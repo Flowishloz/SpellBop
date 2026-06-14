@@ -18,6 +18,10 @@
 ## All four floats are converted ONCE to fixed-point per-tick values in _ready()
 ## and cached; the per-tick hot path touches integers only.
 ##
+## (Sprint 19, Phase 1: the Left-Shift DASH ability was REMOVED wholesale per the
+## Creative Director — movement is now pure accelerate/decelerate locomotion. The
+## lane-edge restitution below stays as a gentle wall bounce.)
+##
 ## ROLLBACK CONTRACT: exposes _network_process(input), _save_state(),
 ## _load_state(state) per the godot-rollback-netcode conventions. State dicts
 ## contain only ints. A local tick driver (PlayerController) calls these for
@@ -35,9 +39,6 @@ signal state_updated(fixed_x: int, fixed_y: int)
 ## never write sim.
 signal slow_started(duration_ticks: int)
 signal slow_ended
-
-## A dash just triggered (presentation hook: SFX/VFX).
-signal dashed
 
 ## Path to the SGCharacterBody2D this component moves. Leave empty to use the
 ## component's direct parent (the recommended scene shape:
@@ -61,10 +62,10 @@ signal dashed
 ## the range [-arena_half_width, +arena_half_width] every tick.
 @export var arena_half_width: float = 600.0
 
-## Restitution at the lane edge: hitting the wall REFLECTS your speed
-## instead of killing it (Creative Director: dash momentum should bounce
-## you away). Reflected speed is capped at max_speed so a dash's huge
-## per-tick step bounces you off at a sane pace.
+## Restitution at the lane edge: hitting the wall REFLECTS your speed instead
+## of killing it. Reflected speed is capped at max_speed so the carry-off stays
+## sane. (Originally tuned for dash momentum; with dash removed it is just a
+## gentle wall bounce on normal locomotion.)
 @export_range(0.0, 1.0) var arena_bounce: float = 0.6
 
 ## Simulation ticks per second. MUST match the project physics tick rate now,
@@ -72,42 +73,12 @@ signal dashed
 ## cached per-tick values (done once in _ready()).
 @export var tick_rate: int = 60
 
-@export_group("Dash")
-## DASH (Creative Director: Left Shift) — a burst that covers
-## dash_distance_fraction of the FULL arena width in dash_time_fraction of
-## the time normal movement would need, on a press EDGE while a direction
-## is held. Landing roots the wizard: 90% speed loss for 0.8 s.
-@export var dash_enabled: bool = true
-
-## Fraction of the full arena width (2 x arena_half_width) the dash covers.
-@export var dash_distance_fraction: float = 0.35
-
-## Dash flight time as a fraction of the normal travel time at max_speed.
-## 0.04 resolves to a SINGLE TICK — the dash is an instant blink, so the
-## Stack's 10% time dilation can't smear it into a slow glide (Creative
-## Director: "the dash doesn't interact well with the slow motion"). The
-## visual still sweeps via the VisualBridge smoothing, which runs on render
-## frames and stays fast inside slow-mo.
-@export var dash_time_fraction: float = 0.04
-
-## Seconds between dashes.
-@export var dash_cooldown_seconds: float = 5.0
-
-## Landing penalty: speed scale (0.1 = 90% slower) for this many seconds.
-@export var dash_landing_slow_seconds: float = 0.8
-@export var dash_landing_slow_scale: float = 0.1
-
 # --- Cached fixed-point per-tick values (computed once in _ready()) ---
 var _max_speed_fp: int = 0        # max speed, units/tick (fixed-point)
 var _acceleration_fp: int = 0     # speed change per tick, units/tick (fixed-point)
 var _friction_fp: int = 0         # speed loss per tick, units/tick (fixed-point)
 var _arena_half_width_fp: int = 0 # arena bound, fixed-point sim units
 var _arena_bounce_fp: int = 39322 # lane-edge restitution (0.6)
-var _dash_duration_ticks: int = 1 # dash flight time, whole ticks
-var _dash_step_fp: int = 0        # dash distance per tick (fixed-point)
-var _dash_cd_ticks: int = 300     # cooldown, whole ticks
-var _dash_slow_cfg_ticks: int = 48
-var _dash_slow_scale_fp: int = 6554
 
 # Authoritative simulation state (fixed-point int). Velocity is stored here —
 # not read from the body between ticks — so _save_state()/_load_state() fully
@@ -130,22 +101,6 @@ var _speed_scale_fp: int = SGFixed.ONE
 # Both values are int sim state ("slt" / "sls").
 var _slow_ticks: int = 0
 var _slow_scale_fp: int = SGFixed.ONE
-
-# DASH sim state (ints): flight ticks left, direction, cooldown, the landing
-# slow (its own field — the frost slow drives the ice-cube VFX, this one
-# must not), last tick's dash bit (press-edge derivation), and the last
-# nonzero movement direction (dash fallback when Shift is tapped alone).
-var _dash_remaining: int = 0
-var _dash_dir: int = 0
-var _dash_cd: int = 0
-var _dash_slow: int = 0
-var _prev_dash: int = 0
-var _last_input_dir: int = 1
-# Wall REBOUND: dashing into the lane edge mirrors into a half-step blink
-# away from it (sim state "dbr"); _dash_moved_this_tick is within-tick
-# transient (recomputed every tick, never saved).
-var _dash_rebound: bool = false
-var _dash_moved_this_tick: bool = false
 
 # AIM STATE (Creative Director: the held movement input at release tilts a
 # projectile's launch angle — hold longer = steeper). Sim state "ad"/"at".
@@ -177,16 +132,6 @@ func _cache_fixed_point_values() -> void:
 	_arena_half_width_fp = SGFixed.from_float(arena_half_width)
 	_arena_bounce_fp = SGFixed.from_float(clampf(arena_bounce, 0.0, 1.0))
 
-	# DASH derivation: distance = fraction of full arena width; flight time =
-	# dash_time_fraction of the normal time at max_speed (ceil to ticks).
-	var dash_distance: float = 2.0 * arena_half_width * clampf(dash_distance_fraction, 0.0, 1.0)
-	var normal_seconds: float = dash_distance / maxf(1.0, max_speed)
-	_dash_duration_ticks = maxi(1, ceili(normal_seconds * maxf(0.01, dash_time_fraction) * float(safe_tick_rate)))
-	_dash_step_fp = SGFixed.div(SGFixed.from_float(dash_distance), SGFixed.from_int(_dash_duration_ticks))
-	_dash_cd_ticks = maxi(1, ceili(dash_cooldown_seconds * float(safe_tick_rate)))
-	_dash_slow_cfg_ticks = maxi(0, ceili(dash_landing_slow_seconds * float(safe_tick_rate)))
-	_dash_slow_scale_fp = SGFixed.from_float(clampf(dash_landing_slow_scale, 0.0, 1.0))
-
 
 # =====================================================================
 # ROLLBACK CONTRACT
@@ -211,10 +156,6 @@ func _network_process(input: Dictionary) -> void:
 		effective_scale_fp = mini(effective_scale_fp, _slow_scale_fp)
 		if _slow_ticks == 0:
 			slow_ended.emit()
-	# Dash-landing root (own field — never triggers the frost VFX).
-	if _dash_slow > 0:
-		_dash_slow -= 1
-		effective_scale_fp = mini(effective_scale_fp, _dash_slow_scale_fp)
 	var max_speed_fp: int = SGFixed.mul(_max_speed_fp, effective_scale_fp)
 	var acceleration_fp: int = SGFixed.mul(_acceleration_fp, effective_scale_fp)
 
@@ -228,37 +169,10 @@ func _network_process(input: Dictionary) -> void:
 	elif _aim_ticks > 0:
 		_aim_ticks -= 1  # idle: the banked aim fades, never hard-resets
 
-	# --- DASH (press edge, off cooldown) ---------------------------------
-	# Direction = the held input, falling back to the LAST direction moved
-	# (a bare Shift tap must always do something — playtest fix).
+	# --- LOCOMOTION (accelerate toward the held direction, else decelerate) -
 	if input_x != 0:
-		_last_input_dir = input_x
-	if _dash_cd > 0:
-		_dash_cd -= 1
-	var dash_bit: int = InputCommand.get_dash(input)
-	if dash_enabled and dash_bit == 1 and _prev_dash == 0 \
-			and _dash_cd == 0 and _dash_remaining == 0:
-		_dash_remaining = _dash_duration_ticks
-		_dash_dir = input_x if input_x != 0 else _last_input_dir
-		_dash_cd = _dash_cd_ticks
-		dashed.emit()
-	_prev_dash = dash_bit
-
-	_dash_moved_this_tick = false
-	if _dash_remaining > 0:
-		# Dash flight overrides normal locomotion entirely (no input, no
-		# friction, no speed scaling — a committed blink along X). A wall
-		# REBOUND blink travels at half the step.
-		_dash_remaining -= 1
-		_dash_moved_this_tick = true
-		var step: int = (_dash_step_fp >> 1) if _dash_rebound else _dash_step_fp
-		_velocity_x = _dash_dir * step
-		if _dash_remaining == 0:
-			_dash_rebound = false
-			_dash_slow = _dash_slow_cfg_ticks  # landing root
-	elif input_x != 0:
-		# Accelerate toward the held direction. input_x is -1 or +1, so plain
-		# int multiplication just flips the sign of the fixed-point step.
+		# input_x is -1 or +1, so plain int multiplication just flips the sign
+		# of the fixed-point step.
 		_velocity_x += input_x * acceleration_fp
 		_velocity_x = clampi(_velocity_x, -max_speed_fp, max_speed_fp)
 	else:
@@ -352,16 +266,6 @@ static func clamp_spawn_x_fp(x_fp: int, half_extent_fp: int, bound_fp: int) -> i
 	return clampi(x_fp, -limit_fp, limit_fp)
 
 
-## Dash cooldown remaining, REAL seconds (0 = ready). HUD button readout.
-func dash_cooldown_seconds_remaining() -> float:
-	return float(_dash_cd) / float(maxi(1, tick_rate))
-
-
-## Dash cooldown as a 0..1 fraction (0 = ready) — the clock-fill readout.
-func dash_cooldown_fraction() -> float:
-	return clampf(float(_dash_cd) / float(maxi(1, _dash_cd_ticks)), 0.0, 1.0)
-
-
 ## Hard-stops the body (round reset): zeroes velocity and clears the frost.
 ## The position itself is set by the caller (PlayerController.reset_for_round)
 ## — this only clears MOTION state, then re-emits position for the visuals.
@@ -369,11 +273,6 @@ func halt() -> void:
 	_velocity_x = 0
 	_slow_ticks = 0
 	_slow_scale_fp = SGFixed.ONE
-	_dash_remaining = 0
-	_dash_cd = 0
-	_dash_slow = 0
-	_prev_dash = 0
-	_dash_rebound = false
 	_aim_dir = 0
 	_aim_ticks = 0
 	var vel: SGFixedVector2 = _body.velocity
@@ -396,15 +295,8 @@ func _save_state() -> Dictionary:
 		"ss": _speed_scale_fp,
 		"slt": _slow_ticks,
 		"sls": _slow_scale_fp,
-		"dt": _dash_remaining,
-		"dd": _dash_dir,
-		"dcd": _dash_cd,
-		"dsl": _dash_slow,
-		"pd": _prev_dash,
-		"lx": _last_input_dir,
 		"ad": _aim_dir,
 		"at": _aim_ticks,
-		"dbr": 1 if _dash_rebound else 0,
 	}
 
 
@@ -416,15 +308,8 @@ func _load_state(state: Dictionary) -> void:
 	_speed_scale_fp = int(state.get("ss", SGFixed.ONE))
 	_slow_ticks = int(state.get("slt", 0))
 	_slow_scale_fp = int(state.get("sls", SGFixed.ONE))
-	_dash_remaining = int(state.get("dt", 0))
-	_dash_dir = int(state.get("dd", 0))
-	_dash_cd = int(state.get("dcd", 0))
-	_dash_slow = int(state.get("dsl", 0))
-	_prev_dash = int(state.get("pd", 0))
-	_last_input_dir = int(state.get("lx", 1))
 	_aim_dir = int(state.get("ad", 0))
 	_aim_ticks = int(state.get("at", 0))
-	_dash_rebound = int(state.get("dbr", 0)) == 1
 
 	var pos: SGFixedVector2 = _body.fixed_position
 	pos.x = int(state.get("px", 0))
@@ -449,8 +334,8 @@ func _load_state(state: Dictionary) -> void:
 
 ## Clamps fixed_position.x to ±arena_half_width. The clamp is a teleport, so
 ## sync_to_physics_engine() is mandatory. Velocity REFLECTS with restitution
-## (capped at max_speed — a dash's giant per-tick step bounces you away at
-## a sane pace instead of dying against the wall).
+## (capped at max_speed) so walking into the lane edge gives a gentle bounce
+## instead of a dead stop.
 func _clamp_to_arena() -> void:
 	var pos: SGFixedVector2 = _body.fixed_position
 	var clamped_x: int = clampi(pos.x, -_arena_half_width_fp, _arena_half_width_fp)
@@ -459,17 +344,8 @@ func _clamp_to_arena() -> void:
 
 	pos.x = clamped_x
 	_body.fixed_position = pos
-	if _dash_moved_this_tick:
-		# DASH REBOUND (Creative Director: the wall must not eat the
-		# momentum): mirror into a half-step blink AWAY from the wall —
-		# input can't fight a blink the way it cancels a reflected velocity.
-		_dash_dir = -_dash_dir
-		_dash_remaining = 1
-		_dash_rebound = true
-		_velocity_x = 0
-	else:
-		var reflected: int = -SGFixed.mul(_velocity_x, _arena_bounce_fp)
-		_velocity_x = clampi(reflected, -_max_speed_fp, _max_speed_fp)
+	var reflected: int = -SGFixed.mul(_velocity_x, _arena_bounce_fp)
+	_velocity_x = clampi(reflected, -_max_speed_fp, _max_speed_fp)
 	var vel: SGFixedVector2 = _body.velocity
 	vel.x = _velocity_x
 	vel.y = 0

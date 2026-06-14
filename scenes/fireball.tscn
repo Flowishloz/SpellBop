@@ -33,7 +33,7 @@ shape = SubResource("SGCircleShape2D_mi4h5")
 [node name="ProjectileMovementComponent" type="Node" parent="." unique_id=1775680337]
 script = ExtResource("2_43lgj")
 terminal_velocity = 3400.0
-lifespan_seconds = 2.2
+lifespan_seconds = 4.4
 
 [node name="HitDetectionComponent" type="Node" parent="."]
 script = ExtResource("6_hit")

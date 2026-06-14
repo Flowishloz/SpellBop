@@ -65,19 +65,22 @@ func _run() -> void:
 	var player_health: Node = arena.get_node_or_null("Player/Health")
 	_check(player_health != null, "Player HealthComponent present")
 
-	# AI first cast lands at tick 150 (~2.5 s). Track the FIRST fireball
-	# instance specifically: it must be freed by its 2.8 s lifespan even
-	# though the AI keeps casting (lifespans overlap, the container never
+	# AI first cast lands at tick ~150 (~2.5 s). Track the FIRST fireball
+	# instance specifically: it must be freed by its (now doubled) lifespan
+	# even though the AI keeps casting (lifespans overlap, the container never
 	# fully empties — asserting on a specific instance is the honest check).
 	# GOTCHA (cost one false failure already): in Godot 4 a FREED instance
 	# compares == null, so guarding the capture with `first_ball == null`
 	# silently re-captures a fresh ball each time the old one dies. Use a
 	# dedicated bool so the capture happens exactly once.
 	#
-	# Timing (RELEASE-FIRE): the AI starts HOLDING cast at tick 150 (~2.5 s),
-	# holds 45 ticks and THROWS ON RELEASE (~3.3 s) with a partial charge
-	# boost; the boosted ball crosses the ±880 court and strikes the idle
-	# player ~4.5 s (or expires via its 2.2 s lifespan). 9 s covers it all.
+	# INDEPENDENT AI (Sprint 19): the opponent no longer mirrors the player, so
+	# it does NOT auto-aim at the idle player — instead we assert it PATROLS (its
+	# X sweeps on its own agenda). Damage-dealing is covered by the card and
+	# round-flow suites. 9 s covers a full lifespan plus a patrol swing.
+	var opponent: Node = arena.get_node_or_null("Opponent")
+	var opp_start_x: int = opponent.get_global_fixed_position().x if opponent != null else 0
+	var opp_max_dx: int = 0
 	var first_ball: Node = null
 	var first_ball_captured: bool = false
 	var first_ball_freed: bool = false
@@ -85,6 +88,8 @@ func _run() -> void:
 	while Time.get_ticks_msec() < deadline:
 		await process_frame
 		_min_time_scale = minf(_min_time_scale, Engine.time_scale)
+		if opponent != null:
+			opp_max_dx = maxi(opp_max_dx, absi(opponent.get_global_fixed_position().x - opp_start_x))
 		if projectiles != null and projectiles.get_child_count() > 0:
 			_saw_projectile = true
 			if not first_ball_captured:
@@ -92,17 +97,15 @@ func _run() -> void:
 				first_ball = projectiles.get_child(0)
 		if first_ball_captured and not is_instance_valid(first_ball):
 			first_ball_freed = true
-			if player_health != null and player_health.get_health() < player_health.max_health:
-				break
+		if first_ball_freed and opp_max_dx > SGFixed.from_float(120.0):
+			break
 
 	_check(_saw_projectile, "AI cast spawned a projectile into Projectiles (charge cast completed)")
 	_check(_opened == 0, "BASE fireball did NOT open the Stack (opened %d times)" % _opened)
 	_check(is_equal_approx(_min_time_scale, 1.0), "time never dilated during base-fireball rally (min %.3f)" % _min_time_scale)
-	_check(first_ball_freed, "first fireball was freed (player hit or lifespan) while later casts continued")
-	_check(player_health != null and player_health.get_health() < player_health.max_health,
-		"AI fireball damaged the idle player (hp %d/%d)" % [
-			player_health.get_health() if player_health != null else -1,
-			player_health.max_health if player_health != null else -1])
+	_check(first_ball_freed, "first fireball was freed (lifespan/despawn) while later casts continued")
+	_check(opp_max_dx > SGFixed.from_float(120.0),
+		"AI moved INDEPENDENTLY — patrolled its court without mirroring the idle player (|dx|=%.0f units)" % (opp_max_dx / 65536.0))
 
 	# TheStack still functions when driven directly (card system arrives later).
 	stack.open_window(0.4)

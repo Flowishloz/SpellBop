@@ -65,14 +65,18 @@ var _simulated_components: Array[Node] = []
 # child node name in the aggregate snapshot. Built once in _ready().
 var _stateful_components: Array[Node] = []
 
-# RENDER-RATE PRESS LATCHES (Creative Director slow-mo fix): inside the
-# Stack window the sim ticks ~6x/second, so a quick Shift/card TAP can fall
-# entirely between two ticks and be lost — "the dash waits for the slow-mo
-# to finish". _process polls press EDGES at render rate and latches them;
-# the next tick's input consumes the latch. Local input collection only —
-# the per-tick input dicts stay the deterministic/netplay artifact.
-var _dash_press_latched: bool = false
+# RENDER-RATE PRESS LATCH (Creative Director slow-mo fix): inside the Stack
+# window the sim ticks ~6x/second, so a quick card TAP can fall entirely
+# between two ticks and be lost. _process polls press EDGES at render rate
+# and latches them; the next tick's input consumes the latch. Local input
+# collection only — the per-tick input dicts stay the deterministic artifact.
 var _card_press_latched: int = 0
+
+# STACK WINNER REWARD (Phase 1): a one-shot launch-speed multiplier (fixed-point,
+# ONE = no boost) granted to this wizard when it wins a stack; the next
+# projectile it fires multiplies its speed by this, then clears it. Saved as sim
+# state so it survives a rollback re-sim.
+var _pending_speed_boost_fp: int = SGFixed.ONE
 
 
 func _ready() -> void:
@@ -131,8 +135,6 @@ func _ready() -> void:
 func _process(_delta: float) -> void:
 	if _ai_brain != null or not local_tick_driver_enabled:
 		return
-	if InputMap.has_action("dash") and Input.is_action_just_pressed("dash"):
-		_dash_press_latched = true
 	for slot in [1, 2, 3]:
 		var action: String = "card_slot_%d" % slot
 		if InputMap.has_action(action) and Input.is_action_just_pressed(action):
@@ -169,11 +171,32 @@ func apply_damage(amount: int) -> void:
 		_health.apply_damage(amount)
 
 
+## Routes a heal (the healing-emerald pickup) to the HealthComponent — same
+## public-API rule as apply_damage.
+func apply_heal(amount: int) -> void:
+	if _health != null:
+		_health.apply_heal(amount)
+
+
 ## Routes a timed movement slow (the Counter's frost) to MovementComponent —
 ## same public-API rule as apply_damage.
 func apply_slow(duration_ticks: int, scale_fp: int) -> void:
 	if _movement != null:
 		_movement.apply_timed_slow(duration_ticks, scale_fp)
+
+
+## STACK WINNER REWARD: grant this wizard a one-shot launch-speed multiplier for
+## its NEXT fired projectile (MatchController calls this when it wins a stack).
+func grant_speed_boost(multiplier_fp: int) -> void:
+	_pending_speed_boost_fp = maxi(SGFixed.ONE, multiplier_fp)
+
+
+## Returns and CLEARS the pending one-shot speed boost (ONE = none). A caster
+## calls this as it launches so the reward lands on exactly one throw.
+func consume_speed_boost() -> int:
+	var boost: int = _pending_speed_boost_fp
+	_pending_speed_boost_fp = SGFixed.ONE
+	return boost
 
 
 ## ROUND RESET (called by MatchController between rounds): teleport back to
@@ -186,6 +209,7 @@ func reset_for_round(spawn_x_fp: int, spawn_y_fp: int) -> void:
 		_movement.halt()
 	if _health != null:
 		_health.reset()
+	_pending_speed_boost_fp = SGFixed.ONE  # stack-winner reward doesn't carry rounds
 	# Drop any in-flight channels / staged spells / cooldowns (duck-typed so
 	# both caster classes — and future ones — reset without name coupling).
 	for child in get_children():
@@ -202,9 +226,6 @@ func _get_local_input() -> Dictionary:
 	var captured: Dictionary = InputCommand.capture_local()
 	# Merge render-rate latched taps (consumed exactly once) so presses that
 	# fell between slow-mo ticks still land on the very next tick.
-	if _dash_press_latched:
-		captured[InputCommand.KEY_DASH] = 1
-		_dash_press_latched = false
 	if _card_press_latched != 0:
 		if not captured.has(InputCommand.KEY_CARD):
 			captured[InputCommand.KEY_CARD] = _card_press_latched
@@ -226,6 +247,7 @@ func _network_process(input: Dictionary) -> void:
 func _save_state() -> Dictionary:
 	var state: Dictionary = {
 		"tick": current_tick,
+		"psb": _pending_speed_boost_fp,
 	}
 	for component in _stateful_components:
 		state[String(component.name)] = component._save_state()
@@ -236,6 +258,7 @@ func _save_state() -> Dictionary:
 ## sub-states back by child node name.
 func _load_state(state: Dictionary) -> void:
 	current_tick = int(state.get("tick", current_tick))
+	_pending_speed_boost_fp = int(state.get("psb", SGFixed.ONE))
 	for component in _stateful_components:
 		var key: String = String(component.name)
 		if state.has(key):

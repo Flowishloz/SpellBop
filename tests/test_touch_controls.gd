@@ -48,7 +48,6 @@ func _run() -> void:
 	await _frames(60)  # round starts, springs settle
 
 	var cast_btn: Node = arena.get_node("MatchHUD/CastButton")
-	var dash_btn: Node = arena.get_node("MatchHUD/DashButton")
 	var joy: Node = arena.get_node("MoveJoystickHUD")
 	var hand: Node = arena.get_node("CardHandHUD")
 	var caster: Node = arena.get_node("Player/SpellCasterComponent")
@@ -59,7 +58,8 @@ func _run() -> void:
 	print("[GEOMETRY]")
 	_ok("cast button disc contains its center", cast_btn._is_inside(cast_btn._draw_center))
 	_ok("cast button rejects a far point", not cast_btn._is_inside(Vector2(100, 100)))
-	_ok("cast sits LEFT of dash", cast_btn._draw_center.x < dash_btn._draw_center.x)
+	_ok("cast button sits in the lower-right thumb cluster",
+			cast_btn._draw_center.x > 540.0 and cast_btn._draw_center.y > 1400.0)
 	_ok("joystick zone contains lower-left", joy._zone_contains(Vector2(220, 1500)))
 	_ok("joystick zone excludes lower-right", not joy._zone_contains(Vector2(900, 1500)))
 	# A docked card's own center must resolve to a real slot.

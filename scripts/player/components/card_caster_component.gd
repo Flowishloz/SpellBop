@@ -292,6 +292,10 @@ func _resolve_attack(card: CardResource) -> void:
 
 	var tick_fp: int = SGFixed.from_int(maxi(1, tick_rate))
 	var speed_fp: int = SGFixed.div(SGFixed.from_float(card.base_speed), tick_fp)
+	# STACK WINNER REWARD: if our wizard won the last stack, this attack flies
+	# faster (one-shot, consumed here so a single throw carries it).
+	if _body.has_method(&"consume_speed_boost"):
+		speed_fp = SGFixed.mul(speed_fp, _body.consume_speed_boost())
 	var spread_fp: int = SGFixed.div(SGFixed.from_float(card.spread_x_speed), tick_fp)
 	var bounciness_fp: int = SGFixed.from_float(card.bounciness)
 	var count: int = clampi(card.projectile_count, 1, 5)

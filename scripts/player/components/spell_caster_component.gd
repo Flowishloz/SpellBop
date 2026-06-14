@@ -407,6 +407,10 @@ func _spawn_projectile(velocity_multiplier_fp: int = SGFixed.ONE, charge_level: 
 		projectile.set_hit_source(_body)
 	if "damage" in projectile:
 		projectile.damage = spell.damage
+	# MAX-CHARGE ICE BREAKER (Phase 1): a fully-charged (gauge 3) fireball
+	# shatters the enemy's Icey Retort frost wave on contact and powers through.
+	if "shatters_ice" in projectile and charge_level >= 3:
+		projectile.shatters_ice = true
 	# Grow the bolt to its charged size (a no-op at gauge 1 — apply_size short-
 	# circuits when the radius already equals the scene default).
 	if projectile.has_method(&"apply_size"):
@@ -417,7 +421,12 @@ func _spawn_projectile(velocity_multiplier_fp: int = SGFixed.ONE, charge_level: 
 	# direction held at release, scaled by how long it was held (pure int
 	# math off MovementComponent's aim state). The projectile's
 	# terminal_velocity is the final ceiling on boosted speed.
-	var speed_fp: int = SGFixed.mul(_speed_per_tick_fp, velocity_multiplier_fp)
+	# STACK WINNER REWARD: if this wizard won the last stack, its next throw
+	# multiplies its launch speed by the one-shot boost (consumed here).
+	var winner_boost_fp: int = SGFixed.ONE
+	if _body.has_method(&"consume_speed_boost"):
+		winner_boost_fp = _body.consume_speed_boost()
+	var speed_fp: int = SGFixed.mul(SGFixed.mul(_speed_per_tick_fp, velocity_multiplier_fp), winner_boost_fp)
 	projectile.launch(_aim_vx_fp(speed_fp), speed_fp * cast_direction_y, _bounciness_fp)
 
 	spell_cast.emit(projectile, spell)

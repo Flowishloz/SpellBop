@@ -1,4 +1,4 @@
-[gd_scene load_steps=19 format=3]
+[gd_scene load_steps=20 format=3]
 
 [ext_resource type="Script" path="res://core/match_controller.gd" id="1_mc"]
 [ext_resource type="PackedScene" uid="uid://ce775qyi5wy6l" path="res://scenes/player.tscn" id="2_pl"]
@@ -13,6 +13,7 @@
 [ext_resource type="Script" path="res://scripts/arena/bounce_wall.gd" id="12_wall"]
 [ext_resource type="Script" path="res://scripts/ui/settings_menu.gd" id="13_menu"]
 [ext_resource type="Script" path="res://scripts/ui/move_joystick_hud.gd" id="14_joy"]
+[ext_resource type="PackedScene" path="res://scenes/emerald.tscn" id="15_emerald"]
 
 [sub_resource type="StandardMaterial3D" id="Mat_floor"]
 albedo_color = Color(0.16, 0.165, 0.19, 1)
@@ -41,6 +42,7 @@ fog_sky_affect = 0.0
 
 [node name="MatchArena" type="Node3D"]
 script = ExtResource("1_mc")
+emerald_scene = ExtResource("15_emerald")
 
 [node name="WorldEnvironment" type="WorldEnvironment" parent="."]
 environment = SubResource("Env_arena")

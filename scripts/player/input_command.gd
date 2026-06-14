@@ -13,6 +13,8 @@
 ## An all-default input is represented as an EMPTY dictionary {} — this keeps
 ## serialized inputs as small as possible (the rollback framework only ships
 ## non-empty keys) and makes "no input" trivially comparable.
+##
+## (Sprint 19, Phase 1: the dash bit "d" was removed with the dash ability.)
 class_name InputCommand
 extends RefCounted
 
@@ -32,11 +34,6 @@ const KEY_CAST: StringName = &"c"
 ## Held state, not edge — same rollback rationale as KEY_CAST.
 const KEY_CARD: StringName = &"k"
 
-## Dictionary key for the dash bit (1 = dash held this tick — Left Shift;
-## key omitted otherwise). MovementComponent derives the press edge in-sim
-## from consecutive tick values (same rollback rationale as KEY_CAST).
-const KEY_DASH: StringName = &"d"
-
 ## Default action names polled by capture_local(). Override by passing a custom
 ## actions dictionary if a player slot uses prefixed actions (e.g. "p2_move_left").
 const DEFAULT_ACTIONS: Dictionary = {
@@ -46,7 +43,6 @@ const DEFAULT_ACTIONS: Dictionary = {
 	"card_1": "card_slot_1",
 	"card_2": "card_slot_2",
 	"card_3": "card_slot_3",
-	"dash": "dash",
 }
 
 
@@ -79,9 +75,6 @@ static func capture_local(actions: Dictionary = DEFAULT_ACTIONS) -> Dictionary:
 			input[KEY_CARD] = slot
 			break
 
-	var dash_action: String = actions.get("dash", "dash")
-	if InputMap.has_action(dash_action) and Input.is_action_pressed(dash_action):
-		input[KEY_DASH] = 1
 	return input
 
 
@@ -103,23 +96,18 @@ static func get_card(input: Dictionary) -> int:
 	return int(input.get(KEY_CARD, 0))
 
 
-## Returns the dash bit (1 = dash held this tick, 0 otherwise).
-static func get_dash(input: Dictionary) -> int:
-	return int(input.get(KEY_DASH, 0))
-
-
 ## True if this input represents "no buttons held" (the canonical empty input).
 static func is_empty(input: Dictionary) -> bool:
 	return input.is_empty() or (get_x(input) == 0 and get_cast(input) == 0
-			and get_card(input) == 0 and get_dash(input) == 0)
+			and get_card(input) == 0)
 
 
 ## Value-equality between two input dictionaries, treating missing keys as
-## defaults (so {} equals {"x": 0, "c": 0, "k": 0, "d": 0}). Use this instead
-## of == when comparing predicted vs. confirmed inputs.
+## defaults (so {} equals {"x": 0, "c": 0, "k": 0}). Use this instead of ==
+## when comparing predicted vs. confirmed inputs.
 static func equals(a: Dictionary, b: Dictionary) -> bool:
 	return get_x(a) == get_x(b) and get_cast(a) == get_cast(b) \
-			and get_card(a) == get_card(b) and get_dash(a) == get_dash(b)
+			and get_card(a) == get_card(b)
 
 
 ## Returns a new canonical empty input. Provided for readability at call sites.

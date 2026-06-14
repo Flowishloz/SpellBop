@@ -25,6 +25,10 @@ signal round_started(round_number: int)
 signal round_ended(player_won_round: bool, player_score: int, opponent_score: int, break_seconds: float)
 signal match_ended(player_won_match: bool)
 
+## The stack just resolved and a winner was decided (last responder). UI hook for
+## the Phase 3 stack-winner indicator. player_won = the LOCAL player won it.
+signal stack_winner_decided(player_won: bool)
+
 ## The arena camera (a PunchOutCameraRig) that receives shake feedback.
 @export var camera_path: NodePath = NodePath("Camera3D")
 
@@ -64,6 +68,25 @@ signal match_ended(player_won_match: bool)
 ## number (gauge 1 = 1x, 2 = 2x, 3 = 3x of this) — a sharp "pop" per fill.
 @export var charge_pop_trauma: float = 0.1
 
+## STACK RESOLUTION (Phase 1, Creative Director): when the countdown ends the
+## staged spells resolve LIFO one at a time, holding slow-mo, with this REAL-time
+## gap between each release. Normal speed resumes only after the FINAL spell.
+@export var stagger_delay_seconds: float = 0.2
+
+## STACK WINNER REWARD: the player who placed the NEWEST spell on the stack (last
+## responder, always) gets this launch-speed multiplier on their NEXT projectile.
+@export var stack_winner_speed_multiplier: float = 1.5
+
+## HEALING EMERALD (Phase 1, Creative Director): a glowing emerald spawns near the
+## arena centre every emerald_min..max seconds; striking it with a projectile
+## grants the thrower a life back. Assign scenes/emerald.tscn.
+@export var emerald_scene: PackedScene
+@export var emerald_min_interval_seconds: float = 25.0
+@export var emerald_max_interval_seconds: float = 40.0
+## Seed for the deterministic spawn-cadence + position LCG (mixed with the round
+## number so each round differs but replays identically).
+@export var emerald_seed: int = 24301
+
 var match_state: MatchState = MatchState.ROUND_ACTIVE
 var round_number: int = 1
 var player_score: int = 0
@@ -80,6 +103,20 @@ var _post_round_deadline_msec: int = 0
 # the countdown window expires the stack resolves LIFO — the latest response
 # (a counter) fires before the spell it answered.
 var _stack_entries: Array[Node] = []
+
+# The wizard body that won the most recent stack (last responder). Captured when
+# the window closes, rewarded (and cleared) after the staggered resolution ends.
+var _stack_winner: Node = null
+
+# stack_winner_speed_multiplier cached to fixed-point (1.5 -> 98304).
+var _stack_winner_boost_fp: int = 98304
+
+# HEALING EMERALD spawner state. The cadence counts SIM ticks (only while a round
+# is live, in _physics_process) so it is deterministic; only one emerald is on the
+# field at a time. _emerald_rng is the seeded LCG for interval + spawn position.
+var _emerald: Node = null
+var _emerald_rng: int = 0
+var _emerald_countdown: int = 0
 
 # Tracks the window's open state so the tape-slow cue plays only on the
 # NORMAL -> WINDOW transition, not on every counter-slap refresh.
@@ -108,6 +145,8 @@ func _ready() -> void:
 	_player = get_node_or_null(player_path)
 	_opponent = get_node_or_null(opponent_path)
 	_projectiles = get_node_or_null(projectiles_path)
+	_stack_winner_boost_fp = SGFixed.from_float(maxf(1.0, stack_winner_speed_multiplier))
+	_reseed_emeralds()
 
 	# Wire EVERY caster in the arena (player and AI alike). owned=false so
 	# casters inside instanced scenes (player.tscn) are found.
@@ -129,10 +168,6 @@ func _ready() -> void:
 		var trauma: float = player_hit_trauma if is_player_side else opponent_hit_trauma
 		health.damaged.connect(_on_wizard_damaged.bind(trauma, is_player_side))
 		health.knocked_out.connect(_on_knocked_out.bind(is_player_side))
-
-	# Dash SFX for both wizards (presentation).
-	for movement in find_children("*", "MovementComponent", true, false):
-		movement.dashed.connect(func() -> void: Sfx.play(&"dash"))
 
 	# Charge-up rumble: LOCAL player's casters only (see player_path doc).
 	if _player != null:
@@ -212,6 +247,77 @@ func request_rematch() -> void:
 
 
 # =====================================================================
+# Healing emerald (Phase 1)
+# =====================================================================
+
+## DETERMINISM-ALIGNED TICK CADENCE: counts sim ticks only while a round is live
+## (the wizards' tick drivers run in the same physics frames), so the spawn
+## timing is deterministic. A fresh emerald spawns every interval, retiring any
+## un-claimed predecessor so exactly one is ever on the field. NETPLAY: converts
+## to a tick-counted spawn with the rollback sprint, like the stack window.
+func _physics_process(_delta: float) -> void:
+	if match_state != MatchState.ROUND_ACTIVE or emerald_scene == null:
+		return
+	if _emerald != null and not is_instance_valid(_emerald):
+		_emerald = null  # claimed/freed — the clock restarts below
+	_emerald_countdown -= 1
+	if _emerald_countdown <= 0:
+		if _emerald != null and is_instance_valid(_emerald):
+			_emerald.queue_free()  # retire the un-claimed one before refreshing
+		_spawn_emerald()
+		_emerald_countdown = _next_emerald_interval_ticks()
+
+
+## Instantiates an emerald near the arena centre (parented under the arena, NOT
+## the Projectiles container, so it never perturbs projectile-count logic) and
+## points its strike scan at the Projectiles container.
+func _spawn_emerald() -> void:
+	if emerald_scene == null:
+		return
+	var em: Node = emerald_scene.instantiate()
+	add_child(em)
+	var ox: int = (_next_emerald_rng() % 281) - 140   # -140..140 sim units
+	var oy: int = (_next_emerald_rng() % 361) - 180    # -180..180 sim units
+	if em.has_method(&"set_global_fixed_position"):
+		em.set_global_fixed_position(SGFixed.vector2(SGFixed.from_int(ox), SGFixed.from_int(oy)))
+		em.sync_to_physics_engine()
+	if em.has_method(&"set_scan_container") and _projectiles != null:
+		em.set_scan_container(_projectiles)
+	if em.has_method(&"seed_drift"):
+		em.seed_drift(_next_emerald_rng())
+	if em.has_method(&"emit_position"):
+		em.emit_position()
+	_emerald = em
+
+
+## Whole ticks until the next emerald (emerald_min..max seconds), from the LCG.
+func _next_emerald_interval_ticks() -> int:
+	var min_ticks: int = maxi(1, int(emerald_min_interval_seconds * 60.0))
+	var span_ticks: int = maxi(1, int((emerald_max_interval_seconds - emerald_min_interval_seconds) * 60.0))
+	return min_ticks + (_next_emerald_rng() % span_ticks)
+
+
+## Advances the seeded LCG (masked to 32 bits so the multiply never overflows).
+func _next_emerald_rng() -> int:
+	_emerald_rng = (_emerald_rng * 1664525 + 1013904223) & 0xffffffff
+	return _emerald_rng
+
+
+## (Re)seed the spawn cadence for the current round (mixing the round number so
+## rounds differ but replay identically) and arm the first countdown.
+func _reseed_emeralds() -> void:
+	_emerald_rng = (emerald_seed + round_number * 2654435761) & 0xffffffff
+	_emerald_countdown = _next_emerald_interval_ticks()
+
+
+## Frees the live emerald (round reset / KO) so it never lingers into the break.
+func _clear_emerald() -> void:
+	if _emerald != null and is_instance_valid(_emerald):
+		_emerald.queue_free()
+	_emerald = null
+
+
+# =====================================================================
 # Casting / Stack / feedback
 # =====================================================================
 
@@ -242,12 +348,74 @@ func _on_stack_closed() -> void:
 	_window_open_flag = false
 	if match_state != MatchState.ROUND_ACTIVE:
 		_stack_entries.clear()
+		_stack_winner = null
+		# A KO / forced close already drove resume_speed(); nothing to resolve.
 		return
+	# WINNER (last-responder-always, Creative Director): the player who placed the
+	# NEWEST spell on the stack wins it. Captured BEFORE clearing; the +50%
+	# next-throw reward is granted AFTER the stack fully resolves so it lands on
+	# their NEXT throw, not the spell currently resolving.
+	_stack_winner = _winning_wizard()
 	var entries: Array[Node] = _stack_entries.duplicate()
 	_stack_entries.clear()
-	for i in range(entries.size() - 1, -1, -1):
-		if is_instance_valid(entries[i]) and entries[i].has_method(&"release_staged"):
-			entries[i].release_staged()
+	entries.reverse()  # newest-first == LIFO
+	_resolve_stack_entry(entries, 0)
+
+
+## Releases one staged spell, then schedules the next after stagger_delay_seconds
+## of REAL time — the dilation HOLDS, so the world stays in slow-mo between
+## releases. After the last, resumes normal speed and rewards the stack winner.
+## NETPLAY NOTE: this wall-clock stagger becomes tick-counted with the rollback
+## sprint (same seam as the window timer).
+func _resolve_stack_entry(entries: Array, index: int) -> void:
+	if match_state != MatchState.ROUND_ACTIVE:
+		# Round ended mid-resolution (a KO): stop releasing, snap speed back.
+		if _stack != null:
+			_stack.resume_speed()
+		_stack_winner = null
+		return
+	if index >= entries.size():
+		# Whole stack resolved: resume normal speed, THEN reward the winner.
+		if _stack != null:
+			_stack.resume_speed()
+		_award_stack_winner()
+		return
+	var caster: Node = entries[index]
+	if is_instance_valid(caster) and caster.has_method(&"release_staged"):
+		caster.release_staged()
+	# Hold slow-mo for a crisp real-time beat (ignore_time_scale = true), then
+	# resolve the next spell.
+	var timer: SceneTreeTimer = get_tree().create_timer(stagger_delay_seconds, true, false, true)
+	timer.timeout.connect(_resolve_stack_entry.bind(entries, index + 1))
+
+
+## Grants the captured stack winner a one-shot speed boost on its NEXT fired
+## projectile and announces the result (Phase 3 indicator hook).
+func _award_stack_winner() -> void:
+	if _stack_winner != null and is_instance_valid(_stack_winner) \
+			and _stack_winner.has_method(&"grant_speed_boost"):
+		_stack_winner.grant_speed_boost(_stack_winner_boost_fp)
+		stack_winner_decided.emit(_stack_winner == _player)
+	_stack_winner = null
+
+
+## The wizard body that placed the NEWEST spell on the stack (its caster is the
+## last appended entry) — the last responder, who always wins. null if empty.
+func _winning_wizard() -> Node:
+	if _stack_entries.is_empty():
+		return null
+	return _wizard_root_of(_stack_entries[-1])
+
+
+## Walks up from a caster component to the wizard root (Player / Opponent) it
+## belongs to, so the reward can target that whole wizard.
+func _wizard_root_of(node: Node) -> Node:
+	var walker: Node = node
+	while walker != null:
+		if walker == _player or walker == _opponent:
+			return walker
+		walker = walker.get_parent()
+	return null
 
 
 ## An effect actually resolved (projectile fired / barrier deployed / wave
@@ -377,6 +545,7 @@ func _on_knocked_out(ko_was_player: bool) -> void:
 
 	_set_sim_running(false)
 	_stack_entries.clear()
+	_clear_emerald()
 
 	# State changes BEFORE close_window(): _on_stack_closed must see the
 	# round as over so a KO never releases staged spells into the break.
@@ -404,6 +573,8 @@ func _begin_round() -> void:
 	round_number += 1
 	_stack_entries.clear()
 	_clear_projectiles()
+	_clear_emerald()
+	_reseed_emeralds()
 	if _player != null and _player.has_method(&"reset_for_round"):
 		_player.reset_for_round(0, SGFixed.from_float(player_spawn_y))
 	if _opponent != null and _opponent.has_method(&"reset_for_round"):
