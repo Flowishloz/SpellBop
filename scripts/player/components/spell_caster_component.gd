@@ -372,64 +372,44 @@ func _spawn_projectile(velocity_multiplier_fp: int = SGFixed.ONE, charge_level: 
 	var size_mult: float = CHARGE_SIZE_MULTIPLIERS[clampi(charge_level, 0, 3)]
 	var radius_units: float = spell.projectile_size * size_mult
 
-	var projectile: Node = spell.projectile_scene.instantiate()
-	var container: Node = _resolve_container()
-	container.add_child(projectile)
-
-	# Place the projectile in front of the caster in GLOBAL fixed-point space
-	# (int math only). set_global_fixed_position() must run AFTER add_child so
-	# the projectile's parent chain (and thus its global<->local mapping) is
-	# known. Writing the position directly is a teleport, so
-	# sync_to_physics_engine() is MANDATORY afterwards to keep the SG broadphase
-	# in agreement with the node.
-	# NOTE — get_global_fixed_position() returns an SGFixedVector2 wrapper, not
-	# a live alias of the body transform: mutating `spawn_pos` alone moves
-	# nothing, so the set_global_fixed_position() call is REQUIRED.
+	# Spawn ORIGIN in GLOBAL fixed-point space (int math only), clamped so the
+	# ball's full radius stays inside the lane — no projectile spawns outside the
+	# map. Aim (below) tilts the launch VELOCITY only, never the spawn position, so
+	# the throw is still fully aimable.
 	var caster_pos: SGFixedVector2 = _body.get_global_fixed_position()
-	# Clamp the spawn ORIGIN so the ball's full radius stays inside the lane — no
-	# projectile spawns outside the map. Aim (below) tilts the launch VELOCITY
-	# only, never the spawn position, so the throw is still fully aimable.
 	var spawn_x: int = MovementComponent.clamp_spawn_x_fp(
 			caster_pos.x, SGFixed.from_float(radius_units), _arena_bound_fp())
-	var spawn_pos: SGFixedVector2 = SGFixed.vector2(
-			spawn_x,
-			caster_pos.y + _spawn_offset_y_fp * cast_direction_y)
+	var spawn_y: int = caster_pos.y + _spawn_offset_y_fp * cast_direction_y
 
-	projectile.set_global_fixed_position(spawn_pos)
-	projectile.sync_to_physics_engine()
-	# ONE-WAY SHIELDS: this ball ignores its OWNER's card barriers and
-	# collides with the enemy's (arena walls always collide).
-	projectile.collision_mask = PhysicsLayers.projectile_mask_for(cast_direction_y)
-
-	# Arm the damage payload + friendly-fire exclusion before launch (duck-typed
-	# so projectile scenes without hit detection still work).
-	if projectile.has_method(&"set_hit_source"):
-		projectile.set_hit_source(_body)
-	if "damage" in projectile:
-		projectile.damage = spell.damage
-	# MAX-CHARGE ICE BREAKER (Phase 1): a fully-charged (gauge 3) fireball
-	# shatters the enemy's Icey Retort frost wave on contact and powers through.
-	if "shatters_ice" in projectile and charge_level >= 3:
-		projectile.shatters_ice = true
-	# Grow the bolt to its charged size (a no-op at gauge 1 — apply_size short-
-	# circuits when the radius already equals the scene default).
-	if projectile.has_method(&"apply_size"):
-		projectile.apply_size(radius_units)
-
-	# Y velocity = per-tick speed boosted by the banked charge (fixed-point
-	# multiply), signed by cast direction. X velocity = the AIM TILT: the
-	# direction held at release, scaled by how long it was held (pure int
-	# math off MovementComponent's aim state). The projectile's
-	# terminal_velocity is the final ceiling on boosted speed.
-	# STACK WINNER REWARD: if this wizard won the last stack, its next throw
-	# multiplies its launch speed by the one-shot boost (consumed here).
+	# STACK WINNER REWARD: consume the one-shot launch-speed boost. This MUTATES
+	# the caster's sim state, so it must run HERE (the caster's deterministic tick),
+	# NOT in the projectile's _network_spawn — on a rollback this tick re-runs and
+	# re-consumes identically.
 	var winner_boost_fp: int = SGFixed.ONE
 	if _body.has_method(&"consume_speed_boost"):
 		winner_boost_fp = _body.consume_speed_boost()
 	var speed_fp: int = SGFixed.mul(SGFixed.mul(_speed_per_tick_fp, velocity_multiplier_fp), winner_boost_fp)
-	projectile.launch(_aim_vx_fp(speed_fp), speed_fp * cast_direction_y, _bounciness_fp)
 
-	spell_cast.emit(projectile, spell)
+	# ROLLBACK SPAWN (Sprint 22): hand a deterministic, rewindable payload (int /
+	# fixed-point only; the hit-source as its stable scene path) to SyncManager.
+	# spawn(). FireballController._network_spawn() does the positioning, arming, and
+	# launch — identical in single-player (spawn just instantiates + inits) and
+	# under rollback (the spawn is registered and re-created identically per re-sim).
+	var data := {
+		"px": spawn_x, "py": spawn_y,
+		"vx": _aim_vx_fp(speed_fp), "vy": speed_fp * cast_direction_y, "b": _bounciness_fp,
+		"mask": PhysicsLayers.projectile_mask_for(cast_direction_y),
+		"dmg": spell.damage,
+		"shat": 1 if charge_level >= 3 else 0,
+		"size": SGFixed.from_float(radius_units),
+		"src": str(_body.get_path()),
+	}
+	var projectile: Node = SyncManager.spawn("Fireball", _resolve_container(), spell.projectile_scene, data)
+
+	# Presentation hook (camera trauma / SFX via MatchController). Suppress on a
+	# rollback re-sim so a corrected tick doesn't re-fire the feedback.
+	if projectile != null and (SyncManager == null or not SyncManager.is_in_rollback()):
+		spell_cast.emit(projectile, spell)
 
 
 ## Lateral launch component from the held movement input: dir x forward

@@ -240,10 +240,12 @@ func _on_sync_started() -> void:
 	emit_signal(&"status", "Rollback active — fight!")
 	if _smoke_mode != "":
 		print("[NET-SMOKE] sync_started host=", multiplayer.is_server(), " uid=", multiplayer.get_unique_id())
-		# DIAG: ONLY the host presses, so the fingerprint reveals WHICH wizard the
-		# host's input actually drives (proves authority routing, not just sync).
+		# Host-only move proves authority routing; BOTH peers hold cast so each
+		# fires fireballs — the fingerprint then also verifies projectile SPAWN-
+		# rollback determinism (identical count + positions on both peers).
 		if multiplayer.is_server() and InputMap.has_action(&"move_right"):
 			Input.action_press(&"move_right")
+		# (cast is pulsed per-tick in _on_smoke_tick — the fireball is release-fire.)
 		if SyncManager != null and not SyncManager.tick_finished.is_connected(_on_smoke_tick):
 			SyncManager.tick_finished.connect(_on_smoke_tick)
 
@@ -364,12 +366,21 @@ func _run_smoke() -> void:
 			push_error("[NET-SMOKE] unknown mode: %s" % _smoke_mode)
 
 
-func _on_smoke_tick(_is_rollback: bool) -> void:
+func _on_smoke_tick(is_rollback: bool) -> void:
 	if _smoke_done or SyncManager == null:
 		return
+	var t: int = int(SyncManager.current_tick)
+	# Pulse cast deterministically by tick so both peers fire fireballs identically:
+	# hold ~40 ticks (past the 0.5 s charge), release ~5 to trigger the release-fire,
+	# repeat. Only on FORWARD ticks — rollback re-sims replay BUFFERED input, not the
+	# live Input state.
+	if not is_rollback and InputMap.has_action(&"cast_spell"):
+		if (t % 45) < 40:
+			Input.action_press(&"cast_spell")
+		else:
+			Input.action_release(&"cast_spell")
 	# Sample at a FIXED sim tick (not a signal count) so both peers fingerprint the
 	# SAME tick — rollback guarantees identical state there, even after re-sims.
-	var t: int = int(SyncManager.current_tick)
 	if t >= 120:
 		_smoke_done = true
 		print("[NET-SMOKE] tick=", t, " fp=", _smoke_fingerprint())
@@ -392,4 +403,16 @@ func _smoke_fingerprint() -> String:
 		if w != null and w.has_method(&"get_global_fixed_position"):
 			var p = w.get_global_fixed_position()
 			parts.append("%s=(%d,%d)" % [path, p.x, p.y])
+	# Projectiles (spawn-rollback proof): count + each fireball's fixed position,
+	# sorted by node name (deterministic SpawnManager naming) so both peers compare
+	# equal byte-for-byte.
+	var proj := arena.get_node_or_null(^"Projectiles")
+	if proj != null:
+		var balls := proj.get_children()
+		balls.sort_custom(func(a: Node, b: Node) -> bool: return a.name < b.name)
+		parts.append("nproj=%d" % balls.size())
+		for b in balls:
+			if b.has_method(&"get_global_fixed_position"):
+				var p = b.get_global_fixed_position()
+				parts.append("(%d,%d)" % [p.x, p.y])
 	return ", ".join(parts)

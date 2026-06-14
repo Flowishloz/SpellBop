@@ -97,6 +97,15 @@ func _ready() -> void:
 			_hit_detection.hit.connect(_on_hit)
 			break
 
+	# ROLLBACK (Sprint 22): when a netplay match is live the rollback SyncManager
+	# drives this projectile (via the "network_sync" group) — the local
+	# _physics_process tick driver must idle so the entity isn't double-stepped.
+	# Single-player keeps self-driving. (SpawnManager re-sorts the group right
+	# after add_child, so joining here in _ready is enough.)
+	if SyncManager != null and SyncManager.started:
+		local_tick_driver_enabled = false
+		add_to_group(&"network_sync")
+
 
 ## LOCAL TICK DRIVER — replaced by the rollback SyncManager in a later sprint.
 func _physics_process(_delta: float) -> void:
@@ -133,9 +142,9 @@ func get_velocity_y() -> int:
 
 
 func _on_expired() -> void:
-	# queue_free is idempotent; repeated expired emits before the free lands
-	# are harmless. SyncManager.despawn() replaces this in the rollback sprint.
-	queue_free()
+	# Idempotent: repeated expired emits before the free lands are harmless.
+	# Rewindable under rollback (SyncManager.despawn), queue_free in single-player.
+	_despawn()
 
 
 ## Bounce presentation: an X-facing normal means one of the side walls — pulse it
@@ -167,7 +176,7 @@ func _on_hit(body: Node) -> void:
 		body.apply_slow(slow_ticks, slow_scale_fp)
 		Sfx.play(&"frost_hit")
 	_spawn_impact_burst()
-	queue_free()
+	_despawn()
 
 
 ## IMPACT FX (pure visual): a burst that CARRIES THE BALL'S MOMENTUM — the
@@ -242,7 +251,7 @@ func shatter_ice() -> void:
 		BurstFX.spawn(get_parent(), visual.global_position + Vector3(0, 0.3, 0),
 				Vector3.UP, Color(0.78, 0.95, 1.0, 0.95), 34, 4.4, 0.06, 84.0)
 	Sfx.play(&"shield_shatter")
-	queue_free()
+	_despawn()
 
 
 # =====================================================================
@@ -301,7 +310,7 @@ func split_on_barrier(dir_sign: int, count: int = 2, damage_each: int = 1) -> vo
 		shard.set_homing(null, 0)
 		shard.apply_size(BASE_RADIUS_UNITS * 0.75)
 		shard.launch(fan_sign * lateral_fp, dir_sign * speed_fp, SGFixed.ONE)
-	queue_free()
+	_despawn()
 
 
 ## COUNTER REDIRECT (duck-typed entry point CounterFieldComponent calls):
@@ -381,3 +390,40 @@ func _load_state(state: Dictionary) -> void:
 	current_tick = int(state.get("tick", current_tick))
 	if state.has("movement"):
 		_movement._load_state(state["movement"])
+
+
+## ROLLBACK SPAWN (Sprint 22): the deterministic, rewindable initializer. Called
+## by SyncManager.spawn() on the spawn tick AND re-called identically on every
+## rollback re-spawn, so it is PURE SETUP from an int/fixed-point-only payload (no
+## node refs except the hit-source, resolved by its stable scene path). It does
+## exactly what SpellCasterComponent used to do inline after add_child + launch().
+func _network_spawn(data: Dictionary) -> void:
+	set_global_fixed_position(SGFixed.vector2(int(data.get("px", 0)), int(data.get("py", 0))))
+	sync_to_physics_engine()
+	if data.has("mask"):
+		collision_mask = int(data["mask"])
+	damage = int(data.get("dmg", 1))
+	shatters_ice = int(data.get("shat", 0)) == 1
+	slow_ticks = int(data.get("slt", 0))
+	slow_scale_fp = int(data.get("sls", SGFixed.ONE))
+	splits_on_barrier = int(data.get("split", 0)) == 1
+	if data.has("pulse"):
+		emits_wall_pulse = int(data["pulse"]) == 1
+	if data.has("size"):
+		apply_size(SGFixed.to_float(int(data["size"])))
+	var src_path: String = String(data.get("src", ""))
+	if src_path != "":
+		var src: Node = get_node_or_null(NodePath(src_path))
+		if src != null:
+			set_hit_source(src)
+	launch(int(data.get("vx", 0)), int(data.get("vy", 0)), int(data.get("b", SGFixed.ONE)))
+
+
+## Rewindable free: under a live rollback match this routes through
+## SyncManager.despawn() (the despawn rolls back); otherwise (single-player, or a
+## node not spawned via SyncManager) it falls back to queue_free().
+func _despawn() -> void:
+	if SyncManager != null and SyncManager.started and has_meta("spawn_name"):
+		SyncManager.despawn(self)
+	else:
+		queue_free()

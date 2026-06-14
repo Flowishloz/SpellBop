@@ -254,11 +254,11 @@ func _get_local_input() -> Dictionary:
 			if not inp.has(InputCommand.KEY_CARD):
 				inp[InputCommand.KEY_CARD] = _card_press_latched
 			_card_press_latched = 0
-		if not _netplay_casting:
-			# Casting/cards aren't rollback-safe yet (Sprint 21) — strip so both
-			# peers process identical movement-only input.
-			inp.erase(InputCommand.KEY_CAST)
-			inp.erase(InputCommand.KEY_CARD)
+		# Base fireball spawns are rollback-routed (Sprint 22), so KEY_CAST stays —
+		# both peers charge + fire deterministically. CARD spawns still resolve off
+		# the wall-clock Stack (not yet tick-counted), so strip KEY_CARD until the
+		# Stack rework (Phase 2). _netplay_casting will re-gate cards then.
+		inp.erase(InputCommand.KEY_CARD)
 		return inp
 	if _ai_brain != null:
 		return _ai_brain.decide(current_tick)
