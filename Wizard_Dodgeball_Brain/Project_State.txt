@@ -2251,7 +2251,9 @@ Desktop netplay is feature-complete + playtested. Mobile needs THREE things (ful
   B2. Joystick-direction AIMING overhaul + aim-indicator arrow (Creative Director touch-era feature; after B).
       B2a (SIM change): the firing angle reads the virtual-joystick DIRECTION on release (vs today's held
       left/right x hold-duration in SpellCaster._aim_vx_fp) — the aim must ride the synced input as a QUANTIZED
-      fixed-point KEY_AIM (int-only), with full determinism re-verification. B2b (presentation): a glowing-blue
+      fixed-point KEY_AIM (int-only), with full determinism re-verification. DECIDED (Creative Director): MOVE +
+      AIM TOGETHER, no mode switch — the joystick X SIGN drives movement (the existing KEY_X), its full ANGLE
+      drives aim (KEY_AIM); vx is now angle-driven, not hold-duration-driven; keyboard keeps a discrete fallback. B2b (presentation): a glowing-blue
       ground arrow at the player's feet showing the EXACT firing angle, shown ONLY when charging a fireball OR
       within 3s of a stacked spell they own releasing. Enhancement, not a blocker. See HANDOFF.md for detail.
   C. Real online (Nakama) + real-latency rollback validation (the GATE before shipping mobile MP).
