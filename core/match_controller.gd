@@ -165,15 +165,10 @@ var _roundflow: RoundFlowResolver = null
 # stack_winner_speed_multiplier cached to fixed-point (1.5 -> 98304).
 var _stack_winner_boost_fp: int = 98304
 
-# HEALING EMERALD spawner state. The cadence counts SIM ticks (only while a round
-# is live, in _physics_process) so it is deterministic; only one emerald is on the
-# field at a time. _emerald_rng is the seeded LCG for interval + spawn position.
-var _emerald: Node = null
-var _emerald_rng: int = 0
-var _emerald_countdown: int = 0
-# Emeralds spawned so far THIS MATCH (capped at emerald_max_per_match; reset only
-# on a fresh match in request_rematch — persists across rounds).
-var _emeralds_spawned_this_match: int = 0
+# HEALING EMERALD (spawn-rollback Phase 3): the spawn cadence (LCG + countdown +
+# per-match cap) now lives on the RoundFlowResolver as ROLLED-BACK sim state, so the
+# spawn lands on the same tick on both peers. This controller only provides the spawn
+# HOOK (_spawn_emerald_synced) + the claimed->ripple presentation.
 
 # DEATH SEQUENCE state (Sprint 20). The retro-lens material drives the screen
 # ripple; _ripple_* tracks the active shockwave; _in_death_sequence guards the
@@ -215,7 +210,6 @@ func _ready() -> void:
 	_opponent = get_node_or_null(opponent_path)
 	_projectiles = get_node_or_null(projectiles_path)
 	_stack_winner_boost_fp = SGFixed.from_float(maxf(1.0, stack_winner_speed_multiplier))
-	_reseed_emeralds()
 
 	# Death screen-ripple driver: grab the retro-lens shader material and clear any
 	# stale ripple so the pass renders normally until a KO arms it.
@@ -258,6 +252,12 @@ func _ready() -> void:
 		_roundflow.break_began.connect(_on_resolver_break)
 		_roundflow.match_concluded.connect(_on_resolver_match_concluded)
 		_roundflow.round_reset.connect(_on_resolver_round_reset)
+		# Emerald cadence (Phase 3): hand the resolver the tick-converted interval + cap +
+		# seed and the SyncManager.spawn HOOK (so the resolver stays SyncManager-free).
+		var em_min: int = maxi(1, int(emerald_min_interval_seconds * 60.0))
+		var em_span: int = maxi(1, int((emerald_max_interval_seconds - emerald_min_interval_seconds) * 60.0))
+		_roundflow.setup_emerald(emerald_scene != null, em_min, em_span, emerald_max_per_match,
+				emerald_seed, _spawn_emerald_synced)
 
 	# Damage feedback: every wizard's hits shake the camera (presentation + stats).
 	# ROUND FLOW (KO -> round end) is the RoundFlowResolver's job now — it POLLS HP on
@@ -402,84 +402,35 @@ func request_rematch() -> void:
 # Healing emerald (Phase 1)
 # =====================================================================
 
-## DETERMINISM-ALIGNED TICK CADENCE: counts sim ticks only while a round is live
-## (the wizards' tick drivers run in the same physics frames), so the spawn
-## timing is deterministic. A fresh emerald spawns every interval, retiring any
-## un-claimed predecessor so exactly one is ever on the field. NETPLAY: converts
-## to a tick-counted spawn with the rollback sprint, like the stack window.
-func _physics_process(_delta: float) -> void:
-	# NETPLAY: the emerald spawner isn't rollback-routed yet (Sprint 21) — keep it
-	# off so it can't desync the deterministic sim. Re-enabled in the spawn sprint.
-	if match_state != MatchState.ROUND_ACTIVE or emerald_scene == null or _netplay:
-		return
-	if _emerald != null and not is_instance_valid(_emerald):
-		_emerald = null  # claimed/freed — the clock re-arms below
-	# ONE emerald at a time, and at most emerald_max_per_match across the MATCH
-	# (Sprint 20). While one is floating, or the match budget is spent, the
-	# countdown waits — no refresh of an un-claimed emerald.
-	if _emerald != null or _emeralds_spawned_this_match >= emerald_max_per_match:
-		return
-	_emerald_countdown -= 1
-	if _emerald_countdown <= 0:
-		_spawn_emerald()
-		_emerald_countdown = _next_emerald_interval_ticks()
-
-
-## Instantiates an emerald near the arena centre (parented under the arena, NOT
-## the Projectiles container, so it never perturbs projectile-count logic) and
-## points its strike scan at the Projectiles container.
-func _spawn_emerald() -> void:
+## SPAWN HOOK — called IN-TICK by the RoundFlowResolver's deterministic cadence (which
+## owns the LCG + countdown + per-match cap as rolled-back sim state). Spawns an emerald
+## through SyncManager.spawn so it is rollback-correct on both peers, and wires its
+## claimed->ripple ONCE on the genuine forward spawn. ox/oy = sim-unit offsets from
+## centre, seed_v seeds its drift LCG. Returns true only if an emerald actually spawned
+## (false when emerald_scene is null — the headless "freeze").
+func _spawn_emerald_synced(ox: int, oy: int, seed_v: int) -> bool:
 	if emerald_scene == null:
-		return
-	var em: Node = emerald_scene.instantiate()
-	add_child(em)
-	var ox: int = (_next_emerald_rng() % 281) - 140   # -140..140 sim units
-	var oy: int = (_next_emerald_rng() % 361) - 180    # -180..180 sim units
-	if em.has_method(&"set_global_fixed_position"):
-		em.set_global_fixed_position(SGFixed.vector2(SGFixed.from_int(ox), SGFixed.from_int(oy)))
-		em.sync_to_physics_engine()
-	if em.has_method(&"set_scan_container") and _projectiles != null:
-		em.set_scan_container(_projectiles)
-	if em.has_method(&"seed_drift"):
-		em.seed_drift(_next_emerald_rng())
-	if em.has_method(&"emit_position"):
-		em.emit_position()
-	if em.has_signal(&"claimed"):
+		return false
+	var payload: Dictionary = {
+		"px": SGFixed.from_int(ox),
+		"py": SGFixed.from_int(oy),
+		"seed": seed_v,
+		"scan": str(_projectiles.get_path()) if _projectiles != null else "",
+	}
+	var em: Node = SyncManager.spawn("Emerald", self, emerald_scene, payload)
+	if em == null:
+		return false
+	# Wire the screen-ripple presentation ONCE on the forward spawn (re-sims reuse the
+	# node, so guard on is_in_rollback + is_connected against a double-connect).
+	if not SyncManager.is_in_rollback() and em.has_signal(&"claimed") \
+			and not em.claimed.is_connected(_on_emerald_claimed):
 		em.claimed.connect(_on_emerald_claimed)
-	_emerald = em
-	_emeralds_spawned_this_match += 1
+	return true
 
 
 ## The emerald was struck (a life granted): fire the screen ripple from its point.
 func _on_emerald_claimed(world_pos: Vector3) -> void:
 	_trigger_ripple(world_pos, emerald_ripple_strength)
-
-
-## Whole ticks until the next emerald (emerald_min..max seconds), from the LCG.
-func _next_emerald_interval_ticks() -> int:
-	var min_ticks: int = maxi(1, int(emerald_min_interval_seconds * 60.0))
-	var span_ticks: int = maxi(1, int((emerald_max_interval_seconds - emerald_min_interval_seconds) * 60.0))
-	return min_ticks + (_next_emerald_rng() % span_ticks)
-
-
-## Advances the seeded LCG (masked to 32 bits so the multiply never overflows).
-func _next_emerald_rng() -> int:
-	_emerald_rng = (_emerald_rng * 1664525 + 1013904223) & 0xffffffff
-	return _emerald_rng
-
-
-## (Re)seed the spawn cadence for the current round (mixing the round number so
-## rounds differ but replay identically) and arm the first countdown.
-func _reseed_emeralds() -> void:
-	_emerald_rng = (emerald_seed + round_number * 2654435761) & 0xffffffff
-	_emerald_countdown = _next_emerald_interval_ticks()
-
-
-## Frees the live emerald (round reset / KO) so it never lingers into the break.
-func _clear_emerald() -> void:
-	if _emerald != null and is_instance_valid(_emerald):
-		_emerald.queue_free()
-	_emerald = null
 
 
 # =====================================================================
@@ -678,7 +629,6 @@ func _on_resolver_ko(player_won_round: bool, match_over: bool) -> void:
 		return
 	_sync_mirror()
 	_window_open_flag = false
-	_clear_emerald()
 	_set_sim_running(false)
 	# Clear any open PRESENTATION window WITHOUT keeping normal speed — the death
 	# sequence owns the dilation next (hold_dilation overrides the resume ramp).
@@ -728,11 +678,8 @@ func _on_resolver_round_reset(new_round_number: int) -> void:
 		_stat_hits = 0
 		_stat_damage_dealt = 0
 		_stat_damage_taken = 0
-		_emeralds_spawned_this_match = 0
 	_window_open_flag = false
 	_set_sim_running(true)
-	_clear_emerald()
-	_reseed_emeralds()
 	round_started.emit(new_round_number)
 
 

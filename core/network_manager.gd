@@ -444,5 +444,18 @@ func _smoke_fingerprint() -> String:
 	# the SAME tick on both peers (a wall-clock round flow would diverge here).
 	var rf := arena.get_node_or_null(^"RoundFlowResolver")
 	if rf != null and rf.has_method(&"get_phase"):
-		parts.append("rf=(ph%d,ps%d,os%d,rn%d)" % [rf.get_phase(), rf.get_player_score(), rf.get_opponent_score(), rf.get_round_number()])
+		# Fold the emerald cadence (ecd/ecnt) too: it decrements every ACTIVE tick, so a
+		# desync in the resolver's new emerald save_state keys diverges it here (Phase 3).
+		parts.append("rf=(ph%d,ps%d,os%d,rn%d,ecd%d,ecnt%d)" % [rf.get_phase(),
+				rf.get_player_score(), rf.get_opponent_score(), rf.get_round_number(),
+				rf.get_emerald_countdown(), rf.get_emerald_count()])
+	# Pickups (emerald spawn-rollback proof): count + each emerald's fixed position, so an
+	# emerald that spawns within the smoke window is asserted byte-identical on both peers.
+	var pickups: Array = arena.get_tree().get_nodes_in_group(&"pickups") if arena.get_tree() != null else []
+	pickups.sort_custom(func(a: Node, b: Node) -> bool: return a.name < b.name)
+	parts.append("npick=%d" % pickups.size())
+	for pk in pickups:
+		if pk.has_method(&"get_global_fixed_position"):
+			var pp = pk.get_global_fixed_position()
+			parts.append("e(%d,%d)" % [pp.x, pp.y])
 	return ", ".join(parts)

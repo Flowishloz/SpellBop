@@ -110,6 +110,14 @@ func _ready() -> void:
 	if _mesh is MeshInstance3D:
 		(_mesh as MeshInstance3D).mesh = _shared_gem_mesh()
 
+	# NETPLAY: when a rollback session is live this emerald was created via
+	# SyncManager.spawn — join the synced group + idle the local driver so the
+	# SyncManager drives it (the same _ready gate the fireball uses; offline keeps
+	# the local driver). SpawnManager re-sorts the group right after add_child.
+	if SyncManager != null and SyncManager.started:
+		add_to_group(&"network_sync")
+		local_tick_driver_enabled = false
+
 
 ## Seeds the deterministic drift LCG (the spawner passes a per-emerald seed so
 ## each emerald wanders differently but reproducibly).
@@ -127,6 +135,32 @@ func set_scan_container(container: Node) -> void:
 func emit_position() -> void:
 	var pos: SGFixedVector2 = get_global_fixed_position()
 	state_updated.emit(pos.x, pos.y)
+
+
+## ROLLBACK SPAWN (SyncManager.spawn): reconstruct from a pure int/path payload — the
+## same setup the spawner used to do inline, now rollback-correct (runs on spawn AND every
+## re-sim). px/py = fixed-point position, seed = drift LCG seed, scan = Projectiles path.
+func _network_spawn(data: Dictionary) -> void:
+	var px: int = int(data.get("px", 0))
+	var py: int = int(data.get("py", 0))
+	set_global_fixed_position(SGFixed.vector2(px, py))
+	sync_to_physics_engine()
+	seed_drift(int(data.get("seed", 0)))
+	var scan_path: String = String(data.get("scan", ""))
+	if scan_path != "":
+		var container: Node = get_node_or_null(NodePath(scan_path))
+		if container != null:
+			set_scan_container(container)
+	emit_position()
+
+
+## Rollback-aware free: SyncManager.despawn under a live match (keeps the spawn record
+## consistent across re-sims), else queue_free. Every self-free site routes through here.
+func _despawn() -> void:
+	if SyncManager != null and SyncManager.started:
+		SyncManager.despawn(self)
+	else:
+		queue_free()
 
 
 # =====================================================================
@@ -217,19 +251,28 @@ func _grant_heal(projectile: Node) -> void:
 	var thrower: Node = projectile.get_hit_source()
 	if thrower != null and thrower.has_method(&"apply_heal"):
 		thrower.apply_heal(heal_amount)
-	var visual: Node3D = get_node_or_null(visual_root_path) as Node3D
-	if visual != null:
-		var burst_pos: Vector3 = visual.global_position + Vector3(0, hover_height * 0.5, 0)
-		BurstFX.spawn(get_parent(), burst_pos,
-				Vector3.UP, Color(0.35, 1.0, 0.55, 0.95), 36, 3.4, 0.08, 150.0)
-		# A HEART pops up out of the gem and falls — the "you gained a life" cue.
-		HeartPopFX.spawn(get_parent(), visual.global_position + Vector3(0, hover_height, 0))
-		# Notify the arena so it can fire the screen ripple from the point of contact.
-		claimed.emit(burst_pos)
-	Sfx.play(&"heal")
+	# PRESENTATION — suppressed during a rollback re-sim so a re-applied strike never
+	# doubles the burst / heart / ripple / SFX. The heal above is deterministic + rolled
+	# back; only these cosmetics are gated (the emerald claimed->ripple stays pure-visual).
+	if not (SyncManager != null and SyncManager.is_in_rollback()):
+		var visual: Node3D = get_node_or_null(visual_root_path) as Node3D
+		if visual != null:
+			var burst_pos: Vector3 = visual.global_position + Vector3(0, hover_height * 0.5, 0)
+			BurstFX.spawn(get_parent(), burst_pos,
+					Vector3.UP, Color(0.35, 1.0, 0.55, 0.95), 36, 3.4, 0.08, 150.0)
+			# A HEART pops up out of the gem and falls — the "you gained a life" cue.
+			HeartPopFX.spawn(get_parent(), visual.global_position + Vector3(0, hover_height, 0))
+			# Notify the arena so it can fire the screen ripple from the point of contact.
+			claimed.emit(burst_pos)
+		Sfx.play(&"heal")
+	# The struck ball is consumed; both frees route through the rollback-aware path so a
+	# SyncManager-tracked node never dangles its spawn record into the next rollback.
 	if is_instance_valid(projectile):
-		projectile.queue_free()
-	queue_free()
+		if projectile.has_method(&"_despawn"):
+			projectile._despawn()
+		else:
+			projectile.queue_free()
+	_despawn()
 
 
 func _save_state() -> Dictionary:

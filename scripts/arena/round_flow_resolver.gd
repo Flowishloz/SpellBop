@@ -61,6 +61,13 @@ var _opponent_score: int = 0
 var _round_number: int = 1
 var _winner: int = 0         # last round's winner: 0 none / 1 player / 2 opponent
 
+# Emerald spawn cadence (Phase 3): the LCG + countdown + per-match count, ALL saved sim
+# state, so the spawn TICK lands identically on both peers (it was a wall-clock,
+# netplay-disabled MatchController._physics_process before).
+var _em_rng: int = 0
+var _em_cd: int = 0          # ticks to the next emerald (<= 0 = spawn this tick)
+var _em_cnt: int = 0         # emeralds spawned this match (capped at _em_max_per_match)
+
 # --- Non-sim wiring (stable scene refs from MatchController.setup() — identical on
 # both peers, never change across a match, so safe to hold un-serialized). ---
 var _player: Node = null
@@ -74,6 +81,15 @@ var _break_ticks: int = 1
 var _rounds_to_win: int = 2
 var _player_spawn_fp: int = 0
 var _opponent_spawn_fp: int = 0
+
+# --- Emerald cadence config (from setup_emerald; the actual SyncManager.spawn is a HOOK
+# into MatchController so this node never references SyncManager). ---
+var _em_enabled: bool = false
+var _em_min_ticks: int = 1
+var _em_span_ticks: int = 1
+var _em_max_per_match: int = 2
+var _em_base_seed: int = 0
+var _em_spawn_hook: Callable = Callable()
 
 
 ## MatchController hands us the stable scene refs + round tuning in its _ready (NOT sim
@@ -97,6 +113,20 @@ func setup(player: Node, opponent: Node, player_health: Node, opponent_health: N
 	_opponent_spawn_fp = opponent_spawn_fp
 
 
+## MatchController wires the emerald spawn cadence (Phase 3). The spawn itself is a HOOK
+## (spawn_hook.call(ox, oy, seed) -> bool, ox/oy = sim-unit offsets from centre) so this
+## node never references SyncManager; enabled=false leaves the cadence dormant.
+func setup_emerald(enabled: bool, min_ticks: int, span_ticks: int, max_per_match: int,
+		base_seed: int, spawn_hook: Callable) -> void:
+	_em_enabled = enabled
+	_em_min_ticks = maxi(1, min_ticks)
+	_em_span_ticks = maxi(1, span_ticks)
+	_em_max_per_match = maxi(0, max_per_match)
+	_em_base_seed = base_seed
+	_em_spawn_hook = spawn_hook
+	_reseed_emeralds()
+
+
 ## NETPLAY HANDOFF (mirrors StackResolver.set_netplay / PlayerController.set_netplay):
 ## stop self-driving and join the group SyncManager scans at start(). Called from
 ## MatchController._enter_netplay BEFORE the handshake — a scene-authored node can't
@@ -112,6 +142,8 @@ func get_player_score() -> int: return _player_score
 func get_opponent_score() -> int: return _opponent_score
 func get_round_number() -> int: return _round_number
 func get_phase() -> int: return _phase
+func get_emerald_countdown() -> int: return _em_cd      # ticks to next emerald (smoke fingerprint)
+func get_emerald_count() -> int: return _em_cnt          # emeralds spawned this match
 
 
 ## REMATCH — a fresh scoreboard from MATCH_OVER. Called OFF-TICK by MatchController for an
@@ -127,7 +159,10 @@ func reset_match() -> void:
 	_round_number = 1
 	_winner = 0
 	_clear_projectiles()
+	_clear_emeralds()
 	_reset_wizards()
+	_em_cnt = 0          # a fresh match refills the emerald budget
+	_reseed_emeralds()
 	round_reset.emit(_round_number)
 
 
@@ -139,6 +174,8 @@ func _network_process(_input: Dictionary) -> void:
 	match _phase:
 		Phase.ACTIVE:
 			_poll_ko()
+			if _phase == Phase.ACTIVE:   # no KO this tick — run the emerald cadence
+				_tick_emerald()
 		Phase.DEATH_WAIT:
 			_countdown -= 1
 			if _countdown <= 0:
@@ -180,6 +217,7 @@ func _poll_ko() -> void:
 	var match_over: bool = _player_score >= _rounds_to_win or _opponent_score >= _rounds_to_win
 	_phase = Phase.DEATH_WAIT
 	_countdown = _death_ticks
+	_clear_emeralds()   # no emerald lingers into the death beat
 	ko_began.emit(player_won, match_over)
 
 
@@ -205,7 +243,9 @@ func _do_reset() -> void:
 	if _stack_resolver != null and is_instance_valid(_stack_resolver) and _stack_resolver.has_method(&"cancel"):
 		_stack_resolver.cancel()
 	_clear_projectiles()
+	_clear_emeralds()
 	_reset_wizards()
+	_reseed_emeralds()   # fresh cadence (mixing the new round number) for the new round
 	_winner = 0
 	_phase = Phase.ACTIVE
 	_countdown = 0
@@ -224,6 +264,75 @@ func _reset_wizards() -> void:
 func _wants_rematch(wizard: Node) -> bool:
 	return wizard != null and is_instance_valid(wizard) \
 			and wizard.has_method(&"wants_rematch") and wizard.wants_rematch()
+
+
+# =====================================================================
+# Emerald spawn cadence (Phase 3)
+# =====================================================================
+
+## Run once per ACTIVE tick: one emerald at a time (live "pickups" count), at most
+## _em_max_per_match across the match. The spawn lands on a deterministic tick, so both
+## peers spawn the SAME emerald (same position + seed) on the SAME tick.
+func _tick_emerald() -> void:
+	if not _em_enabled or _em_cnt >= _em_max_per_match:
+		return
+	if _live_pickup_count() > 0:
+		return
+	_em_cd -= 1
+	if _em_cd <= 0:
+		_spawn_emerald()
+		_em_cd = _next_emerald_interval()
+
+
+## Roll the spawn position + drift seed from the LCG and ask MatchController to spawn it
+## (the hook does SyncManager.spawn). Only counts toward the cap if the hook actually
+## spawned (the hook returns false when emerald_scene is null — the headless "freeze").
+func _spawn_emerald() -> void:
+	var ox: int = (_next_emerald_rng() % 281) - 140   # -140..140 sim units from centre
+	var oy: int = (_next_emerald_rng() % 361) - 180   # -180..180 sim units from centre
+	var seed_v: int = _next_emerald_rng()
+	if _em_spawn_hook.is_valid() and bool(_em_spawn_hook.call(ox, oy, seed_v)):
+		_em_cnt += 1
+
+
+## Whole ticks until the next emerald, from the LCG (min .. min+span).
+func _next_emerald_interval() -> int:
+	return _em_min_ticks + (_next_emerald_rng() % maxi(1, _em_span_ticks))
+
+
+## Advances the seeded LCG (masked to 32 bits so the multiply never overflows int64).
+func _next_emerald_rng() -> int:
+	_em_rng = (_em_rng * 1664525 + 1013904223) & 0xffffffff
+	return _em_rng
+
+
+## (Re)seed the cadence for the current round (mixing the round number so rounds differ
+## but replay identically) + arm the first countdown. Called on each round / match reset.
+func _reseed_emeralds() -> void:
+	_em_rng = (_em_base_seed + _round_number * 2654435761) & 0xffffffff
+	_em_cd = _next_emerald_interval()
+
+
+## Live emerald count via the deterministic "pickups" group membership (a despawned
+## emerald is detached, so this excludes the retire window). Null-guarded.
+func _live_pickup_count() -> int:
+	var tree: SceneTree = get_tree()
+	if tree == null:
+		return 0
+	return tree.get_nodes_in_group(&"pickups").size()
+
+
+## Despawn any live emerald IN-TICK (KO / round reset) through its own rollback-aware
+## _despawn(), so it never lingers across a round boundary nor dangles a spawn record.
+func _clear_emeralds() -> void:
+	var tree: SceneTree = get_tree()
+	if tree == null:
+		return
+	for n in tree.get_nodes_in_group(&"pickups"):
+		if n.has_method(&"_despawn"):
+			n._despawn()
+		elif is_instance_valid(n):
+			n.queue_free()
 
 
 ## Frees every projectile through its rollback-aware _despawn() (→ SyncManager.despawn
@@ -254,6 +363,9 @@ func _save_state() -> Dictionary:
 		"os": _opponent_score,
 		"rn": _round_number,
 		"wn": _winner,
+		"erng": _em_rng,
+		"ecd": _em_cd,
+		"ecnt": _em_cnt,
 	}
 
 
@@ -264,3 +376,6 @@ func _load_state(state: Dictionary) -> void:
 	_opponent_score = int(state.get("os", 0))
 	_round_number = int(state.get("rn", 1))
 	_winner = int(state.get("wn", 0))
+	_em_rng = int(state.get("erng", 0))
+	_em_cd = int(state.get("ecd", 0))
+	_em_cnt = int(state.get("ecnt", 0))

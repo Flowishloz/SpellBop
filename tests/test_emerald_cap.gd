@@ -63,8 +63,10 @@ func _run() -> void:
 	# #3 must NEVER appear — the match budget (2) is spent.
 	var e3: Node = await _await_emerald(1500)
 	_ck(e3 == null, "emerald #3 did NOT spawn (cap = 2 per match)")
-	_ck(int(arena._emeralds_spawned_this_match) == 2,
-		"exactly 2 emeralds spawned this match (got %d)" % arena._emeralds_spawned_this_match)
+	# The per-match count now lives on the RoundFlowResolver (the spawn cadence moved there
+	# for rollback determinism — Phase 3).
+	_ck(int(arena._roundflow._em_cnt) == 2,
+		"exactly 2 emeralds spawned this match (got %d)" % arena._roundflow._em_cnt)
 
 	if _fails == 0:
 		print("EMERALD CAP TEST: ALL PASS")
