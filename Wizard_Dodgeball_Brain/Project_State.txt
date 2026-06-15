@@ -2248,8 +2248,14 @@ Desktop netplay is feature-complete + playtested. Mobile needs THREE things (ful
      two-local-windows hack; the touch joystick feeds the DEFAULT move_left/right which netplay ignores, so
      touch movement is DEAD online (cast + cards are fine). Default netplay to InputCommand.DEFAULT_ACTIONS;
      gate the split behind a --local-split opt-in for two-window dev testing.
+  B2. Joystick-direction AIMING overhaul + aim-indicator arrow (Creative Director touch-era feature; after B).
+      B2a (SIM change): the firing angle reads the virtual-joystick DIRECTION on release (vs today's held
+      left/right x hold-duration in SpellCaster._aim_vx_fp) — the aim must ride the synced input as a QUANTIZED
+      fixed-point KEY_AIM (int-only), with full determinism re-verification. B2b (presentation): a glowing-blue
+      ground arrow at the player's feet showing the EXACT firing angle, shown ONLY when charging a fireball OR
+      within 3s of a stacked spell they own releasing. Enhancement, not a blocker. See HANDOFF.md for detail.
   C. Real online (Nakama) + real-latency rollback validation (the GATE before shipping mobile MP).
-A and B are INDEPENDENT (do in parallel); C is the gate after both.
+A runs in parallel (toolchain); B -> B2 are the sequenced touch-input + aiming work; C is the gate after all.
 
 Commits since the Sub-phase 3 doc sync (d54f807), oldest->newest: 4579f67 (online Play Again — deterministic
 synced rematch), 9f1cdb8 (healing-emerald spawn-rollback — deterministic cadence + enable online),
