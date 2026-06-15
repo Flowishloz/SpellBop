@@ -75,13 +75,33 @@ signal expired
 ## its caster (Creative Director directive).
 @export var lifespan_seconds: float = 0.0
 
+## STUCK-PROJECTILE CLEANUP (Creative Director): a homing bolt chasing an evading wizard
+## bleeds speed — the steer blends two equal-length vectors, so a turning ball's velocity
+## gets SHORTER each tick — and can crawl to a near-stop mid-court, then sit out its full
+## lifespan ("the spark gets stuck in the middle and takes too long to despawn"). Despawn it
+## promptly once it has stayed slower than this floor for stationary_lifespan_seconds. Set
+## the floor WELL BELOW cruising speed (a base fireball flies ~17.5 u/tick = ~1050 u/s) so
+## only genuinely stalled balls qualify; a normal lossless-bounce ball never dips here. A
+## barrier-CAPTURED ball is frozen at 0 on purpose — the barrier calls keep_alive() each
+## hold tick so the stall despawn never reclaims it. 0 disables the check.
+## Floor is a NEAR-STOP speed (120 u/s = 2 u/tick ≈ 1.2 m/s): genuinely stuck, not merely
+## slow — a real projectile cruises ~17.5+ u/tick and can only dip here by homing-stalling
+## (its speed is monotonically non-increasing after launch, so a low reading can't recover).
+@export var stationary_speed_threshold: float = 120.0
+@export var stationary_lifespan_seconds: float = 0.6
+
 # --- Cached fixed-point per-tick values (computed once in _ready()) ---
 var _terminal_velocity_fp: int = 0   # speed cap, units/tick (fixed-point)
 var _despawn_distance_fp: int = 0    # court bound, fixed-point sim units
 var _lifespan_ticks: int = 0         # max flight time, whole ticks (0 = off)
+var _stationary_speed_fp: int = 0    # stall speed floor, units/tick (fixed-point)
+var _stationary_lifespan_ticks: int = 0  # ticks below the floor before despawn (0 = off)
 
 # Ticks since launch() — deterministic sim state (saved/loaded for rollback).
 var _age_ticks: int = 0
+# Consecutive ticks the speed has stayed below the stall floor — deterministic sim state
+# (saved/loaded; reset by motion above the floor OR a barrier's keep_alive() during capture).
+var _stationary_ticks: int = 0
 
 # Authoritative simulation state (fixed-point ints). Velocity is stored here —
 # not read from the body between ticks — so _save_state()/_load_state() fully
@@ -115,6 +135,9 @@ func _cache_fixed_point_values() -> void:
 	_despawn_distance_fp = SGFixed.from_float(despawn_distance)
 	# seconds -> whole ticks (ceil: never expire EARLIER than the tuned time).
 	_lifespan_ticks = 0 if lifespan_seconds <= 0.0 else maxi(1, ceili(lifespan_seconds * float(maxi(1, tick_rate))))
+	# stall floor: units/sec -> units/tick (fixed-point); stall window: seconds -> ticks.
+	_stationary_speed_fp = SGFixed.div(SGFixed.from_float(maxf(0.0, stationary_speed_threshold)), tick_fp)
+	_stationary_lifespan_ticks = 0 if stationary_lifespan_seconds <= 0.0 else maxi(1, ceili(stationary_lifespan_seconds * float(maxi(1, tick_rate))))
 
 
 ## Arms the projectile. EXACT spawner contract (SpellCasterComponent calls this):
@@ -129,6 +152,7 @@ func launch(velocity_x_fp: int, velocity_y_fp: int, bounciness_fp: int = 65536) 
 	_velocity_y = velocity_y_fp
 	_bounciness = bounciness_fp
 	_age_ticks = 0
+	_stationary_ticks = 0  # a (re)launch is fresh motion — never inherit a prior stall
 
 	# Snap visuals to the spawn point NOW: the spawner has already teleported
 	# the body, but the first _network_process (and so the first state_updated)
@@ -171,11 +195,24 @@ func _network_process(_input: Dictionary) -> void:
 	var pos: SGFixedVector2 = _body.fixed_position
 	state_updated.emit(pos.x, pos.y)
 
-	# Expiry checks (rally hygiene). Deterministic: position + tick age only.
+	# STUCK CLEANUP: count consecutive ticks below the stall floor (the post-bounce/cap
+	# velocity for THIS tick). A homing bolt that bled its speed turning crawls to a near-
+	# stop and would otherwise sit out its full lifespan; despawn it once stalled long
+	# enough. A barrier-captured ball is frozen at 0 but kept alive each hold tick, so it
+	# never trips this. Pure fixed-point (length() = fixed sqrt) — deterministic.
+	if _stationary_lifespan_ticks > 0 \
+			and SGFixed.vector2(_velocity_x, _velocity_y).length() < _stationary_speed_fp:
+		_stationary_ticks += 1
+	else:
+		_stationary_ticks = 0
+
+	# Expiry checks (rally hygiene). Deterministic: position + tick age + stall only.
 	_age_ticks += 1
 	if absi(pos.x) > _despawn_distance_fp or absi(pos.y) > _despawn_distance_fp:
 		expired.emit()
 	elif _lifespan_ticks > 0 and _age_ticks >= _lifespan_ticks:
+		expired.emit()
+	elif _stationary_lifespan_ticks > 0 and _stationary_ticks >= _stationary_lifespan_ticks:
 		expired.emit()
 
 
@@ -237,7 +274,15 @@ func redirect(speed_multiplier_fp: int) -> void:
 	_velocity_x = -SGFixed.mul(_velocity_x, speed_multiplier_fp)
 	_velocity_y = -SGFixed.mul(_velocity_y, speed_multiplier_fp)
 	_age_ticks = 0
+	_stationary_ticks = 0  # the redirected ball flies anew — clear any stall it accrued
 	_apply_speed_cap()
+
+
+## Resets the stuck-cleanup counter. A barrier holding a CAPTURED ball freezes it at
+## velocity 0 ON PURPOSE; it calls this each hold tick so the stall despawn never reclaims
+## a ball that is being intentionally held. Deterministic (the barrier ticks in lockstep).
+func keep_alive() -> void:
+	_stationary_ticks = 0
 
 
 ## Current fixed-point velocity components, sim units per TICK. Read-only
@@ -263,6 +308,7 @@ func _save_state() -> Dictionary:
 		"b": _bounciness,
 		"age": _age_ticks,
 		"hb": _homing_blend_fp,
+		"sk": _stationary_ticks,
 	}
 
 
@@ -275,6 +321,7 @@ func _load_state(state: Dictionary) -> void:
 	_bounciness = int(state.get("b", SGFixed.ONE))
 	_age_ticks = int(state.get("age", 0))
 	_homing_blend_fp = int(state.get("hb", 0))
+	_stationary_ticks = int(state.get("sk", 0))
 
 	var pos: SGFixedVector2 = _body.fixed_position
 	pos.x = int(state.get("px", 0))

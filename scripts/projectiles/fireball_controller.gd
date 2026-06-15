@@ -348,6 +348,14 @@ func redirect(new_source: Node, speed_multiplier_fp: int) -> void:
 	set_hit_source(new_source)
 
 
+## Keeps the stuck-projectile cleanup from reclaiming this ball while a barrier holds it
+## (the captured ball is frozen at velocity 0 on purpose). Duck-typed entry point the
+## BarrierController calls each capture-hold tick; passthrough to the mover.
+func keep_alive() -> void:
+	if _movement != null:
+		_movement.keep_alive()
+
+
 ## The lane half-width (fixed-point) shards clamp to. A projectile owns no
 ## MovementComponent, so read the bound from a wizard's mover — deterministic:
 ## the "wizards" group iterates in scene-tree order, identical on every peer

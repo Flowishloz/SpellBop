@@ -89,6 +89,13 @@ var _captured_ball: Node = null   # node ref (rollback lifecycle debt, see heade
 
 var _visual_root: Node3D
 
+## NETPLAY visual mirror (client perspective): true on the CLIENT so the barrier's
+## VISUAL Z is mirrored, exactly like VisualBridgeComponent does for wizards/projectiles.
+## The barrier has NO VisualBridge (it positions its own mesh in _sync_visual), so without
+## this its sprite rendered on the WRONG side on the client (P2's wall appeared on P1's side)
+## while the hitbox sat correctly — the recurring client-perspective class. Sim untouched.
+var _view_flip_z: bool = false
+
 
 func _ready() -> void:
 	# HARDCODED COLLISION LAYERS (graveyard rule: the editor fails to persist
@@ -98,6 +105,12 @@ func _ready() -> void:
 	collision_mask = 0
 	fixed_rotation = 0
 	_visual_root = get_node_or_null(visual_root_path) as Node3D
+
+	# Mirror the visual on the CLIENT (same rule as VisualBridgeComponent): the client
+	# presents the court spun front-to-back so ITS wizard is at the near baseline.
+	var nm: Node = get_node_or_null(^"/root/NetworkManager")
+	if nm != null and nm.netplay and not multiplayer.is_server():
+		_view_flip_z = true
 
 	# ROLLBACK (Sprint 22 Phase 2b): a barrier is spawned mid-match via SyncManager.spawn,
 	# so under a live netplay match the rollback SyncManager drives it (via "network_sync")
@@ -278,6 +291,10 @@ func _tick_capture() -> void:
 		return
 	_capture_remaining -= 1
 	if _capture_remaining > 0:
+		# The held ball is frozen at velocity 0 ON PURPOSE — keep the stuck-projectile
+		# cleanup (ProjectileMovementComponent's stall despawn) from reclaiming it mid-hold.
+		if _captured_ball.has_method(&"keep_alive"):
+			_captured_ball.keep_alive()
 		var total: float = float(maxi(1, _hold_ticks))
 		capture_charging.emit(1.0 - float(_capture_remaining) / total)
 		return
@@ -371,6 +388,10 @@ func _sync_visual() -> void:
 	# fixed (64.16) -> sim units -> meters.
 	var x_m: float = (pos.x / 65536.0) * sim_to_world_scale
 	var z_m: float = (pos.y / 65536.0) * sim_to_world_scale
+	# CLIENT view mirror (presentation only — same as VisualBridgeComponent): flip Z so
+	# the barrier renders on its OWNER's side from the client's spun-around perspective.
+	if _view_flip_z:
+		z_m = -z_m
 	_visual_root.global_position = Vector3(x_m, visual_height * 0.5, z_m)
 	_visual_root.scale = Vector3(
 			maxf(0.05, (_half_w_fp / 65536.0) * 2.0 * sim_to_world_scale),

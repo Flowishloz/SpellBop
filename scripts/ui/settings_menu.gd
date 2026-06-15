@@ -109,7 +109,10 @@ func _set_open(open: bool) -> void:
 	_leave_button.visible = open and show_leave_match
 	_resume_button.visible = open
 	_hint.visible = open
-	_menu_button.visible = not open   # the opener tucks away while the menu is up
+	# The touch opener shows only IN A MATCH (show_leave_match) and only while the menu is
+	# closed. On the MAIN MENU the gear icon already opens settings, so the hamburger is
+	# redundant there (Creative Director: remove the "Menu" button from the main menu).
+	_menu_button.visible = (not open) and show_leave_match
 	get_tree().paused = open
 	if open:
 		var settings: Node = get_node_or_null(^"/root/GameSettings")

@@ -14,14 +14,17 @@ extends Node3D
 ## Height above the floor plane (the arena borders sit at ~0.08).
 @export var floor_y: float = 0.06
 ## Arrow length in metres. Sized for the shallow over-the-shoulder camera, which
-## foreshortens a flat ground arrow heavily.
-@export var length: float = 2.08
+## foreshortens a flat ground arrow heavily. (Creative Director: shorter overall — but
+## the TIP stays at the same distance from the wizard, so feet_gap absorbs the shrink:
+## tip distance = feet_gap + length, kept ≈3.28 m while length dropped from 2.08.)
+@export var length: float = 1.3
 ## Triangle BASE half-width in metres (slender — a thin directional triangle, not
 ## a generic shaft+head arrow).
 @export var head_half_width: float = 0.40
 ## How far FORWARD (along the aim) to detach the arrow from the feet, so it leads
-## the wizard a little instead of sitting under it (still flat on the floor).
-@export var feet_gap: float = 1.2
+## the wizard a little instead of sitting under it (still flat on the floor). Raised in
+## lockstep with the length cut so the arrow TIP holds its distance from the wizard.
+@export var feet_gap: float = 1.98
 
 var _mesh_instance: MeshInstance3D = null
 
