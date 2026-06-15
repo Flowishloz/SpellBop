@@ -79,7 +79,7 @@ fov = 71.0
 script = ExtResource("5_cam")
 target_path = NodePath("../Player/WizardRig")
 yaw_degrees = 0.0
-pitch_degrees = -36.0
+pitch_degrees = -26.0
 
 [node name="Starfield" type="Sprite3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 9, -14)
