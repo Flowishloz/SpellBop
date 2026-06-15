@@ -358,9 +358,9 @@ func _process(delta: float) -> void:
 	# drifted (the signal handlers below are rollback-guarded; this passive sync is not).
 	_sync_mirror()
 	# Desktop convenience: SPACE restarts a finished match (the on-screen PLAY AGAIN
-	# button is the primary trigger). Offline only — a synced online rematch is a
-	# separate feature, and a local press must never desync a live netplay session.
-	if match_state == MatchState.MATCH_OVER and not _netplay:
+	# button is the primary trigger). request_rematch() routes correctly per mode —
+	# offline it resets directly, in netplay it latches a synced play-again request.
+	if match_state == MatchState.MATCH_OVER:
 		if Input.is_action_just_pressed("cast_spell"):
 			request_rematch()
 
@@ -380,29 +380,22 @@ func _update_death_ripple(delta: float) -> void:
 ## Restart the match from a fresh scoreboard (the PLAY AGAIN button + the SPACE
 ## shortcut both route here). No-op unless the match is actually over.
 func request_rematch() -> void:
-	# Offline / local only: a synced online rematch is a separate feature (the match
-	# just ends online), and a local SPACE/button press must never reset one peer's
-	# sim out from under the other.
-	if match_state != MatchState.MATCH_OVER or _netplay:
+	if match_state != MatchState.MATCH_OVER:
 		return
-	_stat_throws = 0
-	_stat_hits = 0
-	_stat_damage_dealt = 0
-	_stat_damage_taken = 0
-	_emeralds_spawned_this_match = 0  # a fresh match refills the emerald budget
-	# Reset the sim authority (scores 0, round 1, both wizards + projectiles). OVER is
-	# quiescent, so this off-tick reset is the same risk profile as the old _begin_round.
+	if _netplay:
+		# Online rematch is DETERMINISTIC: latch a play-again on the LOCAL wizard's synced
+		# input; the RoundFlowResolver runs reset_match() on the agreed tick on BOTH peers
+		# (an off-tick / RPC reset would land on different ticks and desync). The result
+		# screen then hides via the resolver's round_reset signal, exactly like offline.
+		var lw: Node = _local_wizard()
+		if lw != null and lw.has_method(&"latch_rematch"):
+			lw.latch_rematch()
+		return
+	# OFFLINE: reset the sim authority directly (no rollback to coordinate). reset_match()
+	# emits round_reset(1) -> _on_resolver_round_reset does ALL the presentation (mirror,
+	# unpark, stats + emerald-budget reset, ROUND 1 banner).
 	if _roundflow != null:
 		_roundflow.reset_match()
-	player_score = 0
-	opponent_score = 0
-	round_number = 1
-	match_state = MatchState.ROUND_ACTIVE
-	_window_open_flag = false
-	_set_sim_running(true)
-	_clear_emerald()
-	_reseed_emeralds()
-	round_started.emit(round_number)
 
 
 # =====================================================================
@@ -727,6 +720,15 @@ func _on_resolver_round_reset(new_round_number: int) -> void:
 	if SyncManager != null and SyncManager.is_in_rollback():
 		return
 	_sync_mirror()
+	# round_number == 1 means a FRESH MATCH (a rematch — the first round at match start is
+	# announced directly in _ready, never via round_reset), so reset the match-scoped
+	# presentation bookkeeping (stats for the next result screen, emerald budget).
+	if new_round_number == 1:
+		_stat_throws = 0
+		_stat_hits = 0
+		_stat_damage_dealt = 0
+		_stat_damage_taken = 0
+		_emeralds_spawned_this_match = 0
 	_window_open_flag = false
 	_set_sim_running(true)
 	_clear_emerald()
@@ -918,6 +920,17 @@ func _phase_to_state(phase: int) -> MatchState:
 			return MatchState.ROUND_ACTIVE
 		_:
 			return MatchState.POST_ROUND
+
+
+## The wizard the LOCAL peer controls in netplay (the multiplayer-authority one) — where a
+## synced play-again request is latched. Null before netplay entry; offline the rematch
+## takes the direct path and never calls this.
+func _local_wizard() -> Node:
+	if _player != null and _player.is_multiplayer_authority():
+		return _player
+	if _opponent != null and _opponent.is_multiplayer_authority():
+		return _opponent
+	return null
 
 
 func _is_under_player(node: Node) -> bool:

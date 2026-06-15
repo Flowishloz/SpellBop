@@ -34,6 +34,14 @@ const KEY_CAST: StringName = &"c"
 ## Held state, not edge — same rollback rationale as KEY_CAST.
 const KEY_CARD: StringName = &"k"
 
+## Dictionary key for the REMATCH request bit (1 = the local player asked to play
+## again on the match-over screen, key omitted otherwise). It is NOT polled in
+## capture_local() — PlayerController INJECTS it for a SINGLE tick from a render-rate
+## latch (set by the Play Again button / cast shortcut at match-over), so it rides the
+## synced input stream and the RoundFlowResolver performs the reset on the agreed
+## rolled-back tick on BOTH peers (an off-tick / RPC reset would desync).
+const KEY_REMATCH: StringName = &"r"
+
 ## Default action names polled by capture_local(). Override by passing a custom
 ## actions dictionary if a player slot uses prefixed actions (e.g. "p2_move_left").
 const DEFAULT_ACTIONS: Dictionary = {
@@ -105,10 +113,16 @@ static func get_card(input: Dictionary) -> int:
 	return int(input.get(KEY_CARD, 0))
 
 
+## Returns the rematch bit (1 = play-again requested this tick, 0 otherwise) from an
+## input Dictionary, tolerating the compact empty form.
+static func get_rematch(input: Dictionary) -> int:
+	return int(input.get(KEY_REMATCH, 0))
+
+
 ## True if this input represents "no buttons held" (the canonical empty input).
 static func is_empty(input: Dictionary) -> bool:
 	return input.is_empty() or (get_x(input) == 0 and get_cast(input) == 0
-			and get_card(input) == 0)
+			and get_card(input) == 0 and get_rematch(input) == 0)
 
 
 ## Value-equality between two input dictionaries, treating missing keys as
@@ -116,7 +130,7 @@ static func is_empty(input: Dictionary) -> bool:
 ## when comparing predicted vs. confirmed inputs.
 static func equals(a: Dictionary, b: Dictionary) -> bool:
 	return get_x(a) == get_x(b) and get_cast(a) == get_cast(b) \
-			and get_card(a) == get_card(b)
+			and get_card(a) == get_card(b) and get_rematch(a) == get_rematch(b)
 
 
 ## Returns a new canonical empty input. Provided for readability at call sites.

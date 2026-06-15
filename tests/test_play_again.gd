@@ -63,6 +63,19 @@ func _run() -> void:
 	_ck(arena.match_state == ROUND_ACTIVE, "PLAY AGAIN restarted the match (ROUND_ACTIVE)")
 	_ck(arena.player_score == 0 and arena.opponent_score == 0, "scoreboard reset to 0-0 on rematch")
 
+	# --- ONLINE rematch path: the RoundFlowResolver resets when a wizard's SYNCED input
+	# requests it (wants_rematch). Drive the SAME poll offline — KO to a fresh MATCH_OVER,
+	# set the flag the synced KEY_REMATCH would set, and let the resolver tick.
+	arena.get_node("Opponent/Health").apply_damage(5)
+	await _wait(1.0)
+	arena.get_node("Opponent/Health").apply_damage(5)
+	await _wait(1.0)
+	_ck(arena.match_state == MATCH_OVER, "back to MATCH_OVER for the resolver-poll rematch")
+	arena.get_node("Player")._rematch_requested = true   # what a synced KEY_REMATCH sets
+	await _wait(0.5)
+	_ck(arena.match_state == ROUND_ACTIVE and arena.player_score == 0,
+		"RoundFlowResolver reset the match from a wizard rematch request (the netplay path)")
+
 	if _fails == 0:
 		print("PLAY AGAIN TEST: ALL PASS")
 		quit(0)

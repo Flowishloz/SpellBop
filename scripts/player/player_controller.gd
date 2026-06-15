@@ -85,6 +85,15 @@ var _pending_speed_boost_fp: int = SGFixed.ONE
 var _netplay: bool = false
 var _netplay_casting: bool = false
 
+# ONLINE REMATCH (Sub-phase 3 follow-up): a render-rate latch set by the Play Again
+# button / cast shortcut at match-over (latch_rematch), injected into this wizard's
+# SYNCED input for ONE tick so both peers see it on the SAME rolled-back tick.
+# _rematch_requested is that tick's derived flag (saved/rolled-back) — the
+# RoundFlowResolver polls it in its OVER phase and resets the match deterministically.
+# Netplay only (offline rematch resets directly via MatchController.request_rematch).
+var _rematch_latched: bool = false
+var _rematch_requested: bool = false
+
 
 func _ready() -> void:
 	# HARDCODED COLLISION LAYERS (Sprint 2 hotfix) — the editor UI fails to
@@ -206,6 +215,20 @@ func consume_speed_boost() -> int:
 	return boost
 
 
+## ONLINE REMATCH: latch a play-again request (MatchController.request_rematch calls this
+## on the LOCAL wizard at match-over). Consumed into the next synced input tick — see
+## _get_local_input — so the RoundFlowResolver resets the match on the agreed tick.
+func latch_rematch() -> void:
+	_rematch_latched = true
+
+
+## True if this wizard's CURRENT tick requested a rematch (the RoundFlowResolver polls
+## this in its OVER phase). Derived from the synced input + saved, so it rolls back and
+## the reset lands on the same tick on both peers.
+func wants_rematch() -> bool:
+	return _rematch_requested
+
+
 ## ROUND RESET (called by MatchController between rounds): teleport back to
 ## the spawn point, kill all motion/debuffs, refill health. The fixed write
 ## is a teleport, so sync_to_physics_engine() is mandatory.
@@ -257,6 +280,11 @@ func _get_local_input() -> Dictionary:
 			if not inp.has(InputCommand.KEY_CARD):
 				inp[InputCommand.KEY_CARD] = _card_press_latched
 			_card_press_latched = 0
+		# Play-again request (match-over): inject for ONE tick so both peers see it on the
+		# same rolled-back tick and the RoundFlowResolver's OVER-phase poll resets together.
+		if _rematch_latched:
+			inp[InputCommand.KEY_REMATCH] = 1
+			_rematch_latched = false
 		# Base fireball spawns are rollback-routed (Sprint 22), so KEY_CAST stays — both
 		# peers charge + fire deterministically. CARD spawns are now rollback-routed too
 		# (Phase 2b: SyncManager.spawn) and resolve on a deterministic tick (Phase 2a:
@@ -280,6 +308,9 @@ func _get_local_input() -> Dictionary:
 ## (deterministic — MovementComponent first by convention). Mirrors the
 ## contract the rollback framework calls on network-synced nodes.
 func _network_process(input: Dictionary) -> void:
+	# Derive the rematch flag from THIS tick's synced input (RoundFlowResolver polls it via
+	# wants_rematch()). Set before the components tick so a same-tick read is current.
+	_rematch_requested = InputCommand.get_rematch(input) != 0
 	for component in _simulated_components:
 		component._network_process(input)
 
@@ -291,6 +322,7 @@ func _save_state() -> Dictionary:
 	var state: Dictionary = {
 		"tick": current_tick,
 		"psb": _pending_speed_boost_fp,
+		"rmt": 1 if _rematch_requested else 0,
 	}
 	for component in _stateful_components:
 		state[String(component.name)] = component._save_state()
@@ -302,6 +334,7 @@ func _save_state() -> Dictionary:
 func _load_state(state: Dictionary) -> void:
 	current_tick = int(state.get("tick", current_tick))
 	_pending_speed_boost_fp = int(state.get("psb", SGFixed.ONE))
+	_rematch_requested = int(state.get("rmt", 0)) != 0
 	for component in _stateful_components:
 		var key: String = String(component.name)
 		if state.has(key):

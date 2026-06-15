@@ -114,10 +114,11 @@ func get_round_number() -> int: return _round_number
 func get_phase() -> int: return _phase
 
 
-## REMATCH (offline / local only — guarded in MatchController by `not _netplay`): a
-## fresh scoreboard from MATCH_OVER. OVER is a quiescent phase (no in-flight round),
-## so this off-tick reset is the same risk profile as the old request_rematch →
-## _begin_round. A synced online rematch is a separate feature (the match just ends).
+## REMATCH — a fresh scoreboard from MATCH_OVER. Called OFF-TICK by MatchController for an
+## OFFLINE rematch, and IN-TICK from the OVER-phase poll for an ONLINE rematch (the
+## play-again request rides the synced input, so both peers reset on the SAME tick). Emits
+## round_reset(1) so MatchController runs the presentation reset for BOTH paths (hide the
+## result screen, reset stats + emerald budget, pop ROUND 1).
 func reset_match() -> void:
 	_phase = Phase.ACTIVE
 	_countdown = 0
@@ -127,6 +128,7 @@ func reset_match() -> void:
 	_winner = 0
 	_clear_projectiles()
 	_reset_wizards()
+	round_reset.emit(_round_number)
 
 
 # =====================================================================
@@ -146,7 +148,10 @@ func _network_process(_input: Dictionary) -> void:
 			if _countdown <= 0:
 				_do_reset()
 		Phase.OVER:
-			pass  # quiescent — waits for an off-tick rematch
+			# A play-again request rides the synced input (PlayerController.wants_rematch),
+			# so it lands on the SAME tick on both peers — reset the whole match in-tick.
+			if _wants_rematch(_player) or _wants_rematch(_opponent):
+				reset_match()
 
 
 ## Detect the round-ending KO by polling HP (see header for why not the signal).
@@ -212,6 +217,13 @@ func _reset_wizards() -> void:
 		_player.reset_for_round(0, _player_spawn_fp)
 	if _opponent != null and is_instance_valid(_opponent) and _opponent.has_method(&"reset_for_round"):
 		_opponent.reset_for_round(0, _opponent_spawn_fp)
+
+
+## True if a wizard requested a play-again this tick (netplay; the wizard derives it from
+## its synced input + saves it). Polled ONLY in OVER, so a stray request mid-match is ignored.
+func _wants_rematch(wizard: Node) -> bool:
+	return wizard != null and is_instance_valid(wizard) \
+			and wizard.has_method(&"wants_rematch") and wizard.wants_rematch()
 
 
 ## Frees every projectile through its rollback-aware _despawn() (→ SyncManager.despawn
