@@ -74,10 +74,12 @@ omni_attenuation = 1.4
 mesh = SubResource("PlaneMesh_floor")
 
 [node name="Camera3D" type="Camera3D" parent="."]
-transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 1.45, 5.6, 12.6)
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 4.76, 12.6)
 fov = 71.0
 script = ExtResource("5_cam")
 target_path = NodePath("../Player/WizardRig")
+yaw_degrees = 0.0
+pitch_degrees = -36.0
 
 [node name="Starfield" type="Sprite3D" parent="."]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 9, -14)
