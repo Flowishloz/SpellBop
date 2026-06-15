@@ -1,5 +1,5 @@
 PROJECT STATE — WIZARD DODGEBALL
-Last sync: 2026-06-15 | SPAWN-ROLLBACK ROADMAP COMPLETE: Phase 1 (base fireball) + Phase 2 (rollback cards) + Sub-phase 3 (round flow) + Healing Emerald (deterministic cadence, commit 9f1cdb8) all done — every mid-match spawn and the round flow are rollback-correct, the WHOLE match runs online, and online Play Again is synced (commit 4579f67). On branch feature/spawn-rollback-cards.
+Last sync: 2026-06-15 | DESKTOP NETPLAY FEATURE-COMPLETE + PLAYTESTED. Spawn-rollback roadmap done (fireball + cards + round flow + emerald), online Play Again synced (commit 4579f67), client charge-rumble retargeted (commit 44e67b0). The WHOLE match runs online; Creative Director playtested LAN (rounds / KO / rematch / per-player camera + rumble). NEXT PHASE: MOBILE MULTIPLAYER ENABLEMENT — A: cross-compile delta_rollback arm64 (START here); B: netplay touch-movement input fix (BLOCKER — the per-role A/D-vs-arrows split kills touch movement online); C: real-online Nakama + real-latency validation (GATE). See the NEXT PHASE sections in HANDOFF.md + below. On branch feature/spawn-rollback-cards.
 
 ===========================================================
 COMPLETED SYSTEMS
@@ -2218,9 +2218,40 @@ test_emerald_cap green (the per-match cap is now read from the resolver _em_cnt)
 
 SPAWN-ROLLBACK ROADMAP COMPLETE: Phase 1 (base fireball) + Phase 2 (cards) + Sub-phase 3 (round flow) +
 Healing Emerald are ALL done — every mid-match spawn and the round flow are rollback-correct, and online
-Play Again is synced. The only remaining online-multiplayer work is OUTSIDE this roadmap (cross-compile
-delta_rollback arm64 for mobile; a live online KO + rematch are the Creative Director's playtest).
+Play Again is synced. The live online KO / rematch / round transitions are Creative-Director-PLAYTESTED on
+LAN. The remaining online-multiplayer work is OUTSIDE this roadmap — MOBILE enablement + real-online
+validation (see NEXT PHASE below + the HANDOFF.md "NEXT PHASE — MOBILE MULTIPLAYER ENABLEMENT" section).
+
+-----------------------------------------------------------
+[2026-06-15] NETPLAY CLIENT CHARGE-RUMBLE FIX (commit 44e67b0)
+-----------------------------------------------------------
+Playtest: player 1 (HOST, blue) charging a fireball shook player 2 (CLIENT, red)'s screen, as if the client
+were charging. The local-player charge rumble + throw-stat feedback was wired to the blue Player in
+MatchController._ready and never retargeted on the client — the 4th miss in the client-perspective retarget
+class (after the cast-button ring, card-hand HUD, and health bars). FIX: extracted the wiring into
+_wire_local_charge_feedback(wizard, connect_it); _ready defaults it to the blue Player (offline + the netplay
+HOST), and _enter_netplay retargets it to the red Opponent on the CLIENT inside the existing not-is-host block.
+Presentation-only — 19 headless suites BIT-IDENTICAL; the netplay retarget is confirmed by the Creative
+Director's playtest (camera/UI client-perspective fixes are not headless-testable). RULE (recurring): any
+presentation hardwired to _player must be retargeted to the LOCAL wizard on the client in _enter_netplay.
+Also restored the project name to "Wizard Dodgeball Main" (Creative Director's rename; commit 6aadd85).
+
+-----------------------------------------------------------
+NEXT PHASE — MOBILE MULTIPLAYER ENABLEMENT
+-----------------------------------------------------------
+Desktop netplay is feature-complete + playtested. Mobile needs THREE things (full detail in HANDOFF.md's
+"NEXT PHASE" section):
+  A. Cross-compile delta_rollback for Android arm64 (the ENABLER; sg-physics-2d is already arm64). START here.
+     First inspect the addon's build system (Rust/C++/prebuilt-only); re-add the android.* .gdextension lines;
+     re-export the APK; verify the extension LOADS on a device.
+  B. Netplay MOVEMENT input for touch / separate devices (the BLOCKER): the per-role A/D-vs-arrows scheme is a
+     two-local-windows hack; the touch joystick feeds the DEFAULT move_left/right which netplay ignores, so
+     touch movement is DEAD online (cast + cards are fine). Default netplay to InputCommand.DEFAULT_ACTIONS;
+     gate the split behind a --local-split opt-in for two-window dev testing.
+  C. Real online (Nakama) + real-latency rollback validation (the GATE before shipping mobile MP).
+A and B are INDEPENDENT (do in parallel); C is the gate after both.
 
 Commits since the Sub-phase 3 doc sync (d54f807), oldest->newest: 4579f67 (online Play Again — deterministic
-synced rematch), 9f1cdb8 (healing-emerald spawn-rollback — deterministic cadence + enable online). NOT
-re-exported to Android this sprint.
+synced rematch), 9f1cdb8 (healing-emerald spawn-rollback — deterministic cadence + enable online),
+44e67b0 (client charge-rumble retarget), 6aadd85 (restore project name "Wizard Dodgeball Main"). NOT
+re-exported to Android — that is the NEXT PHASE (item A).
