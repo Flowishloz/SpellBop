@@ -415,7 +415,7 @@ func _on_smoke_tick(is_rollback: bool) -> void:
 	# Progressive markers (long mode): the LAST marker printed before a hang pinpoints the
 	# tick/round it froze on (rf=(..rn..) is the round number). Catches the freeze even
 	# though a hung peer never reaches the OK line below.
-	if _smoke_long and t > 0 and t % 120 == 0:
+	if _smoke_long and t > 0 and t % 60 == 0:
 		print("[NET-SMOKE] mark t=", t, " ", _smoke_fingerprint())
 
 	# Sample at a FIXED sim tick (not a signal count) so both peers fingerprint the SAME
@@ -452,13 +452,40 @@ func _smoke_fingerprint() -> String:
 	# equal byte-for-byte.
 	var proj := arena.get_node_or_null(^"Projectiles")
 	if proj != null:
-		var balls := proj.get_children()
-		balls.sort_custom(func(a: Node, b: Node) -> bool: return a.name < b.name)
+		# DESYNC HUNT: filter to ACTUAL sim balls (SG bodies). The Projectiles container also
+		# holds transient wall-pulse VFX (BurstFX.spawn_wall_pulse(get_parent(),...) — a Node3D,
+		# no get_global_fixed_position), which pollutes a raw get_children().size() count and is
+		# NOT in network_sync (so it never hashes). Count + list balls only.
+		var balls: Array = []
+		for c in proj.get_children():
+			if c.has_method(&"get_global_fixed_position"):
+				balls.append(c)
+		balls.sort_custom(func(a: Node, b: Node) -> bool: return String(a.name) < String(b.name))
 		parts.append("nproj=%d" % balls.size())
 		for b in balls:
-			if b.has_method(&"get_global_fixed_position"):
-				var p = b.get_global_fixed_position()
-				parts.append("(%d,%d)" % [p.x, p.y])
+			var p = b.get_global_fixed_position()
+			# NAME (deterministic SpawnManager naming — matches the same ball across the two
+			# peers' logs) + fixed-point VELOCITY (a side-wall bounce diverges velocity a tick
+			# before position) + collision_mask (a rollback that resets the mask shows here).
+			var bvx: int = b.get_velocity_x() if b.has_method(&"get_velocity_x") else 0
+			var bvy: int = b.get_velocity_y() if b.has_method(&"get_velocity_y") else 0
+			var bmask: int = int(b.collision_mask) if "collision_mask" in b else -1
+			parts.append("%s(%d,%d|v%d,%d|m%d)" % [b.name, p.x, p.y, bvx, bvy, bmask])
+	# DESYNC HUNT: dump BARRIERS (network_sync members with the barrier API). The aimed
+	# balls were bouncing off a Barrier stuck at the scene-default (center, layer WALLS=4)
+	# — i.e. one whose _network_spawn never repositioned it / set its one-way layer. List
+	# each barrier's pos + collision_layer + age so the two peers can be compared.
+	var nsync: Array = arena.get_tree().get_nodes_in_group(&"network_sync") if arena.get_tree() != null else []
+	var barriers: Array = []
+	for n in nsync:
+		if n.has_method(&"arm_window_of_affect"):
+			barriers.append(n)
+	barriers.sort_custom(func(a: Node, b: Node) -> bool: return String(a.name) < String(b.name))
+	parts.append("nbar=%d" % barriers.size())
+	for bb in barriers:
+		var bp = bb.get_global_fixed_position()
+		var blayer: int = int(bb.collision_layer) if "collision_layer" in bb else -1
+		parts.append("%s(%d,%d|L%d)" % [bb.name, bp.x, bp.y, blayer])
 	# Round flow (Sub-phase 3): fold the RoundFlowResolver's deterministic state so the
 	# fingerprint proves both peers agree on phase / scores / round number — and, when a
 	# KO lands within the smoke (fireballs whittle HP to 0), that the round reset fired on
@@ -473,7 +500,7 @@ func _smoke_fingerprint() -> String:
 	# Pickups (emerald spawn-rollback proof): count + each emerald's fixed position, so an
 	# emerald that spawns within the smoke window is asserted byte-identical on both peers.
 	var pickups: Array = arena.get_tree().get_nodes_in_group(&"pickups") if arena.get_tree() != null else []
-	pickups.sort_custom(func(a: Node, b: Node) -> bool: return a.name < b.name)
+	pickups.sort_custom(func(a: Node, b: Node) -> bool: return String(a.name) < String(b.name))
 	parts.append("npick=%d" % pickups.size())
 	for pk in pickups:
 		if pk.has_method(&"get_global_fixed_position"):

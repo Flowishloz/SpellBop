@@ -306,6 +306,21 @@ func _warm_up_render_pipelines() -> void:
 		var inst: Node = packed.instantiate()
 		inst.set(&"local_tick_driver_enabled", false)
 		add_child(inst)
+		# NETPLAY DESYNC FIX (round-2 freeze): these are PRESENTATION-only shader-warm
+		# instances, but each scene ROOT is an SG physics body — its _ready() registers it in
+		# the deterministic SG space (barrier.tscn on layer WALLS, the projectiles likewise),
+		# and we only move the VISUAL Node3D under the floor, so the COLLIDER stays at sim
+		# (0,0) = arena CENTRE. A gameplay fireball crossing the centre then BOUNCES off the
+		# warm-up barrier — and because these are freed on a WALL-CLOCK timer (below), not a
+		# synced tick, their presence at a given sim tick differs between peers under rollback:
+		# one peer reflects the ball, the other doesn't -> "Fatal state mismatch" -> the
+		# round-2 freeze. Make every warm-up body collision-INERT (no layer, no mask) so it
+		# renders/warms pipelines without ever touching the rollback sim.
+		if "collision_layer" in inst:
+			inst.collision_layer = 0
+			inst.collision_mask = 0
+			if inst.has_method(&"sync_to_physics_engine"):
+				inst.sync_to_physics_engine()
 		for child in inst.get_children():
 			if child is Node3D:
 				(child as Node3D).position = Vector3(0, -0.9, 6)
