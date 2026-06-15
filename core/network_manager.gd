@@ -59,6 +59,7 @@ var _local_loaded: bool = false
 var _session_begun: bool = false
 var _smoke_mode: String = ""                          ## "host"/"client"/"online-host"/...
 var _smoke_done: bool = false
+var _smoke_long: bool = false                         ## "-rounds": drive into round 2+ (movement + cards) to repro the freeze
 
 
 func _ready() -> void:
@@ -362,7 +363,10 @@ func _run_smoke() -> void:
 	# desync — a bug here is a crash or a fingerprint mismatch instead of passing silently.
 	if SyncManager != null:
 		SyncManager.debug_random_rollback_ticks = 8
-	match _smoke_mode:
+	# A "-rounds" suffix = the round-2 freeze repro (drive into round 2+ with movement +
+	# cards under rollbacks). The transport is the prefix; strip the suffix for the match.
+	_smoke_long = _smoke_mode.ends_with("-rounds")
+	match _smoke_mode.trim_suffix("-rounds"):
 		"host": lan_host("smoke-host")
 		"client": lan_join_direct("127.0.0.1")
 		"online-host", "online-client":
@@ -396,11 +400,28 @@ func _on_smoke_tick(is_rollback: bool) -> void:
 			Input.action_press(&"card_slot_1")
 		else:
 			Input.action_release(&"card_slot_1")
+	# ROUND-2 FREEZE REPRO (--net-smoke=*-rounds): roam so movement + positions exercise the
+	# round-flow + rollback paths the LIVE freeze hit (the tick-300 determinism smoke neither
+	# moves nor reaches a KO). Both peers move IDENTICALLY by tick, so they stay aligned and
+	# the straight shots keep connecting -> HP drains -> KO -> round 2. Forward ticks only.
+	if _smoke_long and not is_rollback:
+		var go_right: bool = (t % 150) < 75
+		Input.action_release(&"move_left" if go_right else &"move_right")
+		Input.action_press(&"move_right" if go_right else &"move_left")
+		# Stage a card periodically too (more stack churn across the round boundary).
+		if InputMap.has_action(&"card_slot_1") and (t % 200) < 4:
+			Input.action_press(&"card_slot_1")
+
+	# Progressive markers (long mode): the LAST marker printed before a hang pinpoints the
+	# tick/round it froze on (rf=(..rn..) is the round number). Catches the freeze even
+	# though a hung peer never reaches the OK line below.
+	if _smoke_long and t > 0 and t % 120 == 0:
+		print("[NET-SMOKE] mark t=", t, " ", _smoke_fingerprint())
+
 	# Sample at a FIXED sim tick (not a signal count) so both peers fingerprint the SAME
-	# tick. ~300 ticks is several cast cycles in, so by then the fingerprint's wizard
-	# HEALTH has dropped a few points — a hit-damage rollback desync shows up here as a
-	# fingerprint mismatch.
-	if t >= 300:
+	# tick. The determinism smoke ends at 300; the -rounds repro runs deep into round 2.
+	var end_tick: int = 1800 if _smoke_long else 300
+	if t >= end_tick:
 		_smoke_done = true
 		print("[NET-SMOKE] tick=", t, " fp=", _smoke_fingerprint())
 		var img := get_viewport().get_texture().get_image()

@@ -29,7 +29,11 @@ param(
     # Windowed by default so you can WATCH the two clients. -Headless runs both
     # without windows (robust for automated/CI verification; imports happen once
     # up front so the two game runs don't contend on .godot/).
-    [switch]$Headless
+    [switch]$Headless,
+    # -Rounds: drive an aggressive match into round 2+ (movement + cards) under forced
+    # rollbacks — the autopilot for reproducing the round-2 freeze. Prints "[NET-SMOKE]
+    # mark t=.. rf=(..rn..)" markers; a hung peer stops printing them (no final OK).
+    [switch]$Rounds
 )
 
 # NOTE: do NOT use "Stop" here — Godot writes harmless GDExtension warnings
@@ -43,6 +47,7 @@ $Out = $PSScriptRoot
 
 if ($Mode -eq "online") { $HostMode = "online-host"; $ClientMode = "online-client" }
 else { $HostMode = "host"; $ClientMode = "client" }
+if ($Rounds) { $HostMode += "-rounds"; $ClientMode += "-rounds"; if ($TimeoutSeconds -lt 120) { $TimeoutSeconds = 120 } }
 
 $hostLog = Join-Path $Out "_net_smoke_host.log"
 $cliLog  = Join-Path $Out "_net_smoke_client.log"
