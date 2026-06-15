@@ -36,7 +36,8 @@ param(
 # (e.g. DPITexture) to stderr, and PowerShell 5.1 would wrap those into a
 # terminating NativeCommandError. We drive success/failure from the logs instead.
 $ErrorActionPreference = "Continue"
-$Godot = "C:/Users/laure/Downloads/Godot_v4.6.1-stable_win64.exe/Godot_v4.6.1-stable_win64_console.exe"
+# Godot 4.6.3-stable (Creative Director mandate — 4.6.1 has GDExtension regressions vs delta_rollback).
+$Godot = "C:/Users/laure/Downloads/Godot_v4.6.3-stable_win64.exe/Godot_v4.6.3-stable_win64_console.exe"
 $Proj = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $Out = $PSScriptRoot
 

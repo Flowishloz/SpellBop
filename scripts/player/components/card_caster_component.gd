@@ -109,6 +109,10 @@ var _rejected_slot_latch: int = 0
 
 var _body: SGCharacterBody2D
 var _movement: MovementComponent
+# StackResolver (sim authority for the window) — found lazily via its group so
+# scene-tree _ready order never matters. Holds the deterministic resolution clock
+# that this caster arms when it stages (Sprint 22 Phase 2).
+var _resolver: Node = null
 
 
 func _ready() -> void:
@@ -192,7 +196,7 @@ func _network_process(input: Dictionary) -> void:
 				# COUNTER — SLAP IT ON THE STACK: latch the WOA (how late into
 				# the running countdown this response came) and stage it. The
 				# shared clock keeps running; everything resolves LIFO together.
-				var woa_fp: int = SGFixed.from_float(clampf(1.0 - _stack_window_fraction(), 0.0, 1.0))
+				var woa_fp: int = _counter_woa_fp()
 				_stage(raw_slot, woa_fp)
 			_:
 				# ATTACK — straight onto the stack the instant it is pressed.
@@ -228,6 +232,15 @@ func _stage(slot: int, woa_fp: int) -> void:
 	_staged_queue.append(slot)
 	_staged_woas.append(woa_fp)
 	_slot_cd[slot - 1] = _cooldown_ticks  # the card has left the hand
+	# SIM-SIDE STACK CLOCK (Sprint 22 Phase 2): arm the deterministic resolver from
+	# THIS tick (idempotent — a slap onto an open window keeps the shared clock) and
+	# record our side so the last responder wins the stack. Done here, in the caster's
+	# own _network_process, so it rolls back identically — never via TheStack (whose
+	# wall-clock state isn't synced).
+	var resolver: Node = _get_resolver()
+	if resolver != null:
+		resolver.arm(_resolver_window_ticks())
+		resolver.notify_staged(1 if cast_direction_y < 0 else 2)
 	spell_staged.emit(_card_for_slot(slot))
 
 
@@ -517,19 +530,44 @@ func _card_for_slot(slot: int) -> CardResource:
 	return null
 
 
-## Is The Stack's time-slow window open? (NETPLAY: the single wall-clock call
-## site that goes tick-counted with rollback.)
+## The StackResolver — the deterministic, rolled-back sim authority for the window
+## (Sprint 22 Phase 2). Found lazily via its group so scene-tree _ready order is
+## irrelevant; cached once resolved.
+func _get_resolver() -> Node:
+	if _resolver == null or not is_instance_valid(_resolver):
+		_resolver = get_tree().get_first_node_in_group(&"stack_resolver")
+	return _resolver
+
+
+## Is a stack window open? Now a deterministic SIM read (the resolver's countdown),
+## not TheStack's wall clock — so the counter reactive-lock rolls back correctly.
 func _stack_window_open() -> bool:
-	var stack: Node = get_node_or_null(^"/root/TheStack")
-	return stack != null and stack.state == stack.State.STACK_WINDOW
+	var resolver: Node = _get_resolver()
+	return resolver != null and resolver.is_window_open()
 
 
-## 0..1 of the current window remaining (0 when closed) — the counter WOA.
-func _stack_window_fraction() -> float:
+## Counter WOA as fixed-point: 1 - (window remaining fraction). All-int, read from the
+## resolver's tick state, so it is identical on both peers (the wall-clock float read
+## was the desync hole this closes). 0 when no window is open.
+func _counter_woa_fp() -> int:
+	var resolver: Node = _get_resolver()
+	if resolver == null:
+		return 0
+	return clampi(SGFixed.ONE - resolver.window_fraction_fp(), 0, SGFixed.ONE)
+
+
+## Whole sim ticks the resolution window lasts = the ticks that elapse during the
+## dilated wall-clock window (default_window_seconds at stack_time_scale): seconds x
+## tick_rate x scale (3.0 x 60 x 0.1 = 18). Read fresh from TheStack so test/Director
+## tuning of those presentation values still drives the sim window length.
+func _resolver_window_ticks() -> int:
 	var stack: Node = get_node_or_null(^"/root/TheStack")
-	if stack == null:
-		return 0.0
-	return stack.window_fraction_remaining()
+	var seconds: float = 3.0
+	var scale: float = 0.1
+	if stack != null:
+		seconds = stack.default_window_seconds
+		scale = stack.stack_time_scale
+	return maxi(1, ceili(seconds * float(maxi(1, tick_rate)) * scale))
 
 
 func _resolve_container() -> Node:

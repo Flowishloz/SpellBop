@@ -215,6 +215,12 @@ func _run() -> void:
 	# already proved the 0.1 dilation; the lock keys off window STATE).
 	stack.stack_time_scale = 1.0
 	stack.open_window(2.0)
+	# Sprint 22 Phase 2: TheStack is presentation-only now — the SIM-side StackResolver
+	# is what the counter's reactive-lock reads. A real enemy stage would arm it; here we
+	# arm it directly to fake "an enemy spell is on the stack" (2.0 s window at 1.0x =
+	# 120 ticks) so the player's counter is allowed to slap.
+	var resolver: Node = arena.get_node("StackResolver")
+	resolver.arm(int(ceil(2.0 * 60.0 * stack.stack_time_scale)))
 	var opens_with_window: int = _stack_opens
 	var staged_before: int = _staged
 	brain.hold_card_slot = 3

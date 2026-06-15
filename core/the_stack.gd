@@ -34,9 +34,10 @@ signal stack_opened(duration_s: float)
 ## Emitted every rendered frame while the window is open. REAL seconds left.
 signal stack_tick(remaining_s: float)
 
-## Window closed (expired or forced). On the normal expiry path the dilation is
-## HELD for the staggered resolution; the listener (MatchController) drives the
-## releases and calls resume_speed() after the last spell.
+## Window closed — emitted only by close_window() now (Sprint 22 Phase 2: the
+## wall-clock auto-expiry was removed). MatchController fires it when the SIM-side
+## StackResolver resolves (and on a KO/forced close). Presentation listeners (the
+## StackDisplay card pile) clear on this.
 signal stack_closed
 
 enum State { NORMAL, STACK_WINDOW }
@@ -98,31 +99,17 @@ func window_fraction_remaining() -> float:
 	return clampf(remaining_seconds() / _window_total_s, 0.0, 1.0)
 
 
-## Closes the window IMMEDIATELY and ramps speed back up — the instant snap-back
-## path, used on a KO / forced close. The NORMAL end-of-stack path is
-## _expire_window(), which holds the dilation while the stack resolves spell by
-## spell. Speed RAMPS rather than jumping (Creative Director).
+## Closes the window: ramps speed back up + emits stack_closed (the HUD card pile
+## flies away). Used for BOTH the normal end-of-stack close — MatchController calls
+## this when the StackResolver resolves on its deterministic tick — and the KO / forced
+## snap-back. Speed RAMPS rather than jumping (Creative Director). (Sprint 22 Phase 2:
+## the old wall-clock _expire_window auto-close was removed — the SIM-side resolver owns
+## WHEN the window closes; this autoload is now presentation only.)
 func close_window() -> void:
 	if state != State.STACK_WINDOW:
 		return
 	state = State.NORMAL
 	resume_speed()
-	stack_closed.emit()
-
-
-## Window timer expired: close the window but HOLD the time dilation so the stack
-## can resolve one spell at a time in slow motion. MatchController releases the
-## staged entries with a real-time gap between each, then calls resume_speed()
-## after the last. NETPLAY NOTE: the resolve cadence is wall-clock presentation
-## today; it becomes tick-counted with the rollback sprint (same seam as the
-## window timer).
-func _expire_window() -> void:
-	if state != State.STACK_WINDOW:
-		return
-	state = State.NORMAL
-	_resolving = true
-	# The dilation stays HELD here (no resume) at the window slow-mo; MatchController
-	# releases ALL staged spells at once on stack_closed, then calls resume_speed().
 	stack_closed.emit()
 
 
@@ -168,7 +155,8 @@ func _process(_delta: float) -> void:
 
 	if state != State.STACK_WINDOW:
 		return
-	var remaining: float = remaining_seconds()
-	stack_tick.emit(remaining)
-	if remaining <= 0.0:
-		_expire_window()
+	# UI COUNTDOWN ONLY (Sprint 22 Phase 2): the SIM-side StackResolver owns when the
+	# window actually closes (a deterministic tick), so the wall clock no longer
+	# auto-resolves. remaining_seconds() clamps at 0, so the on-screen timer just sits
+	# at 0.0 until the resolver fires (≈ the same instant at the tuned window length).
+	stack_tick.emit(remaining_seconds())

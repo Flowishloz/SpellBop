@@ -145,14 +145,12 @@ var _opponent: Node = null
 var _projectiles: Node = null
 var _post_round_deadline_msec: int = 0
 
-# THE STACK (MTG-style): casters with a staged spell, in slap order. When
-# the countdown window expires the stack resolves LIFO — the latest response
-# (a counter) fires before the spell it answered.
-var _stack_entries: Array[Node] = []
-
-# The wizard body that won the most recent stack (last responder). Captured when
-# the window closes, rewarded (and cleared) after the staggered resolution ends.
-var _stack_winner: Node = null
+# THE STACK (Sprint 22 Phase 2): resolution + the winner reward now live on the
+# deterministic StackResolver (a network_sync node) so they land on the SAME sim tick
+# on both peers. This controller only OPENS the presentation window (TheStack dilation)
+# and reacts to the resolver's `resolved` signal for presentation cleanup. The casters
+# arm the resolver themselves when they stage.
+var _resolver: StackResolver = null
 
 # stack_winner_speed_multiplier cached to fixed-point (1.5 -> 98304).
 var _stack_winner_boost_fp: int = 98304
@@ -220,14 +218,19 @@ func _ready() -> void:
 	# casters inside instanced scenes (player.tscn) are found.
 	for caster in find_children("*", "SpellCasterComponent", true, false):
 		caster.spell_cast.connect(_on_spell_cast)
-	for caster in find_children("*", "CardCasterComponent", true, false):
+	var card_casters: Array[Node] = find_children("*", "CardCasterComponent", true, false)
+	for caster in card_casters:
 		caster.spell_cast.connect(_on_spell_cast)
-		# STAGING is the Stack moment: the countdown telegraphs the spell and
-		# gates the counters; THIS controller releases the stack LIFO when
-		# the window expires (the timer and the release are the same event).
-		caster.spell_staged.connect(_on_spell_staged.bind(caster))
-	if _stack != null:
-		_stack.stack_closed.connect(_on_stack_closed)
+		# STAGING opens the presentation window (slow-mo + telegraph); the actual
+		# release + the winner reward are the StackResolver's deterministic tick.
+		caster.spell_staged.connect(_on_spell_staged)
+
+	# THE STACK SIM AUTHORITY (Sprint 22 Phase 2): hand the resolver its stable scene
+	# refs and listen for its resolution beat (presentation cleanup, rollback-guarded).
+	_resolver = get_node_or_null(^"StackResolver") as StackResolver
+	if _resolver != null:
+		_resolver.setup(card_casters, _player, _opponent, _stack_winner_boost_fp)
+		_resolver.resolved.connect(_on_resolver_resolved)
 
 	# Damage feedback + ROUND FLOW: every wizard's hits shake the camera;
 	# a KO ends the round.
@@ -452,14 +455,14 @@ func _clear_emerald() -> void:
 # Casting / Stack / feedback
 # =====================================================================
 
-## A spell was STAGED (attack channel paid, or a counter slapped on top):
-## push the caster onto the stack. The clock is SHARED — a slap on top of
-## an existing window does NOT restart it; everything resolves together
-## when the one countdown expires (Creative Director). Entries are NOT
-## deduped: one caster may have several spells on the stack (its
-## release_staged() pops them newest-first, preserving global LIFO).
-func _on_spell_staged(_card: CardResource, caster: Node) -> void:
-	_stack_entries.append(caster)
+## A spell was STAGED (an attack pressed, or a counter slapped on): OPEN the
+## presentation window (slow-mo dilation + telegraph). The clock is SHARED — a slap
+## onto an open window does NOT re-open it. The deterministic resolution + winner
+## reward are the StackResolver's job (the caster armed it from its own tick); this
+## handler is presentation only, so it is suppressed during a rollback re-sim.
+func _on_spell_staged(_card: CardResource) -> void:
+	if SyncManager != null and SyncManager.is_in_rollback():
+		return
 	if _stack != null and _stack.state != _stack.State.STACK_WINDOW:
 		_stack.open_window()
 	if _camera != null:
@@ -471,62 +474,19 @@ func _on_spell_staged(_card: CardResource, caster: Node) -> void:
 		Sfx.play(&"tape_slow")
 
 
-## The countdown expired: resolve the stack. SIMULTANEOUS RESOLUTION (Creative
-## Director playtest preference — reverting the Sprint-20 one-at-a-time stagger):
-## ALL staged spells fire AT ONCE, then normal speed resumes. The release order
-## stays LIFO (newest first) only so a counter is loosed just before the spell it
-## answered within the same frame. NETPLAY NOTE: the release originates from the
-## wall-clock window today; it becomes a tick-counted event with the rollback sprint.
-func _on_stack_closed() -> void:
-	_window_open_flag = false
-	if match_state != MatchState.ROUND_ACTIVE:
-		_stack_entries.clear()
-		_stack_winner = null
-		# A KO / forced close already drove resume_speed(); nothing to resolve.
+## The StackResolver resolved the stack on its deterministic tick (all staged spells
+## fired, the winner banked its boost). This is PRESENTATION cleanup only — ramp speed
+## back up, close the window (the HUD card pile flies away on stack_closed), and pop the
+## winner banner. Suppressed during a rollback re-sim so a corrected tick doesn't
+## re-fire it. [param winner_side]: 0 none / 1 player / 2 opponent.
+func _on_resolver_resolved(winner_side: int) -> void:
+	if SyncManager != null and SyncManager.is_in_rollback():
 		return
-	# WINNER (last-responder-always, Creative Director): the player who placed the
-	# NEWEST spell on the stack wins it. Captured BEFORE clearing; the +50%
-	# next-throw reward is granted AFTER the stack resolves so it lands on their
-	# NEXT throw, not a spell currently resolving.
-	_stack_winner = _winning_wizard()
-	var entries: Array[Node] = _stack_entries.duplicate()
-	_stack_entries.clear()
-	entries.reverse()  # newest-first == LIFO (same-frame fire order)
-	for caster in entries:
-		if is_instance_valid(caster) and caster.has_method(&"release_staged"):
-			caster.release_staged()
+	_window_open_flag = false
 	if _stack != null:
-		_stack.resume_speed()
-	_award_stack_winner()
-
-
-## Grants the captured stack winner a one-shot speed boost on its NEXT fired
-## projectile and announces the result (Phase 3 indicator hook).
-func _award_stack_winner() -> void:
-	if _stack_winner != null and is_instance_valid(_stack_winner) \
-			and _stack_winner.has_method(&"grant_speed_boost"):
-		_stack_winner.grant_speed_boost(_stack_winner_boost_fp)
-		stack_winner_decided.emit(_stack_winner == _player)
-	_stack_winner = null
-
-
-## The wizard body that placed the NEWEST spell on the stack (its caster is the
-## last appended entry) — the last responder, who always wins. null if empty.
-func _winning_wizard() -> Node:
-	if _stack_entries.is_empty():
-		return null
-	return _wizard_root_of(_stack_entries[-1])
-
-
-## Walks up from a caster component to the wizard root (Player / Opponent) it
-## belongs to, so the reward can target that whole wizard.
-func _wizard_root_of(node: Node) -> Node:
-	var walker: Node = node
-	while walker != null:
-		if walker == _player or walker == _opponent:
-			return walker
-		walker = walker.get_parent()
-	return null
+		_stack.close_window()  # NORMAL -> resume ramp + stack_closed (HUD card fly-away)
+	if winner_side != 0 and match_state == MatchState.ROUND_ACTIVE:
+		stack_winner_decided.emit(winner_side == 1)  # side 1 == the Player (blue) wizard
 
 
 ## An effect actually resolved (projectile fired / barrier deployed / wave
@@ -683,16 +643,18 @@ func _on_knocked_out(ko_was_player: bool) -> void:
 		opponent_score += 1
 
 	_set_sim_running(false)
-	_stack_entries.clear()
+	if _resolver != null:
+		_resolver.cancel()  # stop the stack countdown so it can't resolve into a dead round
+	_window_open_flag = false
 	_clear_emerald()
 
-	# State changes BEFORE close_window(): _on_stack_closed must see the
-	# round as over so a KO never releases staged spells into the break.
+	# The resolver countdown was already cancelled above, so no staged spell can fire
+	# into the break. Set the match state before any window teardown.
 	var match_over: bool = player_score >= rounds_to_win or opponent_score >= rounds_to_win
 	match_state = MatchState.MATCH_OVER if match_over else MatchState.POST_ROUND
 
-	# Clear any open stack window (the handler no-ops now the round is over)
-	# WITHOUT keeping normal speed — the death sequence owns the dilation next.
+	# Clear any open PRESENTATION window WITHOUT keeping normal speed — the death
+	# sequence owns the dilation next (hold_dilation overrides the resume ramp).
 	if _stack != null:
 		_stack.close_window()
 
@@ -779,7 +741,9 @@ func _trigger_ripple(world_pos: Vector3, strength: float) -> void:
 
 func _begin_round() -> void:
 	round_number += 1
-	_stack_entries.clear()
+	if _resolver != null:
+		_resolver.cancel()
+	_window_open_flag = false
 	_clear_projectiles()
 	_clear_emerald()
 	_reseed_emeralds()
@@ -828,6 +792,11 @@ func _enter_netplay() -> void:
 		_player.set_netplay(host_id, casting)
 	if _opponent != null and _opponent.has_method(&"set_netplay"):
 		_opponent.set_netplay(client_id, casting)
+	# The StackResolver is a scene-authored sim node (like the wizards), so it joins
+	# the network_sync group HERE — before the handshake's SyncManager.start() scan —
+	# not via the spawn-time check the projectiles use.
+	if _resolver != null and _resolver.has_method(&"set_netplay"):
+		_resolver.set_netplay()
 	# CLIENT VIEW (visual mirror): each player should see THEIR OWN wizard in the
 	# near, well-lit foreground. The HOST owns Player (already near) — nothing to do.
 	# The CLIENT owns Opponent (normally the FAR wizard), so MIRROR the visual court
