@@ -24,3 +24,16 @@ tests/_screenshot*.png.import
 # Net smoke-test artifacts (regenerable by tests/run_net_smoke.ps1)
 tests/_net_smoke_*
 tests/_screenshot_netplay_*.png
+
+# Headless test / export / import run logs (regenerable)
+tests/_*.log
+tests/_*.err
+
+# C++ GDExtension build artifacts (regenerable by scons; the SHIPPED libs live in
+# addons/delta_rollback/bin/ and addons/sg-physics-2d/lib/ and stay tracked).
+#  - /bin/        : scons output dir at the repo root (libgodot-cpp.a + intermediates)
+#  - src/*.os     : compiled object files
+#  - /godot-cpp/  : the godot-cpp 4.2 build dependency (a git clone; re-init to rebuild)
+/bin/
+src/*.os
+/godot-cpp/

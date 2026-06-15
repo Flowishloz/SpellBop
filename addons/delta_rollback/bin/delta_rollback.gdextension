@@ -3,12 +3,12 @@
 entry_symbol = "delta_rollback_library_init"
 compatibility_minimum = "4.2"
 
-; NOTE (Sprint 21): library entries trimmed to ONLY the desktop targets whose
-; binaries actually exist on disk (Windows/Linux x86_64 + macOS). The android.*
-; and other-arch entries were removed so an export to those platforms does not
-; demand a missing .so. Android multiplayer is deferred until delta_rollback is
-; cross-compiled for arm64 (mirroring the Sprint-17 sg-physics-2d work). See the
-; bug graveyard: "delta_rollback was dead weight / had no Android .so".
+; NOTE (Sprint 21 -> Mobile MP 2026-06-15): desktop targets (Windows/Linux x86_64
+; + macOS) PLUS the Android arm64 libs, cross-compiled for mobile multiplayer
+; (godot-cpp 4.2 + NDK r25c via scons, mirroring the Sprint-17 sg-physics-2d work).
+; Godot's GDExtension export plugin bundles ONLY the export target's matching lib,
+; so the desktop entries never bloat the Android APK. (Sprint 21 had TRIMMED the
+; android.* entries while no arm64 .so existed; they are restored now that it does.)
 
 [libraries]
 
@@ -18,3 +18,5 @@ windows.debug.x86_64 = "libdelta_rollback.windows.template_debug.x86_64.dll"
 windows.release.x86_64 = "libdelta_rollback.windows.template_release.x86_64.dll"
 linux.debug.x86_64 = "libdelta_rollback.linux.template_debug.x86_64.so"
 linux.release.x86_64 = "libdelta_rollback.linux.template_release.x86_64.so"
+android.debug.arm64 = "libdelta_rollback.android.template_debug.arm64.so"
+android.release.arm64 = "libdelta_rollback.android.template_release.arm64.so"
