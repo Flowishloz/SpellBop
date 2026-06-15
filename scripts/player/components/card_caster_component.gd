@@ -306,55 +306,50 @@ func _resolve_attack(card: CardResource) -> void:
 	var tick_fp: int = SGFixed.from_int(maxi(1, tick_rate))
 	var speed_fp: int = SGFixed.div(SGFixed.from_float(card.base_speed), tick_fp)
 	# STACK WINNER REWARD: if our wizard won the last stack, this attack flies
-	# faster (one-shot, consumed here so a single throw carries it).
+	# faster (one-shot, consumed HERE in the caster's tick so it rolls back).
 	if _body.has_method(&"consume_speed_boost"):
 		speed_fp = SGFixed.mul(speed_fp, _body.consume_speed_boost())
 	var spread_fp: int = SGFixed.div(SGFixed.from_float(card.spread_x_speed), tick_fp)
 	var bounciness_fp: int = SGFixed.from_float(card.bounciness)
 	var count: int = clampi(card.projectile_count, 1, 5)
+	var aim_vx_fp: int = _aim_vx_fp(speed_fp)  # same held-aim for every ball this tick
 	var target: Node = _find_enemy_wizard()
+	var homes: bool = target != null and card.homing_strength > 0.0
 
 	var caster_pos: SGFixedVector2 = _body.get_global_fixed_position()
-	# NO projectile spawns outside the lane: clamp the spawn ORIGIN so each
-	# ball's full radius stays on the court. The fan AND the aim are velocity
-	# only (below), so every ball shares this one clamped X and still steers in
-	# flight — aiming is preserved, only the origin is pinned inside the map.
+	# NO projectile spawns outside the lane: clamp the spawn ORIGIN so each ball's full
+	# radius stays on the court. Fan + aim are velocity only, so every ball shares this
+	# one clamped X and still steers in flight.
 	var spawn_x: int = MovementComponent.clamp_spawn_x_fp(
 			caster_pos.x, SGFixed.from_float(card.projectile_size), _arena_bound_fp())
+	var spawn_y: int = caster_pos.y + _spawn_offset_y_fp * cast_direction_y
+	var mask: int = PhysicsLayers.projectile_mask_for(cast_direction_y)
+	var life_ticks: int = 0 if card.lifetime <= 0.0 else maxi(1, ceili(card.lifetime * float(maxi(1, tick_rate))))
 	var container: Node = _resolve_container()
+	var sm: Node = _sync_manager()
 
 	var first: Node = null
 	for i in count:
 		# Fan index: 0, +1, -1, +2, -2 — center ball first, pairs outward.
 		@warning_ignore("integer_division")
 		var fan: int = ((i + 1) / 2) * (1 if i % 2 == 1 else -1)
-
-		var projectile: Node = card.projectile_scene.instantiate()
-		container.add_child(projectile)
-		projectile.set_global_fixed_position(SGFixed.vector2(
-				spawn_x,
-				caster_pos.y + _spawn_offset_y_fp * cast_direction_y))
-		projectile.sync_to_physics_engine()
-		# ONE-WAY SHIELDS: this ball ignores its OWNER's barriers.
-		projectile.collision_mask = PhysicsLayers.projectile_mask_for(cast_direction_y)
-
-		if projectile.has_method(&"set_hit_source"):
-			projectile.set_hit_source(_body)
-		if "damage" in projectile:
-			projectile.damage = card.damage
-		if projectile.has_method(&"apply_size"):
-			projectile.apply_size(card.projectile_size)
-		if target != null and card.homing_strength > 0.0 and projectile.has_method(&"set_homing"):
-			projectile.set_homing(target, SGFixed.from_float(card.homing_strength))
-		if "splits_on_barrier" in projectile:
-			projectile.splits_on_barrier = card.barrier_breaker
-		# Card lifetime overrides the scene default (recache-after-_ready rule).
-		for child in projectile.get_children():
-			if child is ProjectileMovementComponent:
-				child.set_lifespan_seconds(card.lifetime)
-				break
-
-		projectile.launch(fan * spread_fp + _aim_vx_fp(speed_fp), speed_fp * cast_direction_y, bounciness_fp)
+		# ROLLBACK SPAWN (Sprint 22 Phase 2b): pure int/path payload — FireballController.
+		# _network_spawn rebuilds the ball identically on the spawn tick and every re-sim.
+		# Homing target rides as an ABSOLUTE path (node refs aren't serializable).
+		var data := {
+			"px": spawn_x, "py": spawn_y,
+			"vx": fan * spread_fp + aim_vx_fp, "vy": speed_fp * cast_direction_y, "b": bounciness_fp,
+			"mask": mask,
+			"dmg": card.damage,
+			"size": SGFixed.from_float(card.projectile_size),
+			"split": 1 if card.barrier_breaker else 0,
+			"life": life_ticks,
+			"src": str(_body.get_path()),
+		}
+		if homes:
+			data["tgt"] = str(target.get_path())
+			data["hstr"] = SGFixed.from_float(card.homing_strength)
+		var projectile: Node = sm.spawn("CardBolt", container, card.projectile_scene, data)
 		if first == null:
 			first = projectile
 
@@ -382,48 +377,45 @@ func _resolve_defense(card: CardResource) -> void:
 		spell_cast.emit(null, card)
 		return
 
-	var barrier: Node = card.barrier_scene.instantiate()
-	_resolve_container().add_child(barrier)
-
+	var safe_tick_rate: int = maxi(1, tick_rate)
 	var caster_pos: SGFixedVector2 = _body.get_global_fixed_position()
-	# Clamp the wall ORIGIN so its full half-width (wall_size.x * 0.5) stays in
-	# the lane — a wall deployed at the edge no longer pokes through the arena.
+	# Clamp the wall ORIGIN so its full half-width stays in the lane.
 	var spawn_x: int = MovementComponent.clamp_spawn_x_fp(
 			caster_pos.x, SGFixed.from_float(card.wall_size.x * 0.5), _arena_bound_fp())
-	barrier.set_global_fixed_position(SGFixed.vector2(
-			spawn_x,
-			caster_pos.y + SGFixed.from_float(card.wall_offset_y) * cast_direction_y))
-	# ONE-WAY: the barrier lives on this SIDE's layer; only ENEMY projectiles
-	# (whose mask includes it) collide. Layer set BEFORE the engine sync.
-	barrier.collision_layer = PhysicsLayers.barrier_layer_for(cast_direction_y)
-	barrier.sync_to_physics_engine()
-
-	var safe_tick_rate: int = maxi(1, tick_rate)
 	var lifespan_ticks: int = 0 if card.wall_lifetime <= 0.0 \
 			else maxi(1, ceili(card.wall_lifetime * float(safe_tick_rate)))
 	var move_fp: int = SGFixed.div(
 			SGFixed.from_float(card.wall_movement_speed),
 			SGFixed.from_int(safe_tick_rate))
 
-	# WINDOW OF AFFECT: pure fixed-point distance scan at deploy time.
+	# WINDOW OF AFFECT: pure fixed-point distance scan at deploy time (the caster's tick,
+	# so it reads rolled-back ball positions). Precomputed here; the barrier reconstructs
+	# from these ints in _network_spawn.
 	var woa_fp: int = _defense_woa_fp(card)
 	var hold_ticks: int = (SGFixed.mul(woa_fp, SGFixed.from_float(card.woa_max_hold_seconds * float(safe_tick_rate)))) >> 16
 	var reflect_mult_fp: int = SGFixed.ONE + SGFixed.mul(woa_fp, SGFixed.from_float(maxf(0.0, card.woa_max_reflect - 1.0)))
-	# Ricochet = a 0.6 lateral base on EVERY block (~+15 degrees over the old
-	# 0.3 — Creative Director) + the card's WOA-scaled harshness (can exceed
-	# 1 = steeper than diagonal — wall-carom territory).
+	# Ricochet = a 0.6 lateral base on EVERY block + the card's WOA-scaled harshness.
 	var ricochet_fp: int = SGFixed.from_float(0.6) + SGFixed.mul(woa_fp, SGFixed.from_float(maxf(0.0, card.woa_ricochet)))
 
-	if barrier.has_method(&"deploy"):
-		barrier.deploy(
-				SGFixed.from_float(card.wall_size.x * 0.5),
-				SGFixed.from_float(card.wall_size.y * 0.5),
-				lifespan_ticks,
-				move_fp)
-	if barrier.has_method(&"arm_window_of_affect"):
-		barrier.arm_window_of_affect(_body, -cast_direction_y, woa_fp, hold_ticks,
-				reflect_mult_fp, ricochet_fp,
-				PhysicsLayers.projectile_mask_for(cast_direction_y))
+	# ROLLBACK SPAWN (Sprint 22 Phase 2b): int/path payload. BarrierController._network_spawn
+	# calls deploy() + arm_window_of_affect() from it; the one-way layer is set there BEFORE
+	# the engine sync, and the owner wizard is resolved by its stable scene path.
+	var data := {
+		"px": spawn_x, "py": caster_pos.y + SGFixed.from_float(card.wall_offset_y) * cast_direction_y,
+		"layer": PhysicsLayers.barrier_layer_for(cast_direction_y),
+		"hw": SGFixed.from_float(card.wall_size.x * 0.5),
+		"hh": SGFixed.from_float(card.wall_size.y * 0.5),
+		"life": lifespan_ticks,
+		"move": move_fp,
+		"owner": str(_body.get_path()),
+		"hdir": -cast_direction_y,
+		"woa": woa_fp,
+		"hold": hold_ticks,
+		"refl": reflect_mult_fp,
+		"ric": ricochet_fp,
+		"rmask": PhysicsLayers.projectile_mask_for(cast_direction_y),
+	}
+	var barrier: Node = _sync_manager().spawn("Barrier", _resolve_container(), card.barrier_scene, data)
 
 	spell_cast.emit(barrier, card)
 
@@ -436,40 +428,34 @@ func _resolve_counter(card: CardResource, woa_fp: int) -> void:
 		spell_cast.emit(null, card)
 		return
 
-	var woa: float = clampf(woa_fp / 65536.0, 0.0, 1.0)
-	var slow_scale: float = lerpf(card.slow_scale_weak, card.slow_scale_strong, woa)
 	var safe_tick_rate: int = maxi(1, tick_rate)
+	# WOA -> slow scale, ALL fixed-point (the old float lerp was a cross-peer desync
+	# risk): weak + (strong - weak) * woa, clamped 0..ONE.
+	var woa_clamped: int = clampi(woa_fp, 0, SGFixed.ONE)
+	var weak_fp: int = SGFixed.from_float(card.slow_scale_weak)
+	var strong_fp: int = SGFixed.from_float(card.slow_scale_strong)
+	var slow_scale_fp: int = clampi(weak_fp + SGFixed.mul(strong_fp - weak_fp, woa_clamped), 0, SGFixed.ONE)
 
-	var wave: Node = card.projectile_scene.instantiate()
-	_resolve_container().add_child(wave)
 	var caster_pos: SGFixedVector2 = _body.get_global_fixed_position()
-	# THE ICEY RETORT FIX: the frost wave is wide (half-width = projectile_size,
-	# 200u). It resolves at window-close from the caster's THEN-current position,
-	# so if the caster walked to the lane edge during the slow-mo window the wave
-	# used to spawn ~150u past the wall. Clamp the origin so the whole wave stays
-	# on the court. Launch vx is 0 here — aim never touched this spell anyway.
+	# THE ICEY RETORT FIX: the frost wave is wide; clamp its ORIGIN so the whole wave
+	# stays on the court even if the caster walked to the lane edge during the window.
 	var spawn_x: int = MovementComponent.clamp_spawn_x_fp(
 			caster_pos.x, SGFixed.from_float(card.projectile_size), _arena_bound_fp())
-	wave.set_global_fixed_position(SGFixed.vector2(
-			spawn_x,
-			caster_pos.y + _spawn_offset_y_fp * cast_direction_y))
-	wave.sync_to_physics_engine()
-	wave.collision_mask = PhysicsLayers.projectile_mask_for(cast_direction_y)
-
-	if wave.has_method(&"set_hit_source"):
-		wave.set_hit_source(_body)
-	# The court-wide frost wave never spews side-wall pulses (Sprint 20): it is
-	# wide and travels straight, so a clipped corner must not flash mid-court.
-	if "emits_wall_pulse" in wave:
-		wave.emits_wall_pulse = false
-	if "damage" in wave:
-		wave.damage = card.damage
-	if "slow_ticks" in wave:
-		wave.slow_ticks = maxi(1, ceili(card.slow_duration * float(safe_tick_rate)))
-		wave.slow_scale_fp = SGFixed.from_float(clampf(slow_scale, 0.0, 1.0))
-
 	var speed_fp: int = SGFixed.div(SGFixed.from_float(card.base_speed), SGFixed.from_int(safe_tick_rate))
-	wave.launch(0, speed_fp * cast_direction_y, SGFixed.ONE)
+	# ROLLBACK SPAWN (Sprint 22 Phase 2b): int-only payload. vx 0 (aim never touched the
+	# wave), pulse off (a court-wide wave must not flash side-wall pulses), damage 0,
+	# frost slow armed (slt/sls). FireballController._network_spawn rebuilds it.
+	var data := {
+		"px": spawn_x, "py": caster_pos.y + _spawn_offset_y_fp * cast_direction_y,
+		"vx": 0, "vy": speed_fp * cast_direction_y, "b": SGFixed.ONE,
+		"mask": PhysicsLayers.projectile_mask_for(cast_direction_y),
+		"dmg": card.damage,
+		"slt": maxi(1, ceili(card.slow_duration * float(safe_tick_rate))),
+		"sls": slow_scale_fp,
+		"pulse": 0,
+		"src": str(_body.get_path()),
+	}
+	var wave: Node = _sync_manager().spawn("FrostWave", _resolve_container(), card.projectile_scene, data)
 
 	spell_cast.emit(wave, card)
 
@@ -520,6 +506,15 @@ func _find_enemy_wizard() -> Node:
 		if wizard != _body:
 			return wizard
 	return null
+
+
+## The rollback spawn authority, resolved by /root node path instead of the bare
+## `SyncManager` autoload global. That identifier does NOT resolve at COMPILE time in this
+## script (it does in spell_caster / fireball_controller): card_caster lands in the compile
+## graph early — pulled in by AIBrainComponent — before the autoload registers as a GDScript
+## global, so a bare reference is "Identifier not found". The /root lookup is order-free.
+func _sync_manager() -> Node:
+	return get_node_or_null(^"/root/SyncManager")
 
 
 func _card_for_slot(slot: int) -> CardResource:

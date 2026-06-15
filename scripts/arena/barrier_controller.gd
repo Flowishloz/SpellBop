@@ -99,6 +99,13 @@ func _ready() -> void:
 	fixed_rotation = 0
 	_visual_root = get_node_or_null(visual_root_path) as Node3D
 
+	# ROLLBACK (Sprint 22 Phase 2b): a barrier is spawned mid-match via SyncManager.spawn,
+	# so under a live netplay match the rollback SyncManager drives it (via "network_sync")
+	# and the local _physics_process driver must idle. Single-player keeps self-driving.
+	if SyncManager != null and SyncManager.started:
+		local_tick_driver_enabled = false
+		add_to_group(&"network_sync")
+
 
 ## Arms the barrier. Called by CardCasterComponent AFTER positioning the body.
 ##  - half_w_fp / half_h_fp: collider half-extents, fixed-point sim units
@@ -152,6 +159,24 @@ func arm_window_of_affect(owner_body: Node, hostile_dir: int, woa_fp: int,
 	_woa_armed = true
 
 
+## ROLLBACK SPAWN (Sprint 22 Phase 2b): the deterministic, rewindable initializer —
+## called by SyncManager.spawn() on the spawn tick AND re-run identically on every
+## rollback re-spawn, so it is PURE SETUP from an int/path-only payload. Does what
+## CardCasterComponent._resolve_defense used to do inline: position + one-way layer +
+## deploy + arm the Window of Affect (owner wizard resolved by its stable scene path).
+func _network_spawn(data: Dictionary) -> void:
+	set_global_fixed_position(SGFixed.vector2(int(data.get("px", 0)), int(data.get("py", 0))))
+	if data.has("layer"):
+		collision_layer = int(data["layer"])  # one-way side layer, set BEFORE the sync
+	sync_to_physics_engine()
+	deploy(int(data.get("hw", 0)), int(data.get("hh", 0)), int(data.get("life", 0)), int(data.get("move", 0)))
+	var owner_path: String = String(data.get("owner", ""))
+	var owner: Node = get_node_or_null(NodePath(owner_path)) if owner_path != "" else null
+	arm_window_of_affect(owner, int(data.get("hdir", -1)), int(data.get("woa", 0)),
+			int(data.get("hold", 0)), int(data.get("refl", SGFixed.ONE)),
+			int(data.get("ric", 0)), int(data.get("rmask", 0)))
+
+
 # =====================================================================
 # ROLLBACK CONTRACT
 # =====================================================================
@@ -177,9 +202,9 @@ func _network_process(_input: Dictionary) -> void:
 			_capture_remaining = 1
 			_tick_capture()
 		barrier_expired.emit()
-		# Local lifecycle (SyncManager.despawn() later) — queue_free is
-		# idempotent if expiry re-fires before the free lands.
-		queue_free()
+		# Rewindable free: SyncManager.despawn under a live match, else queue_free.
+		# Idempotent if expiry re-fires before the free lands.
+		_despawn()
 
 
 ## Scan for the FIRST hostile ball touching the wall face and capture it:
@@ -237,7 +262,7 @@ func _shatter() -> void:
 		BurstFX.spawn(get_parent(), _visual_root.global_position + Vector3(0, 0.4, 0),
 				Vector3.UP, Color(0.85, 1.0, 0.92, 0.95), 38, 4.5, 0.055, 85.0)
 	Sfx.play(&"shield_shatter")
-	queue_free()
+	_despawn()
 
 
 ## One held tick: charge toward release; at zero, fling the ball back at
@@ -296,6 +321,7 @@ func _save_state() -> Dictionary:
 		"py": pos.y,
 		"cap": _capture_remaining,
 		"cs": _captured_speed_fp,
+		"wa": 1 if _woa_armed else 0,
 	}
 
 
@@ -303,12 +329,22 @@ func _load_state(state: Dictionary) -> void:
 	_age_ticks = int(state.get("age", 0))
 	_capture_remaining = int(state.get("cap", 0))
 	_captured_speed_fp = int(state.get("cs", 0))
+	_woa_armed = int(state.get("wa", 0)) == 1
 	var pos: SGFixedVector2 = fixed_position
 	pos.x = int(state.get("px", pos.x))
 	pos.y = int(state.get("py", pos.y))
 	fixed_position = pos
 	sync_to_physics_engine()
 	_sync_visual()
+
+
+## Rewindable free (mirrors FireballController): SyncManager.despawn under a live match,
+## else queue_free. Routed through here so the despawn itself rolls back.
+func _despawn() -> void:
+	if SyncManager != null and SyncManager.started and has_meta("spawn_name"):
+		SyncManager.despawn(self)
+	else:
+		queue_free()
 
 
 ## LOCAL TICK DRIVER — replaced by the rollback SyncManager in a later sprint.

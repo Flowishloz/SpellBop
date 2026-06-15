@@ -298,26 +298,31 @@ func split_on_barrier(dir_sign: int, count: int = 2, damage_each: int = 1) -> vo
 	var parent: Node = get_parent()
 	var my_pos: SGFixedVector2 = get_global_fixed_position()
 	var lateral_fp: int = SGFixed.div(SGFixed.from_float(190.0), SGFixed.from_int(60))
+	var src: Node = get_hit_source()
+	var src_path: String = str(src.get_path()) if src != null else ""
+	# Re-spawn each shard rollback-safely from THIS ball's own scene (scene_file_path),
+	# NOT duplicate(): a duplicated node isn't registered with SyncManager and would
+	# desync / crash the next rollback. Shards carry no homing and never re-split.
+	var scene: PackedScene = load(scene_file_path) if scene_file_path != "" else null
+	if scene == null:
+		_despawn()
+		return
 	for i in count:
 		var fan_sign: int = 1 if i % 2 == 0 else -1
-		var shard: Node = duplicate()
-		parent.add_child(shard)
-		# Keep each shard's full radius (BASE_RADIUS_UNITS * 0.75) inside the lane
-		# even when the ±28 fan pushes it outward from a parent already at the
-		# wall — clamp AFTER adding the fan offset, per shard.
+		# Keep each shard's full radius inside the lane even when the ±28 fan pushes it
+		# outward from a parent already at the wall — clamp AFTER the fan offset.
 		var shard_x: int = MovementComponent.clamp_spawn_x_fp(
 				my_pos.x + SGFixed.from_float(28.0) * fan_sign,
 				SGFixed.from_float(BASE_RADIUS_UNITS * 0.75),
 				_arena_bound_fp())
-		shard.set_global_fixed_position(SGFixed.vector2(shard_x, my_pos.y))
-		shard.sync_to_physics_engine()
-		shard.collision_mask = collision_mask
-		shard.damage = damage_each
-		shard.splits_on_barrier = false
-		shard.set_hit_source(get_hit_source())
-		shard.set_homing(null, 0)
-		shard.apply_size(BASE_RADIUS_UNITS * 0.75)
-		shard.launch(fan_sign * lateral_fp, dir_sign * speed_fp, SGFixed.ONE)
+		SyncManager.spawn("Shard", parent, scene, {
+			"px": shard_x, "py": my_pos.y,
+			"vx": fan_sign * lateral_fp, "vy": dir_sign * speed_fp, "b": SGFixed.ONE,
+			"mask": collision_mask,
+			"dmg": damage_each,
+			"size": SGFixed.from_float(BASE_RADIUS_UNITS * 0.75),
+			"src": src_path,
+		})
 	_despawn()
 
 
@@ -441,6 +446,16 @@ func _network_spawn(data: Dictionary) -> void:
 		var src: Node = get_node_or_null(NodePath(src_path))
 		if src != null:
 			set_hit_source(src)
+	# CARD payloads (the base fireball omits these): homing target by ABSOLUTE path
+	# (node refs aren't rollback-serializable — resolved like "src") + a per-tick
+	# steering strength, and an explicit lifespan in TICKS.
+	var tgt_path: String = String(data.get("tgt", ""))
+	if tgt_path != "":
+		var tgt: Node = get_node_or_null(NodePath(tgt_path))
+		if tgt != null:
+			set_homing(tgt, int(data.get("hstr", 0)))
+	if data.has("life") and _movement != null:
+		_movement.set_lifespan_ticks(int(data["life"]))
 	launch(int(data.get("vx", 0)), int(data.get("vy", 0)), int(data.get("b", SGFixed.ONE)))
 
 

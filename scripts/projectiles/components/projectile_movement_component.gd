@@ -220,6 +220,14 @@ func set_lifespan_seconds(seconds: float) -> void:
 	_lifespan_ticks = 0 if seconds <= 0.0 else maxi(1, ceili(seconds * float(maxi(1, tick_rate))))
 
 
+## Re-bases the lifespan directly in whole TICKS. The rollback spawn payload carries
+## ticks (not seconds), so the window is bit-identical on both peers with no float
+## round-trip. 0 = unlimited (despawn_distance only).
+func set_lifespan_ticks(ticks: int) -> void:
+	_lifespan_ticks = maxi(0, ticks)
+	lifespan_seconds = float(_lifespan_ticks) / float(maxi(1, tick_rate))
+
+
 ## COUNTER REDIRECT (Manifesto: counter returns the ball at 2x speed toward
 ## its original caster): reverses the velocity vector and scales it by the
 ## fixed-point multiplier, then restarts the lifespan clock so the returned
