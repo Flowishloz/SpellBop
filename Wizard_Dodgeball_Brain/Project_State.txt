@@ -1,5 +1,5 @@
 PROJECT STATE — WIZARD DODGEBALL
-Last sync: 2026-06-15 | DESKTOP NETPLAY FEATURE-COMPLETE + PLAYTESTED; MOBILE-MP A/B/B2 DONE; CD A/B/B2 APK playtest done — 4 fixes shipped; the round-2 netplay DESYNC (aimed-projectile path) is now FIXED (commit d3a53a4), so item C is the SOLE remaining mobile-MP task and is now UNBLOCKED. Spawn-rollback roadmap done (fireball + cards + round flow + emerald), online Play Again synced (commit 4579f67), client charge-rumble retargeted (commit 44e67b0). MOBILE MULTIPLAYER ENABLEMENT: A — delta_rollback cross-compiled for android arm64 + export fix (commit 151427d); B — netplay touch-movement input fix (commit 1d5973b); B2 — joystick-direction aiming + ground aim arrow (commits c65421b + 27b3908) — ALL DONE + verified. CD A/B/B2 APK PLAYTEST (2026-06-15): 4 fixes — 2x finer aim + slimmer/forward aim arrow + on-screen menu button (commit eaa90f9), card-presentation rollback guards (commit f6fa64b, resolves the cosmetic carried debt), a -Rounds netplay smoke repro (commit 22a7572), bounce/shatter VFX rollback guards / node-spam fix (commit 0f24d23). ROUND-2 DESYNC FIXED (commit d3a53a4): the FREEZE was a rollback DESYNC (Fatal state mismatch -> peer torn down -> ping-timer error spam -> freeze) and the ROOT CAUSE was NOT the aim/spawn/bounce sim (all deterministic) but the render-pipeline WARM-UP — _warm_up_render_pipelines() add_child()s barrier.tscn (SG body, collision_layer WALLS at sim centre) whose wall-clock 0.4s lifetime, stretched by the staged-card slow-mo, made an aimed fireball bounce off a mid-court ghost wall NON-deterministically under rollback; FIX = make every warm-up body collision-inert (layer/mask 0 + sync_to_physics_engine()). Same commit fixed a latent smoke FALSE-FAIL: _smoke_fingerprint() sorted projectiles by StringName (pointer-ordered, non-deterministic across processes) -> String(a.name). VERIFIED 4.6.3-stable: 20/20 suites pass, -Rounds smoke byte-identical into ROUND 2 on both peers (0 Fatal state mismatch), normal smoke byte-identical. Memory: netplay-aimed-projectile-desync-freeze.md (updated). C = real-online Nakama (Docker 127.0.0.1:7350) + real-latency / on-device validation (re-test the APK off the FIXED branch); needs the CD's Docker/devices env. See the NEXT PHASE sections in HANDOFF.md + below. On branch feature/spawn-rollback-cards.
+Last sync: 2026-06-15 | DESKTOP NETPLAY FEATURE-COMPLETE + PLAYTESTED; MOBILE-MP A/B/B2 DONE; CD A/B/B2 APK playtest done — 4 fixes shipped; the round-2 netplay DESYNC (aimed-projectile path) is now FIXED (commit d3a53a4) AND VALIDATED ON-DEVICE by the CD (real two-device Android MP, no crashes), so item C is the SOLE remaining mobile-MP task and is now UNBLOCKED. CD SPRINT-TWEAK BATCH (commit 086c11f, 4 polish fixes — client-side barrier mirror [5th client-perspective retarget], redundant menu button removed, aim arrow shortened, stuck-spark prompt despawn) DONE + verified (20/20 suites + LAN smoke incl. -Rounds byte-identical into round 2). Spawn-rollback roadmap done (fireball + cards + round flow + emerald), online Play Again synced (commit 4579f67), client charge-rumble retargeted (commit 44e67b0). MOBILE MULTIPLAYER ENABLEMENT: A — delta_rollback cross-compiled for android arm64 + export fix (commit 151427d); B — netplay touch-movement input fix (commit 1d5973b); B2 — joystick-direction aiming + ground aim arrow (commits c65421b + 27b3908) — ALL DONE + verified. CD A/B/B2 APK PLAYTEST (2026-06-15): 4 fixes — 2x finer aim + slimmer/forward aim arrow + on-screen menu button (commit eaa90f9), card-presentation rollback guards (commit f6fa64b, resolves the cosmetic carried debt), a -Rounds netplay smoke repro (commit 22a7572), bounce/shatter VFX rollback guards / node-spam fix (commit 0f24d23). ROUND-2 DESYNC FIXED (commit d3a53a4): the FREEZE was a rollback DESYNC (Fatal state mismatch -> peer torn down -> ping-timer error spam -> freeze) and the ROOT CAUSE was NOT the aim/spawn/bounce sim (all deterministic) but the render-pipeline WARM-UP — _warm_up_render_pipelines() add_child()s barrier.tscn (SG body, collision_layer WALLS at sim centre) whose wall-clock 0.4s lifetime, stretched by the staged-card slow-mo, made an aimed fireball bounce off a mid-court ghost wall NON-deterministically under rollback; FIX = make every warm-up body collision-inert (layer/mask 0 + sync_to_physics_engine()). Same commit fixed a latent smoke FALSE-FAIL: _smoke_fingerprint() sorted projectiles by StringName (pointer-ordered, non-deterministic across processes) -> String(a.name). VERIFIED 4.6.3-stable: 20/20 suites pass, -Rounds smoke byte-identical into ROUND 2 on both peers (0 Fatal state mismatch), normal smoke byte-identical. Memory: netplay-aimed-projectile-desync-freeze.md (updated). C = real-online Nakama (Docker 127.0.0.1:7350) + real-latency / on-device validation (re-test the APK off the FIXED branch); needs the CD's Docker/devices env. See the NEXT PHASE sections in HANDOFF.md + below. On branch feature/spawn-rollback-cards.
 
 ===========================================================
 COMPLETED SYSTEMS
@@ -2431,6 +2431,42 @@ ITEM C IS NOW UNBLOCKED — it is the SOLE remaining mobile-MP task (real-online
 needs the CD's Docker/devices env). The on-device APK re-test under C must include this d3a53a4 fix (the CD's
 first A/B/B2 APK predated it — that build is the one that froze in round 2); re-export off the fixed branch
 before the device re-test.
+
+ON-DEVICE VALIDATION (post-fix): the d3a53a4 build was PLAYTESTED on two real arm64 phones over LAN by the
+Creative Director — the round-2 freeze is GONE, working perfectly, NO crashes. The desync fix is confirmed on
+real two-device Android MP (not just the headless/-Rounds smoke).
+
+[2026-06-15] CD SPRINT-TWEAK BATCH — 4 POLISH FIXES (commit 086c11f)
+-----------------------------------------------------------
+After the round-2 desync fix validated on-device (above), the Creative Director gave a 4-item "Sprint Tweak
+List", now ALL DONE + verified on branch feature/spawn-rollback-cards. Three are presentation-only; one adds a
+rollback-deterministic sim-state key. All four are small, surgical tweaks.
+
+1. RED WIZARD BARRIER RENDERED ON THE WRONG SIDE ON THE CLIENT (P2's defensive wall appeared on P1's side) while
+   its HITBOX stayed correct. Cause: BarrierController has NO VisualBridgeComponent, so its _sync_visual()
+   positioned the mesh straight from sim Y->Z WITHOUT the client view_flip_z that every other entity applies.
+   FIX: compute view_flip_z the same way in the barrier (netplay && !multiplayer.is_server()) and negate z_m.
+   Presentation-only; offline/host unchanged. This is the 5th instance of the recurring CLIENT-PERSPECTIVE
+   RETARGET class (after the cast-button ring, the card-hand HUD, the health bars, and the charge rumble) — the
+   barrier visual was the latest miss because it BYPASSES VisualBridge.
+2. REMOVED THE REDUNDANT "MENU" BUTTON FROM THE MAIN MENU. The settings hamburger (settings_menu.gd _menu_button,
+   the touch opener added for in-match mobile access) also showed on the HOME screen, redundant with the gear
+   icon. Gated its visibility on show_leave_match (true only in a match), so it now appears only inside a match.
+3. AIM ARROW SHORTENED, TIP DISTANCE HELD. aim_arrow.gd length 2.08->1.3 m and feet_gap 1.2->1.98 m raised in
+   lockstep, so the triangle shrinks from the BACK while its tip stays ~3.28 m ahead of the wizard (tip distance
+   = feet_gap + length).
+4. STUCK SPARKS DESPAWN PROMPTLY. A homing bolt chasing an evading wizard bleeds speed (the homing steer lerps
+   two equal-length vectors, so a turning ball's velocity shortens each tick) and crawls to a near-stop mid-court,
+   then sat out its full ~5.6 s lifespan. ProjectileMovementComponent now despawns a projectile once it has
+   stayed below a NEAR-STOP floor (stationary_speed_threshold 120 u/s = 2 u/tick ~= 1.2 m/s, far under the
+   ~17.5 u/tick cruise — and speed is monotonically non-increasing after launch, so a low reading can't recover)
+   for stationary_lifespan_seconds 0.6 s. New SAVED sim-state key sk (rollback-deterministic). A barrier-CAPTURED
+   ball is frozen at velocity 0 ON PURPOSE, so BarrierController calls the ball's new keep_alive() each
+   capture-hold tick to exempt it. The floor sits safely below test_ice_shatter's deliberately-slow 5 u/tick test
+   wave (the one suite that initially tripped, fixed by lowering the floor — no test edit needed).
+
+VERIFIED (Godot 4.6.3-stable): 20/20 headless suites pass; run_net_smoke.ps1 -Mode lan -Headless (normal +
+-Rounds) byte-identical on both peers into round 2.
 
 -----------------------------------------------------------
 NEXT PHASE — MOBILE MULTIPLAYER ENABLEMENT
