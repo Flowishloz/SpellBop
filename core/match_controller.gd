@@ -799,15 +799,14 @@ func _enter_netplay() -> void:
 		_resolver.set_netplay()
 	# CLIENT VIEW (visual mirror): each player should see THEIR OWN wizard in the
 	# near, well-lit foreground. The HOST owns Player (already near) — nothing to do.
-	# The CLIENT owns Opponent (normally the FAR wizard), so MIRROR the visual court
+	# The CLIENT owns Opponent (normally the FAR wizard), so the court is MIRRORED
 	# front-to-back (VisualBridge.view_flip_z negates visual Z only — X kept so
-	# left/right controls stay correct) — the client's wizard now renders at the
-	# near baseline — and point the AUTHORED camera at it. This reuses all the
-	# authored lighting/backdrop (no reverse-angle darkness); pure presentation, the
-	# deterministic sim is identical on both peers.
+	# left/right controls stay correct), the client's wizard renders at the near
+	# baseline, and the AUTHORED camera points at it. The view_flip_z itself is now
+	# self-computed in EVERY VisualBridgeComponent._ready from the netplay role, so
+	# mid-match spawns (projectiles, emerald) mirror too — here we only do the
+	# scene-level client wiring (camera + HUD). Pure presentation; sim identical.
 	if not is_host:
-		for vb in find_children("*", "VisualBridgeComponent", true, false):
-			vb.view_flip_z = true
 		if _camera != null and _camera.has_method(&"set_follow_target") and _opponent != null:
 			_camera.set_follow_target(_opponent.get_node_or_null(^"WizardRig") as Node3D)
 		# HUD: the client's wizard is the Opponent, so swap which health bar reads

@@ -249,7 +249,10 @@ func _get_local_input() -> Dictionary:
 		# input arrives over the network (attributed by authority + node path).
 		if not is_multiplayer_authority():
 			return {}
-		var inp: Dictionary = InputCommand.capture_local()
+		# Per-role controls (Creative Director): the HOST instance reads A/D, the CLIENT
+		# instance reads the arrow keys — unambiguous when two windows run locally.
+		var actions: Dictionary = InputCommand.HOST_ACTIONS if multiplayer.is_server() else InputCommand.CLIENT_ACTIONS
+		var inp: Dictionary = InputCommand.capture_local(actions)
 		if _card_press_latched != 0:
 			if not inp.has(InputCommand.KEY_CARD):
 				inp[InputCommand.KEY_CARD] = _card_press_latched

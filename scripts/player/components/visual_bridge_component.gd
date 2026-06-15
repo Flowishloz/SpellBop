@@ -140,6 +140,17 @@ func _ready() -> void:
 	# (same trap documented in SpellCasterComponent).
 	_facing_deadzone_fp = SGFixed.from_float(maxf(0.0, facing_deadzone))
 
+	# NETPLAY VISUAL MIRROR (Sprint 22 fix): the CLIENT (non-host — it owns the FAR
+	# Opponent wizard) presents the court spun front-to-back so ITS wizard sits at the
+	# near, lit baseline. Computed HERE, per-bridge, from the netplay role so EVERY entity
+	# mirrors uniformly: the wizards AND every mid-match spawn (projectiles, emerald,
+	# barriers). The earlier approach flipped only the bridges present at scene load, so
+	# spawned projectiles rendered at the OPPOSITE end ("my shots fire from the far end").
+	# Pure presentation — only visual Z is mirrored (sim untouched, identical on both peers).
+	var nm: Node = get_node_or_null(^"/root/NetworkManager")
+	if nm != null and nm.netplay and not multiplayer.is_server():
+		view_flip_z = true
+
 	var movement: Node = _resolve_movement()
 	assert(movement != null, "VisualBridgeComponent needs a component emitting state_updated (set movement_path or add one as a sibling).")
 	movement.state_updated.connect(_on_state_updated)

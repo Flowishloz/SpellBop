@@ -243,8 +243,9 @@ func _on_sync_started() -> void:
 		# Host-only move proves authority routing; BOTH peers hold cast so each
 		# fires fireballs — the fingerprint then also verifies projectile SPAWN-
 		# rollback determinism (identical count + positions on both peers).
-		if multiplayer.is_server() and InputMap.has_action(&"move_right"):
-			Input.action_press(&"move_right")
+		# The host reads the A/D scheme now (HOST_ACTIONS), so press its action.
+		if multiplayer.is_server() and InputMap.has_action(&"move_right_ad"):
+			Input.action_press(&"move_right_ad")
 		# (cast is pulsed per-tick in _on_smoke_tick — the fireball is release-fire.)
 		if SyncManager != null and not SyncManager.tick_finished.is_connected(_on_smoke_tick):
 			SyncManager.tick_finished.connect(_on_smoke_tick)
