@@ -268,17 +268,10 @@ func _ready() -> void:
 		var trauma: float = player_hit_trauma if is_player_side else opponent_hit_trauma
 		health.damaged.connect(_on_wizard_damaged.bind(trauma, is_player_side))
 
-	# Charge-up rumble: LOCAL player's casters only (see player_path doc).
-	if _player != null:
-		for caster in _player.get_children():
-			if caster is SpellCasterComponent or caster is CardCasterComponent:
-				caster.cast_charge_started.connect(_on_player_charge_started)
-				caster.cast_charge_level_changed.connect(_on_player_charge_level)
-				caster.cast_charge_canceled.connect(_on_player_charge_ended)
-				caster.spell_cast.connect(_on_player_cast_released)
-		var card_caster: Node = _find_child_of(_player, "CardCasterComponent")
-		if card_caster != null:
-			card_caster.spell_staged.connect(_on_player_spell_staged)
+	# Charge-up rumble + throw stat: LOCAL player's casters only (see player_path doc).
+	# Defaults to the blue Player (offline + the netplay HOST); the CLIENT retargets this
+	# to its red Opponent in _enter_netplay.
+	_wire_local_charge_feedback(_player, true)
 
 	_enter_netplay()
 	round_started.emit(round_number)
@@ -831,6 +824,11 @@ func _enter_netplay() -> void:
 					_opponent.get_node_or_null(^"Health"),
 					_player.get_node_or_null(^"Health"),
 					_player.get_node_or_null(^"WizardRig") as Node3D)
+		# Charge-rumble + throw-stat feedback (Phase 2c retarget MISS): wired to the blue
+		# Player in _ready, but the CLIENT controls the red Opponent — move it, else the
+		# host's fireball charge shakes the CLIENT's screen (playtest report).
+		_wire_local_charge_feedback(_player, false)
+		_wire_local_charge_feedback(_opponent, true)
 	var mine: String = "Player (blue, near)" if (_player != null and _player.is_multiplayer_authority()) else "Opponent (red, far)"
 	print("[NETPLAY] peer uid=%d (host=%s) controls the %s wizard" % [my_id, str(is_host), mine])
 	# Kick the deterministic handshake.
@@ -878,6 +876,32 @@ func _local_wizard() -> Node:
 	if _opponent != null and _opponent.is_multiplayer_authority():
 		return _opponent
 	return null
+
+
+## Connects (or disconnects) the LOCAL-player charge/cast FEEDBACK — the camera charge
+## rumble + the throw stat — to [param wizard]'s casters. Retargets the feedback from the
+## blue Player to the client's red Opponent in netplay (the Phase 2c HUD-retarget pass
+## missed the rumble, so the host's charging shook the client's screen).
+func _wire_local_charge_feedback(wizard: Node, connect_it: bool) -> void:
+	if wizard == null:
+		return
+	for caster in wizard.get_children():
+		if caster is SpellCasterComponent or caster is CardCasterComponent:
+			_set_conn(caster.cast_charge_started, _on_player_charge_started, connect_it)
+			_set_conn(caster.cast_charge_level_changed, _on_player_charge_level, connect_it)
+			_set_conn(caster.cast_charge_canceled, _on_player_charge_ended, connect_it)
+			_set_conn(caster.spell_cast, _on_player_cast_released, connect_it)
+	var card_caster: Node = _find_child_of(wizard, "CardCasterComponent")
+	if card_caster != null:
+		_set_conn(card_caster.spell_staged, _on_player_spell_staged, connect_it)
+
+
+## Idempotent connect/disconnect of [param sig] -> [param target] (avoids double-wiring).
+func _set_conn(sig: Signal, target: Callable, want: bool) -> void:
+	if want and not sig.is_connected(target):
+		sig.connect(target)
+	elif not want and sig.is_connected(target):
+		sig.disconnect(target)
 
 
 func _is_under_player(node: Node) -> bool:
