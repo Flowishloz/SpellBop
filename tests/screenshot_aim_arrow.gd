@@ -7,7 +7,7 @@ extends SceneTree
 
 const SCENE := "res://scenes/match_arena.tscn"
 const OUT := "res://tests/_screenshot_aim_arrow.png"
-const AIM_SECTOR := 8   # strong right tilt (of 12) so the arrow's angle is obvious
+const AIM_SECTOR := 14   # right tilt (of 24) so the arrow's angle is obvious
 
 
 func _init() -> void:

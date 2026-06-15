@@ -55,7 +55,7 @@ const KEY_AIM: StringName = &"a"
 ## Aim quantization granularity: the firing-angle cone is sliced into this many
 ## sectors PER SIDE (2*N+1 distinct aim directions). Shared by the joystick
 ## (quantize), MovementComponent (keyboard derivation), and the casters (vx math).
-const AIM_SECTORS: int = 12
+const AIM_SECTORS: int = 24
 
 ## LIVE touch-aim sector (render-rate, LOCAL only): the virtual joystick writes its
 ## current lateral push here each drag (and 0 on release); capture_local() reads it

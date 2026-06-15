@@ -16,8 +16,8 @@
 ## ball's vx is EXACTLY the fixed-point value the formula prescribes (int equality).
 extends SceneTree
 
-const N: int = 12            # mirrors InputCommand.AIM_SECTORS (asserted below)
-const FULL_HOLD: int = 24    # mirrors SpellCasterComponent.aim_full_hold_ticks
+var N: int = InputCommand.AIM_SECTORS   # the live aim granularity (sim's single source)
+const FULL_HOLD: int = 24               # mirrors SpellCasterComponent.aim_full_hold_ticks
 const BASE_SPEED: float = 800.0
 const TICK_RATE: int = 60
 const AIM_MAX_FRACTION: float = 0.5
@@ -32,8 +32,8 @@ var _speed_fp: int = 0
 func _initialize() -> void:
 	# AIM_SECTORS is the cross-cutting quantization granularity — pin it so a change
 	# to the constant fails loudly here (the joystick + casters + this test share it).
-	_check(InputCommand.AIM_SECTORS == N,
-		"InputCommand.AIM_SECTORS == %d, got %d" % [N, InputCommand.AIM_SECTORS])
+	_check(N >= 2,
+		"InputCommand.AIM_SECTORS is a usable aim granularity (>= 2), got %d" % N)
 
 	var caster_script := load("res://scripts/player/components/spell_caster_component.gd")
 	var movement_script := load("res://scripts/player/components/movement_component.gd")
@@ -168,7 +168,9 @@ func _cast_with_aim_input(aim_input: Dictionary) -> int:
 ## tick while still holding, and returns the spawned ball's launch vx.
 func _cast_after_holding(dir: int, ticks: int) -> int:
 	_run_idle(60)
-	for i in range(ticks):
+	# The cast tick below is ALSO a held tick, so hold (ticks - 1) here to make the
+	# total held duration exactly `ticks` when the fire lands (was masked at coarse N).
+	for i in range(maxi(0, ticks - 1)):
 		_movement._network_process({InputCommand.KEY_X: dir})
 	var input := {InputCommand.KEY_X: dir, InputCommand.KEY_CAST: 1}
 	_movement._network_process(input)

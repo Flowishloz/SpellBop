@@ -13,11 +13,15 @@ extends Node3D
 
 ## Height above the floor plane (the arena borders sit at ~0.08).
 @export var floor_y: float = 0.06
-## Arrow length in metres (tip distance from the feet). Sized for the shallow
-## over-the-shoulder camera, which foreshortens a flat ground arrow heavily.
-@export var length: float = 2.6
-## Arrowhead half-width in metres.
-@export var head_half_width: float = 0.62
+## Arrow length in metres. Sized for the shallow over-the-shoulder camera, which
+## foreshortens a flat ground arrow heavily.
+@export var length: float = 2.08
+## Triangle BASE half-width in metres (slender — a thin directional triangle, not
+## a generic shaft+head arrow).
+@export var head_half_width: float = 0.40
+## How far FORWARD (along the aim) to detach the arrow from the feet, so it leads
+## the wizard a little instead of sitting under it (still flat on the floor).
+@export var feet_gap: float = 1.2
 
 var _mesh_instance: MeshInstance3D = null
 
@@ -42,7 +46,10 @@ func _ready() -> void:
 ## [param dir] (an XZ-plane direction). Makes the arrow visible.
 func point(feet: Vector3, dir: Vector3) -> void:
 	visible = true
-	global_position = Vector3(feet.x, floor_y, feet.z)
+	# Detach from the feet: shove the arrow forward along the aim so it LEADS the
+	# wizard (still snapped flat to the floor plane).
+	var ahead: Vector3 = dir.normalized() * feet_gap
+	global_position = Vector3(feet.x + ahead.x, floor_y, feet.z + ahead.z)
 	rotation = Vector3(0.0, atan2(dir.x, dir.z), 0.0)
 
 
@@ -50,17 +57,11 @@ func hide_arrow() -> void:
 	visible = false
 
 
-## A flat arrow on the XZ plane pointing +Z: a shaft quad (z in [0, neck]) plus a
-## wider head triangle (z in [neck, length]).
+## A single SLENDER triangle flat on the XZ plane, pointing +Z: base (width
+## 2*head_half_width) at z=0, tip at z=length — a thin directional pointer.
 func _build_arrow_mesh() -> ArrayMesh:
-	var shaft_half: float = head_half_width * 0.42
-	var neck: float = length * 0.58
 	var verts := PackedVector3Array([
-		# shaft (two triangles, CCW seen from +Y)
-		Vector3(-shaft_half, 0.0, 0.0), Vector3(shaft_half, 0.0, neck), Vector3(shaft_half, 0.0, 0.0),
-		Vector3(-shaft_half, 0.0, 0.0), Vector3(-shaft_half, 0.0, neck), Vector3(shaft_half, 0.0, neck),
-		# head triangle
-		Vector3(-head_half_width, 0.0, neck), Vector3(0.0, 0.0, length), Vector3(head_half_width, 0.0, neck),
+		Vector3(-head_half_width, 0.0, 0.0), Vector3(0.0, 0.0, length), Vector3(head_half_width, 0.0, 0.0),
 	])
 	var arrays := []
 	arrays.resize(Mesh.ARRAY_MAX)
