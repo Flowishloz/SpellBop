@@ -1,5 +1,5 @@
 PROJECT STATE — WIZARD DODGEBALL
-Last sync: 2026-06-15 | DESKTOP NETPLAY FEATURE-COMPLETE + PLAYTESTED. Spawn-rollback roadmap done (fireball + cards + round flow + emerald), online Play Again synced (commit 4579f67), client charge-rumble retargeted (commit 44e67b0). The WHOLE match runs online; Creative Director playtested LAN (rounds / KO / rematch / per-player camera + rumble). NEXT PHASE: MOBILE MULTIPLAYER ENABLEMENT — A: cross-compile delta_rollback arm64 (START here); B: netplay touch-movement input fix (BLOCKER — the per-role A/D-vs-arrows split kills touch movement online); C: real-online Nakama + real-latency validation (GATE). See the NEXT PHASE sections in HANDOFF.md + below. On branch feature/spawn-rollback-cards.
+Last sync: 2026-06-15 | DESKTOP NETPLAY FEATURE-COMPLETE + PLAYTESTED; MOBILE-MP A/B/B2 DONE (only C remains). Spawn-rollback roadmap done (fireball + cards + round flow + emerald), online Play Again synced (commit 4579f67), client charge-rumble retargeted (commit 44e67b0). MOBILE MULTIPLAYER ENABLEMENT: A — delta_rollback cross-compiled for android arm64 + export fix (commit 151427d); B — netplay touch-movement input fix (commit 1d5973b); B2 — joystick-direction aiming + ground aim arrow (commits c65421b + 27b3908) — ALL DONE + verified (19/20 suites bit-identical, LAN smoke byte-identical; on-device APK + 2-window aim/perspective checks are the CD's playtest). NEXT (the SOLE remaining gate): C — real-online Nakama (Docker 127.0.0.1:7350) + real-latency / on-device validation. See the NEXT PHASE sections in HANDOFF.md + below. On branch feature/spawn-rollback-cards.
 
 ===========================================================
 COMPLETED SYSTEMS
@@ -2237,29 +2237,115 @@ presentation hardwired to _player must be retargeted to the LOCAL wizard on the 
 Also restored the project name to "Wizard Dodgeball Main" (Creative Director's rename; commit 6aadd85).
 
 -----------------------------------------------------------
+[2026-06-15] MOBILE MULTIPLAYER ENABLEMENT — A + B + B2 (commits 151427d, 1d5973b, c65421b, 27b3908)
+-----------------------------------------------------------
+Items A, B, and B2 (B2a + B2b) of the MOBILE-MP NEXT PHASE are DONE on branch feature/spawn-rollback-cards;
+only item C (the real-online Nakama + real-latency validation gate) remains. The code is committed + verified
+(19/20 headless suites bit-identical, LAN smoke byte-identical); the on-device APK + 2-window aim/perspective
+checks are the Creative Director's playtest.
+
+A — DELTA_ROLLBACK CROSS-COMPILED FOR ANDROID arm64 + EXPORT FIX (commit 151427d):
+- delta_rollback is a C++ godot-cpp/SConstruct GDExtension (source src/*.cpp, root SConstruct -> godot-cpp/
+  SConstruct, NOT pure GDScript). Cross-compiled libdelta_rollback for android arm64-v8a, debug (723520 B) +
+  release (664720 B), verified AArch64 ELF, via godot-cpp branch 4.2 (cloned into godot-cpp/; the .gitmodules
+  gitlink was never committed) + NDK r25c.
+- NDK TRAP: godot-cpp 4.2's android tool hard-pins NDK 23.2.8568313 ($ANDROID_HOME/ndk/<ver>) and KeyErrors on
+  a missing ANDROID_HOME. Worked around with a directory junction ndk\23.2.8568313 -> 25.2.9519653 +
+  ANDROID_HOME=<sdk>.
+- Dropped the two .so into addons/delta_rollback/bin/ and RE-ADDED android.debug.arm64 / android.release.arm64
+  to addons/delta_rollback/bin/delta_rollback.gdextension (Sprint 21 had trimmed them).
+- LATENT Sprint-21 EXPORT BUG fixed: export_presets.cfg exclude_filter excluded addons/delta_rollback/* AND
+  addons/godot_state_charts/* — both are HARD runtime deps now (the SyncManager autoload + the menu StateChart),
+  so the APK would have crashed on launch; removed both from the filter (phantom_camera stays excluded —
+  confirmed unused at runtime). Installed the matching 4.6.3 export templates (the box only had 4.6.1, which has
+  the GDExtension regression).
+- Re-exported SpellBop.apk (~50 MB, signed); verified lib/arm64-v8a/ contains libdelta_rollback...arm64.so +
+  libsgphysics2d...arm64.so plus the delta_rollback (83) + godot_state_charts (92) script assets, with NO
+  desktop-binary or godot-cpp bloat. New .gitignore entries: /bin/, /godot-cpp/, src/*.os, tests/_*.log/.err
+  (build artifacts). The on-device extension LOAD is the Creative Director's playtest (no headless way to verify
+  arm64 loading).
+
+B — NETPLAY TOUCH-MOVEMENT INPUT FIX (commit 1d5973b):
+- THE BUG: the touch joystick presses the DEFAULT move_left/move_right actions, but a netplay match read the
+  per-role split (move_left_ad vs move_left_arrows, by multiplayer.is_server()), so touch movement produced NO
+  input online — a hard blocker for playable mobile MP.
+- FIX: PlayerController._get_local_input() now reads InputCommand.DEFAULT_ACTIONS in netplay BY DEFAULT (joystick
+  + A/D + arrows all feed it); the per-role A/D-vs-arrows split is now OPT-IN via a --local-split command-line
+  flag (read from OS.get_cmdline_user_args()), only meaningful for two windows sharing one keyboard.
+- New tests/run_two_windows.ps1 manual two-window playtest launcher passes --local-split (host=A/D,
+  client=arrows); the autopilot run_net_smoke.ps1 does NOT need it (neither wizard moves).
+- Determinism-safe: netplay input-CAPTURE only — the offline/AI paths are untouched and cross-peer determinism
+  rides the shipped int dicts. VERIFIED: 19 suites BIT-IDENTICAL + LAN smoke byte-identical.
+
+B2a — JOYSTICK-DIRECTION AIMING, THE SIM MODEL (commit c65421b):
+- Implements the Creative-Director-decided "move + aim together" model. New InputCommand.KEY_AIM ("a") = a
+  signed aim SECTOR in [-AIM_SECTORS, +AIM_SECTORS] (AIM_SECTORS=12), folded into is_empty / equals; the aim
+  drives a projectile's vx (a SIM velocity) so it rides the synced input as an INT, never a float.
+- A static InputCommand.touch_aim_sector the joystick writes; capture_local() injects it. move_joystick_hud.gd:
+  the lateral push (offset.x) -> quantized aim sector (the SAME stick lateral drives movement sign AND aim).
+- movement_component.gd: captures KEY_AIM per tick into _aim_key (input-derived, replayed -> NOT saved) +
+  get_aim_key().
+- spell_caster_component.gd + card_caster_component.gd: vx = forward_speed x aim_max_fraction x
+  (sector / AIM_SECTORS), PURE FIXED-POINT (no trig -> bit-identical cross-platform, the key requirement for
+  desktop-host vs arm64-client play); the keyboard's held-direction duration maps onto the SAME sector scale, so
+  the sim has ONE aim representation and the old hold-to-tilt feel survives at full hold.
+- New tests/test_aim.gd asserts the exact fixed-point vx for touch sectors AND keyboard parity (full-hold ==
+  touch(+/-N)). VERIFIED: 19 existing suites BIT-IDENTICAL + LAN smoke byte-identical (KEY_AIM in is_empty/equals
+  doesn't disturb sync) + the new test.
+
+B2b — GLOWING GROUND AIM ARROW, PRESENTATION (commit 27b3908):
+- New scripts/visual/aim_arrow.gd — a flat emissive-cyan UNSHADED arrow mesh on the floor (the arena-border glow
+  look). spell_caster_component.gd gains is_charging() + get_aim_sector() (presentation reads).
+- core/match_controller.gd creates the arrow and, each frame in _process, points it at the LOCAL wizard's CURRENT
+  aim while it CHARGES a fireball or has an OWNED spell staged on the stack (hidden otherwise). It retargets via
+  _local_wizard() (authority-based) EVERY frame, so it follows the CLIENT's own wizard with no hardwiring —
+  avoids the recurring client-perspective bug class BY CONSTRUCTION.
+- The down-court sign reads from the FOE's WizardRig Z (which already encodes the client's view_flip_z mirror);
+  the lateral offset is world +X (sim vx never flips) -> the arrow matches the ball's visual travel on BOTH peers.
+- New tests/screenshot_aim_arrow.gd probe. VERIFIED: 20 suites BIT-IDENTICAL (the per-frame arrow path runs in
+  every match-loading suite) + a screenshot confirmed the arrow renders at the feet, glows cyan, and points
+  up-court tilted to the aim. The live client-perspective check is the Creative Director's 2-window playtest.
+
+REMAINING — item C (the validation gate, needs the CD's environment): stand up local Nakama (Docker
+127.0.0.1:7350, key defaultkey), run tests/run_net_smoke.ps1 -Mode online for byte-identical sync over the
+Nakama transport, then a REAL two-device / real-latency playtest, PLUS the on-device APK playtest of A/B/B2
+(touch movement, joystick aiming, the arrow). See the NEXT PHASE section below + in HANDOFF.md.
+
+-----------------------------------------------------------
 NEXT PHASE — MOBILE MULTIPLAYER ENABLEMENT
 -----------------------------------------------------------
-Desktop netplay is feature-complete + playtested. Mobile needs THREE things (full detail in HANDOFF.md's
-"NEXT PHASE" section):
-  A. Cross-compile delta_rollback for Android arm64 (the ENABLER; sg-physics-2d is already arm64). START here.
-     First inspect the addon's build system (Rust/C++/prebuilt-only); re-add the android.* .gdextension lines;
-     re-export the APK; verify the extension LOADS on a device.
-  B. Netplay MOVEMENT input for touch / separate devices (the BLOCKER): the per-role A/D-vs-arrows scheme is a
-     two-local-windows hack; the touch joystick feeds the DEFAULT move_left/right which netplay ignores, so
-     touch movement is DEAD online (cast + cards are fine). Default netplay to InputCommand.DEFAULT_ACTIONS;
-     gate the split behind a --local-split opt-in for two-window dev testing.
-  B2. Joystick-direction AIMING overhaul + aim-indicator arrow (Creative Director touch-era feature; after B).
-      B2a (SIM change): the firing angle reads the virtual-joystick DIRECTION on release (vs today's held
-      left/right x hold-duration in SpellCaster._aim_vx_fp) — the aim must ride the synced input as a QUANTIZED
-      fixed-point KEY_AIM (int-only), with full determinism re-verification. DECIDED (Creative Director): MOVE +
-      AIM TOGETHER, no mode switch — the joystick X SIGN drives movement (the existing KEY_X), its full ANGLE
-      drives aim (KEY_AIM); vx is now angle-driven, not hold-duration-driven; keyboard keeps a discrete fallback. B2b (presentation): a glowing-blue
-      ground arrow at the player's feet showing the EXACT firing angle, shown ONLY when charging a fireball OR
-      within 3s of a stacked spell they own releasing. Enhancement, not a blocker. See HANDOFF.md for detail.
-  C. Real online (Nakama) + real-latency rollback validation (the GATE before shipping mobile MP).
-A runs in parallel (toolchain); B -> B2 are the sequenced touch-input + aiming work; C is the gate after all.
+Desktop netplay is feature-complete + playtested. MOBILE-MP items A, B, and B2 are DONE (commits 151427d /
+1d5973b / c65421b / 27b3908; see the entry above); only item C remains. Full detail in HANDOFF.md's
+"NEXT PHASE" section:
+  A. [DONE — commit 151427d] Cross-compile delta_rollback for Android arm64 (the ENABLER; sg-physics-2d is
+     already arm64). SHIPPED: arm64-v8a debug+release .so in addons/delta_rollback/bin/, android.* lines restored
+     in the .gdextension, the latent Sprint-21 export_presets exclude_filter bug fixed (delta_rollback +
+     godot_state_charts were excluded but are hard runtime deps), 4.6.3 export templates installed, signed
+     SpellBop.apk re-exported with both native .so under lib/arm64-v8a/. The on-device extension LOAD is the CD's
+     playtest.
+  B. [DONE — commit 1d5973b] Netplay MOVEMENT input for touch / separate devices (the BLOCKER): the per-role
+     A/D-vs-arrows scheme is a two-local-windows hack; the touch joystick feeds the DEFAULT move_left/right which
+     netplay ignored, so touch movement was DEAD online (cast + cards were fine). SHIPPED: netplay now defaults to
+     InputCommand.DEFAULT_ACTIONS; the split is OPT-IN via a --local-split cmdline flag for two-window dev testing
+     (new tests/run_two_windows.ps1 passes it; run_net_smoke.ps1 unaffected). Determinism-safe (input-capture only).
+  B2. [DONE — commits c65421b + 27b3908] Joystick-direction AIMING overhaul + aim-indicator arrow (Creative
+      Director touch-era feature). B2a (SIM, c65421b): the firing angle reads the virtual-joystick DIRECTION via a
+      QUANTIZED fixed-point InputCommand.KEY_AIM (signed sector [-12,+12], int-only, folded into is_empty/equals;
+      vx = forward_speed x aim_max_fraction x sector/AIM_SECTORS, pure fixed-point); MOVE + AIM TOGETHER (the
+      joystick X SIGN drives movement via KEY_X, its lateral push drives the aim sector); keyboard held-duration
+      maps onto the same sector scale (hold-to-tilt feel survives). New tests/test_aim.gd. B2b (presentation,
+      27b3908): a glowing emissive-cyan UNSHADED ground arrow at the LOCAL wizard's feet showing the EXACT firing
+      angle, shown ONLY when charging a fireball OR with an OWNED staged spell, retargeted to the local wizard
+      EVERY frame (client-perspective-safe by construction). New tests/screenshot_aim_arrow.gd.
+  C. [PENDING — the SOLE remaining gate] Real online (Nakama) + real-latency rollback validation before shipping
+     mobile MP. Stand up local Nakama (Docker 127.0.0.1:7350, key defaultkey), run run_net_smoke.ps1 -Mode online
+     for byte-identical sync over the Nakama transport, then a REAL two-device / real-latency playtest, PLUS the
+     on-device APK playtest of A/B/B2 (touch movement, joystick aiming, the arrow).
+A, B, and B2 are DONE; C is the remaining validation gate (needs the CD's Docker/devices environment).
 
 Commits since the Sub-phase 3 doc sync (d54f807), oldest->newest: 4579f67 (online Play Again — deterministic
 synced rematch), 9f1cdb8 (healing-emerald spawn-rollback — deterministic cadence + enable online),
-44e67b0 (client charge-rumble retarget), 6aadd85 (restore project name "Wizard Dodgeball Main"). NOT
-re-exported to Android — that is the NEXT PHASE (item A).
+44e67b0 (client charge-rumble retarget), 6aadd85 (restore project name "Wizard Dodgeball Main"),
+151427d (mobile-MP A: delta_rollback android arm64 + export fix), 1d5973b (mobile-MP B: netplay touch-movement
+input fix), c65421b (mobile-MP B2a: joystick-direction aiming sim model), 27b3908 (mobile-MP B2b: ground aim
+arrow). SpellBop.apk RE-EXPORTED for android arm64 (commit 151427d) — on-device playtest is item C.
