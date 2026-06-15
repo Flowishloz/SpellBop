@@ -556,18 +556,20 @@ func _counter_woa_fp() -> int:
 	return clampi(SGFixed.ONE - resolver.window_fraction_fp(), 0, SGFixed.ONE)
 
 
-## Whole sim ticks the resolution window lasts = the ticks that elapse during the
-## dilated wall-clock window (default_window_seconds at stack_time_scale): seconds x
-## tick_rate x scale (3.0 x 60 x 0.1 = 18). Read fresh from TheStack so test/Director
-## tuning of those presentation values still drives the sim window length.
+## Whole sim ticks the resolution window lasts. It must span the SAME real time as the
+## wall-clock presentation countdown (default_window_seconds) so spells resolve exactly
+## when the on-screen timer hits zero. Sim ticks advance at the fixed tick_rate REGARDLESS
+## of the slow-mo: Engine.time_scale scales each tick's DELTA (motion looks slow) but NOT
+## how often _physics_process fires, so the resolver still counts tick_rate ticks per real
+## second. Hence seconds x tick_rate (3.0 x 60 = 180) — NOT x stack_time_scale: that 0.1
+## factor made it resolve in ~0.3 s ("spells resolve instantly" regression). Read fresh
+## from TheStack so Director/test tuning of the window length still drives the sim window.
 func _resolver_window_ticks() -> int:
 	var stack: Node = get_node_or_null(^"/root/TheStack")
 	var seconds: float = 3.0
-	var scale: float = 0.1
 	if stack != null:
 		seconds = stack.default_window_seconds
-		scale = stack.stack_time_scale
-	return maxi(1, ceili(seconds * float(maxi(1, tick_rate)) * scale))
+	return maxi(1, ceili(seconds * float(maxi(1, tick_rate))))
 
 
 func _resolve_container() -> Node:

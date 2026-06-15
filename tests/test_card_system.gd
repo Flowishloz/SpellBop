@@ -118,7 +118,9 @@ func _run() -> void:
 	await process_frame
 	_check(is_equal_approx(Engine.time_scale, 0.1), "A: world at 10%% slow-mo during the countdown (got %.3f)" % Engine.time_scale)
 
-	# The 15 stage ticks at 10% speed = ~2.5 real seconds until release.
+	# The resolution window (180 ticks = default_window_seconds 3.0 x tick_rate 60) elapses
+	# in ~3.0 real seconds — sim ticks run at full rate even under the 10% slow-mo — so the
+	# bolt releases ~3 s after staging (the 6 s await budget covers it).
 	var bolt: Node = await _await_first_child(projectiles, 6000)
 	_check(bolt != null, "A: countdown released the bolt (projectile fired AFTER staging)")
 	if bolt != null:
@@ -220,7 +222,7 @@ func _run() -> void:
 	# arm it directly to fake "an enemy spell is on the stack" (2.0 s window at 1.0x =
 	# 120 ticks) so the player's counter is allowed to slap.
 	var resolver: Node = arena.get_node("StackResolver")
-	resolver.arm(int(ceil(2.0 * 60.0 * stack.stack_time_scale)))
+	resolver.arm(int(ceil(2.0 * 60.0)))
 	var opens_with_window: int = _stack_opens
 	var staged_before: int = _staged
 	brain.hold_card_slot = 3
