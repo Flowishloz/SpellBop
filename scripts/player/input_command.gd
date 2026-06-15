@@ -53,12 +53,15 @@ const DEFAULT_ACTIONS: Dictionary = {
 	"card_3": "card_slot_3",
 }
 
-## NETPLAY per-role movement schemes (Sprint 22, Creative Director): in a networked
-## match the HOST player moves with A / D and the CLIENT player moves with the LEFT /
-## RIGHT arrows — so two local windows have unambiguous, non-overlapping controls. Only
-## left/right differ; capture_local() falls back to the default cast/card actions for the
-## unspecified keys (both schemes share Space + 8/9/0). Single-player keeps the DEFAULT
-## scheme (move_left/move_right bind A/D AND arrows, so either works).
+## LOCAL-SPLIT per-role movement schemes (Sprint 22; gated to `--local-split` in the
+## Mobile-MP pass): for TWO windows on ONE machine the HOST reads A / D and the CLIENT
+## reads the LEFT / RIGHT arrows, so a single keyboard drives both unambiguously.
+## OPT-IN ONLY — PlayerController picks these instead of DEFAULT_ACTIONS just when
+## `--local-split` is on the command line. A real online / mobile peer (one per device,
+## incl. the TOUCH joystick) reads DEFAULT_ACTIONS so its movement is never stranded
+## (the joystick + A/D + arrows all feed move_left/move_right). Only left/right differ;
+## capture_local() falls back to the default cast/card actions for the unspecified keys
+## (both schemes share Space + 8/9/0).
 const HOST_ACTIONS: Dictionary = {"left": "move_left_ad", "right": "move_right_ad"}
 const CLIENT_ACTIONS: Dictionary = {"left": "move_left_arrows", "right": "move_right_arrows"}
 

@@ -84,6 +84,12 @@ var _pending_speed_boost_fp: int = SGFixed.ONE
 # aren't rollback-routed yet) — movement syncs, casting is suppressed.
 var _netplay: bool = false
 var _netplay_casting: bool = false
+# Two-windows-on-ONE-machine dev opt-in (pass `-- --local-split`): drives the HOST
+# instance with A/D and the CLIENT with the arrow keys, so a single keyboard controls
+# both wizards unambiguously. OFF by default so a real online / mobile peer (one per
+# device) reads the DEFAULT move_left/move_right actions — which the TOUCH joystick,
+# A/D, AND the arrows all feed — otherwise touch movement produces no input online.
+var _local_split: bool = false
 
 # ONLINE REMATCH (Sub-phase 3 follow-up): a render-rate latch set by the Play Again
 # button / cast shortcut at match-over (latch_rematch), injected into this wizard's
@@ -258,6 +264,7 @@ func reset_for_round(spawn_x_fp: int, spawn_y_fp: int) -> void:
 func set_netplay(owner_peer_id: int, casting_enabled: bool) -> void:
 	_netplay = true
 	_netplay_casting = casting_enabled
+	_local_split = OS.get_cmdline_user_args().has("--local-split")
 	local_tick_driver_enabled = false
 	set_multiplayer_authority(owner_peer_id)
 	add_to_group(&"network_sync")
@@ -272,9 +279,15 @@ func _get_local_input() -> Dictionary:
 		# input arrives over the network (attributed by authority + node path).
 		if not is_multiplayer_authority():
 			return {}
-		# Per-role controls (Creative Director): the HOST instance reads A/D, the CLIENT
-		# instance reads the arrow keys — unambiguous when two windows run locally.
-		var actions: Dictionary = InputCommand.HOST_ACTIONS if multiplayer.is_server() else InputCommand.CLIENT_ACTIONS
+		# SEPARATE devices (the real online / mobile case — one peer per device): BOTH
+		# peers read the DEFAULT move_left/move_right, which the touch joystick AND A/D AND
+		# the arrow keys all feed, so touch movement works online. The per-role A/D-vs-arrows
+		# split is ONLY meaningful for TWO windows on ONE machine (one keyboard) and is
+		# opt-in via --local-split — otherwise it would strand touch / separate-device
+		# movement (the joystick presses the DEFAULT actions, which the split doesn't read).
+		var actions: Dictionary = InputCommand.DEFAULT_ACTIONS
+		if _local_split:
+			actions = InputCommand.HOST_ACTIONS if multiplayer.is_server() else InputCommand.CLIENT_ACTIONS
 		var inp: Dictionary = InputCommand.capture_local(actions)
 		if _card_press_latched != 0:
 			if not inp.has(InputCommand.KEY_CARD):
