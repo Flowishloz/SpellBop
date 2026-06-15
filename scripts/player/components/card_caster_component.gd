@@ -190,7 +190,7 @@ func _network_process(input: Dictionary) -> void:
 			CardResource.CardType.DEFENSE:
 				# DEFENSE — truly instant, never on the stack.
 				_resolve_defense(card)
-				card_cast.emit(card)
+				_emit_card_cast(card)
 				_slot_cd[raw_slot - 1] = _cooldown_ticks
 			CardResource.CardType.COUNTER:
 				# COUNTER — SLAP IT ON THE STACK: latch the WOA (how late into
@@ -225,7 +225,7 @@ func release_staged() -> void:
 			_resolve_counter(card, woa_fp)
 		_:
 			push_warning("CardCasterComponent: staged a non-stack card type.")
-	card_cast.emit(card)
+	_emit_card_cast(card)
 
 
 func _stage(slot: int, woa_fp: int) -> void:
@@ -241,13 +241,13 @@ func _stage(slot: int, woa_fp: int) -> void:
 	if resolver != null:
 		resolver.arm(_resolver_window_ticks())
 		resolver.notify_staged(1 if cast_direction_y < 0 else 2)
-	spell_staged.emit(_card_for_slot(slot))
+	_emit_spell_staged(_card_for_slot(slot))
 
 
 func _reject_once(slot: int, card: CardResource) -> void:
 	if _rejected_slot_latch != slot:
 		_rejected_slot_latch = slot
-		card_rejected.emit(card)
+		_emit_card_rejected(card)
 
 
 func _save_state() -> Dictionary:
@@ -300,7 +300,7 @@ func reset_cast_state() -> void:
 func _resolve_attack(card: CardResource) -> void:
 	if card.projectile_scene == null:
 		push_warning("CardCasterComponent: ATTACK card '%s' has no projectile_scene — cast fizzles." % card.display_name)
-		spell_cast.emit(null, card)
+		_emit_spell_cast(null, card)
 		return
 
 	var tick_fp: int = SGFixed.from_int(maxi(1, tick_rate))
@@ -353,7 +353,7 @@ func _resolve_attack(card: CardResource) -> void:
 		if first == null:
 			first = projectile
 
-	spell_cast.emit(first, card)
+	_emit_spell_cast(first, card)
 
 
 ## Lateral launch tilt from the unified AIM SECTOR (Mobile-MP B2; same math as
@@ -391,7 +391,7 @@ func _aim_sector_now() -> int:
 func _resolve_defense(card: CardResource) -> void:
 	if card.barrier_scene == null:
 		push_warning("CardCasterComponent: DEFENSE card '%s' has no barrier_scene — cast fizzles." % card.display_name)
-		spell_cast.emit(null, card)
+		_emit_spell_cast(null, card)
 		return
 
 	var safe_tick_rate: int = maxi(1, tick_rate)
@@ -434,7 +434,7 @@ func _resolve_defense(card: CardResource) -> void:
 	}
 	var barrier: Node = _sync_manager().spawn("Barrier", _resolve_container(), card.barrier_scene, data)
 
-	spell_cast.emit(barrier, card)
+	_emit_spell_cast(barrier, card)
 
 
 ## COUNTER (Category C): the staged frost wave, released LIFO with the WOA
@@ -442,7 +442,7 @@ func _resolve_defense(card: CardResource) -> void:
 func _resolve_counter(card: CardResource, woa_fp: int) -> void:
 	if card.projectile_scene == null:
 		push_warning("CardCasterComponent: COUNTER card '%s' has no projectile_scene — cast fizzles." % card.display_name)
-		spell_cast.emit(null, card)
+		_emit_spell_cast(null, card)
 		return
 
 	var safe_tick_rate: int = maxi(1, tick_rate)
@@ -474,7 +474,7 @@ func _resolve_counter(card: CardResource, woa_fp: int) -> void:
 	}
 	var wave: Node = _sync_manager().spawn("FrostWave", _resolve_container(), card.projectile_scene, data)
 
-	spell_cast.emit(wave, card)
+	_emit_spell_cast(wave, card)
 
 
 # =====================================================================
@@ -532,6 +532,36 @@ func _find_enemy_wizard() -> Node:
 ## global, so a bare reference is "Identifier not found". The /root lookup is order-free.
 func _sync_manager() -> Node:
 	return get_node_or_null(^"/root/SyncManager")
+
+
+## True while SyncManager is RE-SIMULATING a corrected tick. The card-presentation
+## emitters below are guarded on this so a rollback correction never re-fires the
+## HUD/VFX/SFX (Creative Director playtest: online, the stack double-stacked shaking
+## cards + a desynced countdown). The SIM — staging, spawns, cooldowns — runs every
+## re-sim regardless; ONLY these presentation hooks are suppressed.
+func _is_in_rollback() -> bool:
+	var sm: Node = _sync_manager()
+	return sm != null and sm.is_in_rollback()
+
+
+func _emit_card_cast(card: CardResource) -> void:
+	if not _is_in_rollback():
+		card_cast.emit(card)
+
+
+func _emit_spell_cast(node: Node, spell: Object) -> void:
+	if not _is_in_rollback():
+		spell_cast.emit(node, spell)
+
+
+func _emit_spell_staged(card: CardResource) -> void:
+	if not _is_in_rollback():
+		spell_staged.emit(card)
+
+
+func _emit_card_rejected(card: CardResource) -> void:
+	if not _is_in_rollback():
+		card_rejected.emit(card)
 
 
 func _card_for_slot(slot: int) -> CardResource:
