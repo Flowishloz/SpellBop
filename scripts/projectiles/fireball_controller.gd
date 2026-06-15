@@ -153,6 +153,14 @@ func _on_expired() -> void:
 ## centre, so the flash always reads exactly at the glowing perimeter — and a wide
 ## frost wave opts out entirely (emits_wall_pulse) so it never pulses mid-court.
 func _on_bounced(normal_x: int, _normal_y: int) -> void:
+	# PRESENTATION ONLY (wall-pulse VFX + SFX). MUST be suppressed during a rollback
+	# re-sim: `bounced` re-fires on every re-sim, and each call drops a fresh wall pulse
+	# into the Projectiles container (~rollback-depth copies per bounce). Aimed shots
+	# bounce off the side walls repeatedly, so the pulses pile up, balloon the container,
+	# and spiral the rollback into a FREEZE (the "both froze in round 2" report). The
+	# velocity reflection itself is sim, done in ProjectileMovementComponent before this.
+	if SyncManager != null and SyncManager.is_in_rollback():
+		return
 	if normal_x == 0 or not emits_wall_pulse:
 		return
 	var visual: Node3D = get_node_or_null(^"Visual") as Node3D
@@ -254,11 +262,16 @@ func get_collider_half_extents() -> SGFixedVector2:
 ## SHATTER this frost wave: the broken-defense glass burst + shatter SFX, then
 ## the wave is gone (called by a max-charge fireball that broke through it).
 func shatter_ice() -> void:
-	var visual: Node3D = get_node_or_null(^"Visual") as Node3D
-	if visual != null:
-		BurstFX.spawn(get_parent(), visual.global_position + Vector3(0, 0.3, 0),
-				Vector3.UP, Color(0.78, 0.95, 1.0, 0.95), 34, 4.4, 0.06, 84.0)
-	Sfx.play(&"shield_shatter")
+	# Presentation (glass burst + SFX) fires only on the LIVE tick, never a rollback
+	# re-sim (which would stack duplicate bursts into the Projectiles container, same as
+	# the bounce VFX). The _despawn() below is SIM — it MUST run on every re-sim so the
+	# wave's removal stays in lockstep across peers.
+	if SyncManager == null or not SyncManager.is_in_rollback():
+		var visual: Node3D = get_node_or_null(^"Visual") as Node3D
+		if visual != null:
+			BurstFX.spawn(get_parent(), visual.global_position + Vector3(0, 0.3, 0),
+					Vector3.UP, Color(0.78, 0.95, 1.0, 0.95), 34, 4.4, 0.06, 84.0)
+		Sfx.play(&"shield_shatter")
 	_despawn()
 
 
