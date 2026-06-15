@@ -162,6 +162,13 @@ var _resolver: StackResolver = null
 # resolver is the sim authority, this file is presentation.
 var _roundflow: RoundFlowResolver = null
 
+# AIM ARROW (Mobile-MP B2b): a glowing ground arrow at the LOCAL wizard's feet
+# showing the firing angle while it charges / stages. Pure presentation; it retargets
+# to the local wizard each frame via _local_wizard() (authority-based, so it follows
+# the client's OWN wizard with no hardwiring — sidesteps the client-perspective rule).
+const _AIM_ARROW_SCRIPT := preload("res://scripts/visual/aim_arrow.gd")
+var _aim_arrow = null
+
 # stack_winner_speed_multiplier cached to fixed-point (1.5 -> 98304).
 var _stack_winner_boost_fp: int = 98304
 
@@ -277,6 +284,8 @@ func _ready() -> void:
 	round_started.emit(round_number)
 	_warm_up_render_pipelines()
 	_build_arena_borders()
+	_aim_arrow = _AIM_ARROW_SCRIPT.new()
+	add_child(_aim_arrow)
 
 
 ## LAG-SPIKE FIX (slow-mo exit hitch): the first stack resolution used to
@@ -345,6 +354,7 @@ func _build_arena_borders() -> void:
 
 func _process(delta: float) -> void:
 	_update_death_ripple(delta)
+	_update_aim_arrow()
 	# PRESENTATION MIRROR (Sub-phase 3): keep the UI read-surface fields in lockstep
 	# with the RoundFlowResolver's authoritative (rolled-back) sim state every frame,
 	# so a mispredicted-then-rolled-back KO can never leave the scoreboard / state
@@ -876,6 +886,44 @@ func _local_wizard() -> Node:
 	if _opponent != null and _opponent.is_multiplayer_authority():
 		return _opponent
 	return null
+
+
+## AIM ARROW (Mobile-MP B2b): point the glowing ground arrow at the LOCAL wizard's
+## firing angle while it CHARGES a fireball or has an OWNED spell staged on the stack;
+## hide it otherwise. The down-court sign comes from the FOE's rig Z (which already
+## encodes the client's view_flip_z mirror); the lateral offset is world +X (sim vx is
+## never flipped) — so the arrow matches the ball's visual travel on BOTH peers.
+func _update_aim_arrow() -> void:
+	if _aim_arrow == null:
+		return
+	var wiz: Node = _local_wizard()
+	if wiz == null:
+		wiz = _player   # offline / pre-netplay: the human drives the blue Player
+	if wiz == null:
+		_aim_arrow.hide_arrow()
+		return
+	var spell_caster: Node = _find_child_of(wiz, "SpellCasterComponent")
+	var card_caster: Node = _find_child_of(wiz, "CardCasterComponent")
+	var charging: bool = spell_caster != null and spell_caster.is_charging()
+	var staging: bool = card_caster != null and card_caster.is_staging()
+	if not (charging or staging):
+		_aim_arrow.hide_arrow()
+		return
+	var rig: Node3D = wiz.get_node_or_null(^"WizardRig") as Node3D
+	var foe: Node = _opponent if wiz == _player else _player
+	var foe_rig: Node3D = (foe.get_node_or_null(^"WizardRig") as Node3D) if foe != null else null
+	if rig == null or foe_rig == null:
+		_aim_arrow.hide_arrow()
+		return
+	# lateral fraction = sector / AIM_SECTORS x aim_max_fraction (== vx / |vy|).
+	var frac: float = 0.0
+	if spell_caster != null and InputCommand.AIM_SECTORS > 0:
+		frac = float(spell_caster.get_aim_sector()) / float(InputCommand.AIM_SECTORS) \
+				* float(spell_caster.aim_max_fraction)
+	var dz: float = signf(foe_rig.global_position.z - rig.global_position.z)
+	if dz == 0.0:
+		dz = -1.0
+	_aim_arrow.point(rig.global_position, Vector3(frac, 0.0, dz).normalized())
 
 
 ## Connects (or disconnects) the LOCAL-player charge/cast FEEDBACK — the camera charge

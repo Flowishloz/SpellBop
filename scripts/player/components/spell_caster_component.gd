@@ -442,6 +442,19 @@ func _aim_sector_now() -> int:
 	return _movement.get_aim_dir() * ticks * InputCommand.AIM_SECTORS / aim_full_hold_ticks
 
 
+## PRESENTATION (Mobile-MP B2b): true while a charge is banked, so the ground aim
+## arrow shows while the local player charges a fireball. (Charge progress > 0 covers
+## actively building AND holding at the full-charge mark.)
+func is_charging() -> bool:
+	return _charge_ticks > 0
+
+
+## PRESENTATION (Mobile-MP B2b): the wizard's CURRENT unified aim sector (the same
+## value _aim_vx_fp turns into vx), so the aim arrow shows the EXACT firing angle.
+func get_aim_sector() -> int:
+	return _aim_sector_now()
+
+
 ## The lane half-width (fixed-point) spawns clamp to — read from our sibling
 ## MovementComponent so it tracks the same scene-overridden bound the body uses.
 func _arena_bound_fp() -> int:
