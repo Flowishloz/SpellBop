@@ -1,5 +1,5 @@
 PROJECT STATE — WIZARD DODGEBALL
-Last sync: 2026-06-15 | Sprint 22 Phase 2 COMPLETE (rollback cards: tick-counted Stack + card spawns + cards enabled online) + netplay stability/perspective fixes. On branch feature/spawn-rollback-cards.
+Last sync: 2026-06-15 | Sprint 22 Sub-phase 3 COMPLETE (deterministic ROUND FLOW via RoundFlowResolver — the last netplay desync hole; the WHOLE match now runs online). Phase 1 (base fireball) + Phase 2 (rollback cards) + Sub-phase 3 (round flow) all done. On branch feature/spawn-rollback-cards.
 
 ===========================================================
 COMPLETED SYSTEMS
@@ -2052,3 +2052,88 @@ Commits since the last doc sync (0d5cba6), oldest->newest: 6c2475d (Phase 2a Sta
 6b3428a (offline stack-timing fix), 10827bb (Phase 2b card spawns through SyncManager.spawn),
 70c70e3 (Phase 2c cards enabled in netplay), ae325f4 (detached-entity null-guards),
 8f8c4a7 (client card-hand retarget). NOT re-exported to Android this sprint.
+
+[SPRINT 22 SUB-PHASE 3 — DETERMINISTIC ROUND FLOW (2026-06-15)]
+The LAST netplay desync hole is closed: ROUND FLOW (KO detection, scoring, the cinematic death
+beat, the post-round break, and the round reset) is now tick-deterministic and rolls back. With it,
+ALL mid-match spawns + the round flow are rollback-correct — the WHOLE match runs online. Built on
+git branch feature/spawn-rollback-cards; commit d54f807. All 19 headless suites are BIT-IDENTICAL on
+Godot 4.6.3-stable (run as TWO full sequential sweeps + 8x test_death_sequence, flake-free); the LAN
+smoke (tests/run_net_smoke.ps1 -Mode lan -Headless) is BYTE-IDENTICAL on both peers including the new
+rf= round-flow fingerprint.
+
+THE BLOCKER (per the roadmap):
+- KO DETECTION was already deterministic (HP->0 on a tick), but the death-sequence timer (a
+  SceneTreeTimer) and the post-round break clock (Time.get_ticks_msec) were WALL-CLOCK, and
+  _begin_round() mutated SIM state OFF-TICK from a non-rollback node (reposition wizards, _health.reset(),
+  _clear_projectiles() despawns, round_number) -> desync on the first online KO. This was also the ROOT
+  CAUSE the ae325f4 crash-guards only papered over: a wall-clock _clear_projectiles() landing mid-tick is
+  exactly what drives a detached entity into the null-get_tree() crash.
+
+THE FIX — RoundFlowResolver (a network_sync node mirroring StackResolver):
+- NEW scripts/arena/round_flow_resolver.gd (class RoundFlowResolver) — mirrors StackResolver VERBATIM:
+  self-drives offline via local_tick_driver_enabled; joins the network_sync group via set_netplay() in a
+  netplay match; needs NO SyncManager reference, so there is NO compile-order risk (unlike card_caster).
+- DETECTS the KO by POLLING HP each tick in _network_process — NOT the knocked_out signal, which RE-FIRES
+  on a rollback re-sim and would DOUBLE-COUNT the score. The phase int is the once-per-round guard
+  (saved/loaded), exactly like StackResolver's _resolve_ticks==0. A same-tick mutual KO deterministically
+  credits the Player (opponent-down checked first).
+- HOLDS phase (ACTIVE / DEATH_WAIT / POST_ROUND / OVER) + countdown + player_score + opponent_score +
+  round_number + winner as rolled-back ints (_save_state/_load_state).
+- PERFORMS the round reset IN-TICK at countdown-zero (reset both wizards via reset_for_round, clear
+  projectiles via each child's _despawn(), increment round) — landing on the SAME tick on both peers. This
+  in-tick despawn is the REAL fix for the crash the ae325f4 guards only papered over.
+- COUNTS death_seconds x tick_rate ticks for the death beat + break_seconds x tick_rate ticks for the
+  break. These span the correct REAL time because sim ticks stay at 60Hz under slow-mo (the same property
+  StackResolver relies on — Engine.time_scale scales each tick's DELTA, not the _physics_process frequency).
+
+MATCHCONTROLLER DEMOTED TO PRESENTATION:
+- core/match_controller.gd: the wall-clock death-sequence SceneTreeTimer, the Time.get_ticks_msec()
+  post-round break, and the off-tick _begin_round() / _clear_projectiles() / _on_knocked_out are GONE.
+- The four RoundFlowResolver phase-change signals (ko_began / break_began / match_concluded / round_reset)
+  now drive the cinematics (slow-mo, dolly zoom, banners, overlays); each handler is is_in_rollback()-guarded.
+- A _sync_mirror() helper keeps player_score / opponent_score / round_number / match_state authoritative
+  for the UI read surface; it runs BOTH per-frame in _process AND synchronously inside each signal handler
+  (a _process-only mirror is one frame stale to an await-then-read listener — see graveyard).
+- request_rematch() routes through RoundFlowResolver.reset_match() and is netplay-GUARDED (a synced online
+  rematch is a separate, deferred feature).
+
+NETWORKMANAGER:
+- core/network_manager.gd: _smoke_fingerprint() now folds in the resolver's phase/scores/round
+  (rf=(ph..,ps..,os..,rn..)), proving both peers agree on round-flow state under forced rollbacks.
+
+TESTS (updated for the now-ASYNC poll-based KO detection):
+- tests/test_death_sequence.gd: AWAITS knockout_began instead of assuming a fixed frame count (the poll
+  fires on the next sim TICK, which an idle/process_frame wait is not guaranteed to contain).
+- tests/test_play_again.gd + tests/screenshot_postgame.gd: dropped the removed _post_round_deadline_msec
+  poke (the break elapses on ticks now).
+
+VERIFICATION:
+- 19 headless suites BIT-IDENTICAL on Godot 4.6.3-stable, run as TWO full sequential sweeps + 8x
+  test_death_sequence — flake-free.
+- LAN smoke (run_net_smoke.ps1 -Mode lan -Headless) BYTE-IDENTICAL on both peers, including the new rf=
+  round-flow fingerprint.
+- 60Hz-under-slow-mo CONFIRMED: death_seconds x tick_rate ticks span death_seconds of REAL time even at
+  death_time_scale = 0.3 (the 0.8s beat lands in ~0.8s; passed all 13 runs).
+
+DEFERRED / KNOWN LIMITATIONS:
+- LIVE ONLINE KO NOT DRIVEN IN-SMOKE: the smoke proves the resolver's rollback-STATE determinism (rf=
+  byte-identical under forced rollbacks) but did NOT drive a live KO in-window — HP only reached 3 by tick
+  300, and a full KO->death->break->reset cycle (~8.5s) risks the 40s smoke timeout. A live online KO is
+  the Creative Director's playtest; the KO/scoring/reset LOGIC is separately proven bit-identical by the
+  offline suites.
+- SYNCED ONLINE REMATCH (deferred): request_rematch() routes through RoundFlowResolver.reset_match() but is
+  netplay-guarded; a tick-synced online rematch is a separate follow-up.
+- Carried unchanged from Phase 2: card-presentation rollback guards (cosmetic — possible duplicate cast VFX
+  during a rollback correction) and barrier CAPTURE-state rollback (_captured_ball/_owner_body are live
+  refs, not in _save_state). The healing-emerald CADENCE stays _netplay-disabled — the next spawn-rollback
+  follow-up (the HEALING EMERALD phase, now the remaining ACTIVE-NEXT roadmap item).
+
+Three graveyard lessons recorded in HANDOFF.md (reusable): (1) SceneTree.process_frame fires BEFORE
+_process, so a _process-only UI mirror is one frame stale to an await-then-read listener — sync inside the
+signal handler too; (2) poll-based detection is ASYNC (next sim tick) where the old signal was synchronous,
+so a fixed-frame test wait flakes — await the resulting signal; (3) 60Hz-under-slow-mo CONFIRMED — count
+seconds x tick_rate sim ticks to time a real-duration beat that must survive slow-mo.
+
+Commit since the Phase 2 doc sync, oldest->newest: d54f807 (Sub-phase 3 deterministic round flow —
+RoundFlowResolver). NOT re-exported to Android this sprint.
