@@ -170,6 +170,33 @@ func _ready() -> void:
 		_left = settings.left_handed
 
 
+## NETPLAY (Phase 2c fix): re-point the hand at a different wizard's CardCasterComponent so
+## the CLIENT's hand animates ITS OWN (Opponent) card casts + cooldowns. The HUD hard-binds
+## the blue Player in _ready; MatchController calls this on the client (mirrors the cast
+## button / health-bar retargets). Both wizards share the same 3-card test hand, so the
+## already-built faces still match — only the signal source + per-slot cooldown query move.
+func set_caster(caster: Node) -> void:
+	if caster == null or caster == _caster:
+		return
+	if _caster != null:
+		if _caster.cast_charge_started.is_connected(_on_charge_started):
+			_caster.cast_charge_started.disconnect(_on_charge_started)
+		if _caster.cast_charge_canceled.is_connected(_on_charge_canceled):
+			_caster.cast_charge_canceled.disconnect(_on_charge_canceled)
+		if _caster.spell_staged.is_connected(_on_spell_staged):
+			_caster.spell_staged.disconnect(_on_spell_staged)
+		if _caster.card_cast.is_connected(_on_card_cast):
+			_caster.card_cast.disconnect(_on_card_cast)
+		if _caster.card_rejected.is_connected(_on_card_rejected):
+			_caster.card_rejected.disconnect(_on_card_rejected)
+	_caster = caster
+	_caster.cast_charge_started.connect(_on_charge_started)
+	_caster.cast_charge_canceled.connect(_on_charge_canceled)
+	_caster.spell_staged.connect(_on_spell_staged)
+	_caster.card_cast.connect(_on_card_cast)
+	_caster.card_rejected.connect(_on_card_rejected)
+
+
 ## One placeholder card face: dark panel, type-color header, name, cost
 ## pips, damage line, rules text (rules only shown staged/expanded).
 func _build_card_face(card_res: CardResource) -> Control:

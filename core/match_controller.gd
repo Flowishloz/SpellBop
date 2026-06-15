@@ -805,6 +805,12 @@ func _enter_netplay() -> void:
 	var cast_btn: Node = get_node_or_null(^"MatchHUD/CastButton")
 	if cast_btn != null and cast_btn.has_method(&"set_caster") and local_wizard != null:
 		cast_btn.set_caster(local_wizard.get_node_or_null(^"SpellCasterComponent"))
+	# Re-point the card-hand HUD at the LOCAL wizard's CardCasterComponent — same client
+	# perspective fix: the HUD hard-binds the blue Player, so the CLIENT (red Opponent) needs
+	# it retargeted or its card casts + cooldown dims never animate. Host: local == Player (no-op).
+	var card_hand: Node = get_node_or_null(^"CardHandHUD")
+	if card_hand != null and card_hand.has_method(&"set_caster") and local_wizard != null:
+		card_hand.set_caster(local_wizard.get_node_or_null(^"CardCasterComponent"))
 	# CLIENT VIEW (visual mirror): each player should see THEIR OWN wizard in the
 	# near, well-lit foreground. The HOST owns Player (already near) — nothing to do.
 	# The CLIENT owns Opponent (normally the FAR wizard), so the court is MIRRORED
