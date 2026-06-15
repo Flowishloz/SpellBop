@@ -183,6 +183,11 @@ func _network_spawn(data: Dictionary) -> void:
 
 ## One tick: capture/hold/release first, optional X drift, then lifetime.
 func _network_process(_input: Dictionary) -> void:
+	# DESPAWN-WINDOW GUARD (netplay): skip a tick while detached (despawn retire window, or a
+	# wall-clock round-reset clear landing mid-tick) — get_parent() / sync_to_physics_engine
+	# on a treeless body crash otherwise. Mirrors FireballController._network_process.
+	if not is_inside_tree():
+		return
 	if _capture_remaining > 0:
 		_tick_capture()
 	elif _woa_armed:

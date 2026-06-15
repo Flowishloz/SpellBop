@@ -84,7 +84,13 @@ func _ready() -> void:
 ## so a reflected wave reliably connects (and freezes) on its owner. Pure int
 ## math (the body's fixed-point velocity), deterministic on every peer.
 func _network_process(_input: Dictionary) -> void:
-	if _has_hit:
+	# DESPAWN-WINDOW GUARD (netplay): the rollback SyncManager can drive this scan while the
+	# projectile is detached from the tree (the despawn retire window, or a wall-clock
+	# round-reset projectile clear landing mid-tick) — get_tree() is then null and
+	# get_nodes_in_group() at line 96 hard-crashes. The parent FireballController guards its
+	# own _network_process, but a child's tree state can read null while the parent's still
+	# reads attached during the rollback/reset lifecycle, so guard at the get_tree() site too.
+	if _has_hit or not is_inside_tree():
 		return
 	var step_x: int = 0
 	var step_y: int = 0

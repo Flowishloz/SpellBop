@@ -304,7 +304,7 @@ func split_on_barrier(dir_sign: int, count: int = 2, damage_each: int = 1) -> vo
 	# NOT duplicate(): a duplicated node isn't registered with SyncManager and would
 	# desync / crash the next rollback. Shards carry no homing and never re-split.
 	var scene: PackedScene = load(scene_file_path) if scene_file_path != "" else null
-	if scene == null:
+	if scene == null or parent == null:
 		_despawn()
 		return
 	for i in count:
@@ -341,10 +341,14 @@ func redirect(new_source: Node, speed_multiplier_fp: int) -> void:
 ## (the same group-walk _find_enemy_wizard / hit detection already rely on).
 ## Falls back to the match_arena default only if no wizard mover is found.
 func _arena_bound_fp() -> int:
-	for wizard in get_tree().get_nodes_in_group(&"wizards"):
-		for child in wizard.get_children():
-			if child is MovementComponent:
-				return child.arena_half_width_fp()
+	# get_tree() can be null if this runs while the ball is detached (rollback lifecycle) —
+	# fall back to the authored default rather than crash.
+	var tree: SceneTree = get_tree()
+	if tree != null:
+		for wizard in tree.get_nodes_in_group(&"wizards"):
+			for child in wizard.get_children():
+				if child is MovementComponent:
+					return child.arena_half_width_fp()
 	return SGFixed.from_float(400.0)
 
 
