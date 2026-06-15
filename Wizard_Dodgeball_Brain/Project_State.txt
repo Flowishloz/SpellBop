@@ -1,5 +1,5 @@
 PROJECT STATE — WIZARD DODGEBALL
-Last sync: 2026-06-15 | DESKTOP NETPLAY FEATURE-COMPLETE + PLAYTESTED; MOBILE-MP A/B/B2 DONE; CD A/B/B2 APK playtest done — 4 fixes shipped, BUT a round-2 netplay DESYNC (aimed-projectile path) is the NEW TOP BLOCKER (reproduced + diagnosed, NOT fixed) and must be fixed AHEAD OF item C. Spawn-rollback roadmap done (fireball + cards + round flow + emerald), online Play Again synced (commit 4579f67), client charge-rumble retargeted (commit 44e67b0). MOBILE MULTIPLAYER ENABLEMENT: A — delta_rollback cross-compiled for android arm64 + export fix (commit 151427d); B — netplay touch-movement input fix (commit 1d5973b); B2 — joystick-direction aiming + ground aim arrow (commits c65421b + 27b3908) — ALL DONE + verified. CD A/B/B2 APK PLAYTEST (2026-06-15): 4 fixes — 2x finer aim + slimmer/forward aim arrow + on-screen menu button (commit eaa90f9), card-presentation rollback guards (commit f6fa64b, resolves the cosmetic carried debt), a -Rounds netplay smoke repro (commit 22a7572), bounce/shatter VFX rollback guards / node-spam fix (commit 0f24d23). UNFIXED: the round-2 FREEZE is a rollback DESYNC (Fatal state mismatch -> peer torn down -> ping-timer error spam -> freeze) in the AIMED-fireball path under REAL rollbacks (wizards sync, projectiles diverge) — REPRODUCED via run_net_smoke.ps1 -Rounds, root cause NOT yet fixed; NEXT = per-component _save_state hashing to find the diverging field. Memory: netplay-aimed-projectile-desync-freeze.md. *** THIS DESYNC IS THE NEW TOP BLOCKER — fix it BEFORE item C *** (C = real-online Nakama (Docker 127.0.0.1:7350) + real-latency / on-device validation; pointless while the aimed path desyncs). See the BLOCKER + NEXT PHASE sections in HANDOFF.md + below. On branch feature/spawn-rollback-cards.
+Last sync: 2026-06-15 | DESKTOP NETPLAY FEATURE-COMPLETE + PLAYTESTED; MOBILE-MP A/B/B2 DONE; CD A/B/B2 APK playtest done — 4 fixes shipped; the round-2 netplay DESYNC (aimed-projectile path) is now FIXED (commit d3a53a4), so item C is the SOLE remaining mobile-MP task and is now UNBLOCKED. Spawn-rollback roadmap done (fireball + cards + round flow + emerald), online Play Again synced (commit 4579f67), client charge-rumble retargeted (commit 44e67b0). MOBILE MULTIPLAYER ENABLEMENT: A — delta_rollback cross-compiled for android arm64 + export fix (commit 151427d); B — netplay touch-movement input fix (commit 1d5973b); B2 — joystick-direction aiming + ground aim arrow (commits c65421b + 27b3908) — ALL DONE + verified. CD A/B/B2 APK PLAYTEST (2026-06-15): 4 fixes — 2x finer aim + slimmer/forward aim arrow + on-screen menu button (commit eaa90f9), card-presentation rollback guards (commit f6fa64b, resolves the cosmetic carried debt), a -Rounds netplay smoke repro (commit 22a7572), bounce/shatter VFX rollback guards / node-spam fix (commit 0f24d23). ROUND-2 DESYNC FIXED (commit d3a53a4): the FREEZE was a rollback DESYNC (Fatal state mismatch -> peer torn down -> ping-timer error spam -> freeze) and the ROOT CAUSE was NOT the aim/spawn/bounce sim (all deterministic) but the render-pipeline WARM-UP — _warm_up_render_pipelines() add_child()s barrier.tscn (SG body, collision_layer WALLS at sim centre) whose wall-clock 0.4s lifetime, stretched by the staged-card slow-mo, made an aimed fireball bounce off a mid-court ghost wall NON-deterministically under rollback; FIX = make every warm-up body collision-inert (layer/mask 0 + sync_to_physics_engine()). Same commit fixed a latent smoke FALSE-FAIL: _smoke_fingerprint() sorted projectiles by StringName (pointer-ordered, non-deterministic across processes) -> String(a.name). VERIFIED 4.6.3-stable: 20/20 suites pass, -Rounds smoke byte-identical into ROUND 2 on both peers (0 Fatal state mismatch), normal smoke byte-identical. Memory: netplay-aimed-projectile-desync-freeze.md (updated). C = real-online Nakama (Docker 127.0.0.1:7350) + real-latency / on-device validation (re-test the APK off the FIXED branch); needs the CD's Docker/devices env. See the NEXT PHASE sections in HANDOFF.md + below. On branch feature/spawn-rollback-cards.
 
 ===========================================================
 COMPLETED SYSTEMS
@@ -2372,7 +2372,65 @@ FIXED:
   (input-derived, NOT saved — RE-VERIFY it's actually rollback-safe) or the DEFAULT_ACTIONS movement switch.
 - Session memory: netplay-aimed-projectile-desync-freeze.md. THIS BLOCKER MUST BE FIXED BEFORE item C (it is a
   showstopper for mobile MP — validating real-online Nakama / real-latency is pointless while the aimed path
-  desyncs).
+  desyncs). [SUPERSEDED — FIXED in commit d3a53a4; see the entry directly below.]
+
+-----------------------------------------------------------
+[2026-06-15] ROUND-2 NETPLAY DESYNC FIXED — WARM-UP BARRIER IN THE SIM PHYSICS (commit d3a53a4)
+-----------------------------------------------------------
+The round-2 FREEZE from the CD A/B/B2 APK playtest (the entry above) is FIXED + fully verified on branch
+feature/spawn-rollback-cards. It was a rollback DESYNC — NOT cross-platform determinism (same build) and NOT a
+crash (no script error). With this fixed, item C is UNBLOCKED and is the SOLE remaining mobile-MP task.
+
+ROOT CAUSE (the surprise — NOT the aim/spawn/bounce sim, which were ALL deterministic): the render-pipeline
+WARM-UP.
+- MatchController._warm_up_render_pipelines() (the Sprint-14 first-draw-hitch fix) add_child()s barrier.tscn +
+  the projectile scenes to warm shaders, moving only their VISUAL Node3D under the floor. But each scene ROOT
+  is an SG physics body, so its _ready() REGISTERS it in the deterministic SG physics space — and the unmoved
+  barrier COLLIDER sat on collision_layer = LAYER_WALLS (4) at sim (0,0) = arena CENTRE (x in [-150,150],
+  y in [-20,20]).
+- Those warm-up bodies are freed on a WALL-CLOCK SceneTreeTimer(0.4); the Stack slow-mo a staged card opens
+  (Engine.time_scale = 0.1) STRETCHES that 0.4 s far into the match. A gameplay fireball's mask includes WALLS,
+  so an aimed shot crossing centre BOUNCED off the warm-up barrier at mid-court (vx flips, X-normal, |v|
+  preserved where NO real wall exists).
+- Because the barrier's lifetime is WALL-CLOCK, its presence at a given SIM TICK differed between peers under
+  asymmetric rollback -> one peer reflected the ball, the other didn't -> "Fatal state mismatch" -> peer torn
+  down -> ping-spam 30k+ -> both apps froze. (Matches the repro: wizards in lockstep, projectiles diverge — host
+  nproj=8 at x~+427, client nproj=4 at x~-153.)
+- Why it HID: the plain determinism smoke never moves/aims (straight shots at x=0) and never stages a card (no
+  slow-mo -> the warm-up bodies are freed at ~t=24, before the first cast at t=40), so a gameplay ball never met
+  the warm-up barrier. The bounce-VFX node-spam balloon (commit 0f24d23, nproj 6->32+) was a SEPARATE real bug
+  surfaced during the hunt — bounding it (nproj 32->8) did NOT fix the desync.
+
+THE FIX (commit d3a53a4):
+- In _warm_up_render_pipelines, after add_child(inst), make every warm-up body collision-INERT —
+  collision_layer = 0, collision_mask = 0, sync_to_physics_engine() (guarded by "collision_layer" in inst) — so
+  it renders/warms pipelines WITHOUT ever touching the rollback sim.
+- ALSO FIXED (latent SMOKE-test FALSE-FAIL, same commit): core/network_manager.gd _smoke_fingerprint() sorted
+  projectiles by a.name, but Node.name is a StringName and StringName < StringName compares by the interned
+  POINTER (allocation-order-dependent -> non-deterministic across two processes), so the two peers listed
+  identical balls in a different ORDER -> a false FAIL even in perfect lockstep. Fixed to
+  String(a.name) < String(b.name). The fingerprint was also enriched (per-ball velocity + mask + a barrier dump
+  nbar; nproj now filters to real SG bodies so wall-pulse VFX no longer inflate the count).
+
+VERIFIED (Godot 4.6.3-stable):
+- 20/20 headless suites pass (offline determinism unaffected — the warm-up bodies were never meant to be in the
+  sim).
+- run_net_smoke.ps1 -Mode lan -Headless -Rounds now reaches OK on BOTH peers with byte-identical state into
+  ROUND 2 (0 "Fatal state mismatch"); the normal LAN smoke stays byte-identical.
+- Session memory updated: netplay-aimed-projectile-desync-freeze.md.
+
+GENERAL RULE (bug-graveyard worthy): any presentation/warm-up/preview node whose ROOT (or a child) is an SG
+physics body JOINS the deterministic SG space the instant it is add_child()'d; gameplay projectiles will collide
+with it NON-deterministically under rollback unless it is collision-inert (layer/mask 0) or kept out of the
+physics space — and if its lifetime is wall-clock (SceneTreeTimer), the divergence is guaranteed once slow-mo
+stretches it into a live rally. (Compounds the netplay rule that nothing wall-clock-timed may touch the sim.)
+Second rule: never sort by / key on a StringName when the order must be reproducible across processes/peers —
+convert to String first (StringName comparison is pointer/identity-based, fast but non-portable).
+
+ITEM C IS NOW UNBLOCKED — it is the SOLE remaining mobile-MP task (real-online Nakama + real-latency validation,
+needs the CD's Docker/devices env). The on-device APK re-test under C must include this d3a53a4 fix (the CD's
+first A/B/B2 APK predated it — that build is the one that froze in round 2); re-export off the fixed branch
+before the device re-test.
 
 -----------------------------------------------------------
 NEXT PHASE — MOBILE MULTIPLAYER ENABLEMENT
@@ -2400,13 +2458,16 @@ Desktop netplay is feature-complete + playtested. MOBILE-MP items A, B, and B2 a
       27b3908): a glowing emissive-cyan UNSHADED ground arrow at the LOCAL wizard's feet showing the EXACT firing
       angle, shown ONLY when charging a fireball OR with an OWNED staged spell, retargeted to the local wizard
       EVERY frame (client-perspective-safe by construction). New tests/screenshot_aim_arrow.gd.
-  C. [PENDING — BLOCKED on the round-2 DESYNC above] Real online (Nakama) + real-latency rollback validation
+  C. [PENDING — UNBLOCKED; SOLE remaining mobile-MP task] Real online (Nakama) + real-latency rollback validation
      before shipping mobile MP. Stand up local Nakama (Docker 127.0.0.1:7350, key defaultkey), run
      run_net_smoke.ps1 -Mode online for byte-identical sync over the Nakama transport, then a REAL two-device /
-     real-latency playtest, PLUS the on-device APK playtest of A/B/B2 (touch movement, joystick aiming, the arrow).
-A, B, and B2 are DONE. The TOP-PRIORITY task is now the round-2 netplay DESYNC (aimed-projectile path) diagnosed
-in the CD A/B/B2 playtest above — it MUST be fixed BEFORE C (validating real-latency play is pointless while the
-aimed path desyncs under real rollbacks). C is the validation gate after that (needs the CD's Docker/devices env).
+     real-latency playtest, PLUS the on-device APK playtest of A/B/B2 (touch movement, joystick aiming, the arrow)
+     — re-exported off the FIXED branch so it includes the d3a53a4 round-2 desync fix.
+A, B, and B2 are DONE, and the round-2 netplay DESYNC (aimed-projectile path) that briefly sat AHEAD of C as a
+blocker is now FIXED (commit d3a53a4 — the render-pipeline warm-up barrier joining the rollback sim, made
+collision-inert; see the [2026-06-15] ROUND-2 NETPLAY DESYNC FIXED entry above). Item C is therefore the SOLE
+remaining mobile-MP task and is now the TOP-PRIORITY work — the validation gate before shipping mobile MP (needs
+the CD's Docker/devices env).
 
 Commits since the Sub-phase 3 doc sync (d54f807), oldest->newest: 4579f67 (online Play Again — deterministic
 synced rematch), 9f1cdb8 (healing-emerald spawn-rollback — deterministic cadence + enable online),
@@ -2415,7 +2476,9 @@ synced rematch), 9f1cdb8 (healing-emerald spawn-rollback — deterministic caden
 input fix), c65421b (mobile-MP B2a: joystick-direction aiming sim model), 27b3908 (mobile-MP B2b: ground aim
 arrow), eaa90f9 (CD playtest: 2x finer aim + slimmer/forward aim arrow + on-screen menu button), f6fa64b (CD
 playtest fix #1: card-presentation rollback guards — stack-display glitch), 22a7572 (-Rounds netplay smoke repro
-for the round-2 freeze), 0f24d23 (guard fireball bounce + shatter VFX during rollback — node-spam fix).
+for the round-2 freeze), 0f24d23 (guard fireball bounce + shatter VFX during rollback — node-spam fix),
+d3a53a4 (round-2 netplay DESYNC fix — warm-up barrier made collision-inert + StringName-sort smoke false-FAIL).
 SpellBop.apk RE-EXPORTED for android arm64 (commit 151427d). The round-2 netplay DESYNC (aimed-projectile path)
-surfaced in the CD A/B/B2 APK playtest is the NEW TOP BLOCKER — reproduced + diagnosed, NOT fixed; it must be
-fixed before item C (see the CD A/B/B2 APK PLAYTEST entry above + the BLOCKER section in HANDOFF.md).
+surfaced in the CD A/B/B2 APK playtest is now FIXED (commit d3a53a4 — the render-pipeline warm-up barrier joining
+the rollback sim; see the [2026-06-15] ROUND-2 NETPLAY DESYNC FIXED entry above + the ✅ RESOLVED section in
+HANDOFF.md), so item C is UNBLOCKED and is the sole remaining mobile-MP task.
