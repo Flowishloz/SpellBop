@@ -30,8 +30,10 @@ func _run() -> void:
 	_save("res://tests/_screenshot_postround.png")
 
 	# MATCH END: KO again in round 2 (score 2-0 -> MATCH_OVER + podium).
-	arena.post_round_seconds = 0.3
-	arena._post_round_deadline_msec = Time.get_ticks_msec()  # end break now
+	# Sub-phase 3: end the parked break NOW by forcing the resolver's live countdown to
+	# expire (post_round_seconds is cached as ticks at setup, so poke the countdown, not it).
+	if arena._roundflow != null:
+		arena._roundflow._countdown = 1
 	await _wait_real(0.8)  # round 2 starts
 	arena.get_node("Opponent/Health").apply_damage(5)
 	await _wait_real(1.8)

@@ -11,10 +11,12 @@
 ##     shows the expanded hand, first to 2 rounds takes the match, the
 ##     victory screen offers a rematch.
 ##
-## TIMING NOTE: round-flow timers are wall-clock presentation orchestration
-## (the sim is parked between rounds — tick drivers disabled). When rollback
-## lands, round transitions become agreed ticks; this file is where that
-## conversion happens.
+## TIMING NOTE (Sprint 22 Sub-phase 3): round flow is now DETERMINISTIC — the
+## RoundFlowResolver (a network_sync node) owns KO detection, scores, the death/break
+## countdown, and the in-tick round reset, so transitions land on agreed sim ticks on
+## both peers. This file MIRRORS that state for the UI and runs the death/break
+## CINEMATICS (slow-mo, dolly zoom, banners, overlays) off the resolver's phase-change
+## signals, rollback-guarded — presentation only.
 class_name MatchController
 extends Node3D
 
@@ -143,7 +145,6 @@ var _camera: PunchOutCameraRig = null
 var _player: Node = null
 var _opponent: Node = null
 var _projectiles: Node = null
-var _post_round_deadline_msec: int = 0
 
 # THE STACK (Sprint 22 Phase 2): resolution + the winner reward now live on the
 # deterministic StackResolver (a network_sync node) so they land on the SAME sim tick
@@ -151,6 +152,15 @@ var _post_round_deadline_msec: int = 0
 # and reacts to the resolver's `resolved` signal for presentation cleanup. The casters
 # arm the resolver themselves when they stage.
 var _resolver: StackResolver = null
+
+# ROUND FLOW (Sprint 22 Sub-phase 3): KO detection, scores, the death/break
+# countdown, and the in-tick round reset now live on the deterministic
+# RoundFlowResolver (a network_sync node) so they land on the SAME sim tick on both
+# peers. This controller MIRRORS its scores/round/phase for the UI read surface
+# (player_score / opponent_score / round_number / match_state above) and runs the
+# death/break CINEMATICS off its phase-change signals, rollback-guarded — the
+# resolver is the sim authority, this file is presentation.
+var _roundflow: RoundFlowResolver = null
 
 # stack_winner_speed_multiplier cached to fixed-point (1.5 -> 98304).
 var _stack_winner_boost_fp: int = 98304
@@ -232,13 +242,31 @@ func _ready() -> void:
 		_resolver.setup(card_casters, _player, _opponent, _stack_winner_boost_fp)
 		_resolver.resolved.connect(_on_resolver_resolved)
 
-	# Damage feedback + ROUND FLOW: every wizard's hits shake the camera;
-	# a KO ends the round.
+	# ROUND FLOW SIM AUTHORITY (Sprint 22 Sub-phase 3): hand the round resolver its
+	# stable refs (both wizards + their HealthComponents, the Projectiles container, the
+	# stack resolver it cancels on a KO) + the round tuning, and listen for its
+	# deterministic phase-change beats to drive the death/break CINEMATICS (mirrors the
+	# StackResolver wiring above).
+	_roundflow = get_node_or_null(^"RoundFlowResolver") as RoundFlowResolver
+	if _roundflow != null:
+		var p_health: Node = _player.get_node_or_null(^"Health") if _player != null else null
+		var o_health: Node = _opponent.get_node_or_null(^"Health") if _opponent != null else null
+		_roundflow.setup(_player, _opponent, p_health, o_health, _projectiles, _resolver,
+				death_sequence_seconds, post_round_seconds, rounds_to_win,
+				SGFixed.from_float(player_spawn_y), SGFixed.from_float(opponent_spawn_y))
+		_roundflow.ko_began.connect(_on_resolver_ko)
+		_roundflow.break_began.connect(_on_resolver_break)
+		_roundflow.match_concluded.connect(_on_resolver_match_concluded)
+		_roundflow.round_reset.connect(_on_resolver_round_reset)
+
+	# Damage feedback: every wizard's hits shake the camera (presentation + stats).
+	# ROUND FLOW (KO -> round end) is the RoundFlowResolver's job now — it POLLS HP on
+	# its own tick. The knocked_out SIGNAL re-fires on a rollback re-sim and would
+	# double-count the score, so it is NOT used for round flow (see round_flow_resolver.gd).
 	for health in find_children("*", "HealthComponent", true, false):
 		var is_player_side: bool = _is_under_player(health)
 		var trauma: float = player_hit_trauma if is_player_side else opponent_hit_trauma
 		health.damaged.connect(_on_wizard_damaged.bind(trauma, is_player_side))
-		health.knocked_out.connect(_on_knocked_out.bind(is_player_side))
 
 	# Charge-up rumble: LOCAL player's casters only (see player_path doc).
 	if _player != null:
@@ -324,19 +352,17 @@ func _build_arena_borders() -> void:
 
 func _process(delta: float) -> void:
 	_update_death_ripple(delta)
-	# The death beat owns the screen — no round transition / rematch until it ends.
-	if _in_death_sequence:
-		return
-	match match_state:
-		MatchState.POST_ROUND:
-			if Time.get_ticks_msec() >= _post_round_deadline_msec:
-				_begin_round()
-		MatchState.MATCH_OVER:
-			# Desktop convenience: SPACE still restarts. The on-screen PLAY AGAIN
-			# button (MatchFlowOverlay) is the primary trigger and calls
-			# request_rematch() directly.
-			if Input.is_action_just_pressed("cast_spell"):
-				request_rematch()
+	# PRESENTATION MIRROR (Sub-phase 3): keep the UI read-surface fields in lockstep
+	# with the RoundFlowResolver's authoritative (rolled-back) sim state every frame,
+	# so a mispredicted-then-rolled-back KO can never leave the scoreboard / state
+	# drifted (the signal handlers below are rollback-guarded; this passive sync is not).
+	_sync_mirror()
+	# Desktop convenience: SPACE restarts a finished match (the on-screen PLAY AGAIN
+	# button is the primary trigger). Offline only — a synced online rematch is a
+	# separate feature, and a local press must never desync a live netplay session.
+	if match_state == MatchState.MATCH_OVER and not _netplay:
+		if Input.is_action_just_pressed("cast_spell"):
+			request_rematch()
 
 
 ## Advances the screen-space death ripple on SCALED time (so the shockwave expands
@@ -354,17 +380,29 @@ func _update_death_ripple(delta: float) -> void:
 ## Restart the match from a fresh scoreboard (the PLAY AGAIN button + the SPACE
 ## shortcut both route here). No-op unless the match is actually over.
 func request_rematch() -> void:
-	if match_state != MatchState.MATCH_OVER:
+	# Offline / local only: a synced online rematch is a separate feature (the match
+	# just ends online), and a local SPACE/button press must never reset one peer's
+	# sim out from under the other.
+	if match_state != MatchState.MATCH_OVER or _netplay:
 		return
-	player_score = 0
-	opponent_score = 0
-	round_number = 0
 	_stat_throws = 0
 	_stat_hits = 0
 	_stat_damage_dealt = 0
 	_stat_damage_taken = 0
 	_emeralds_spawned_this_match = 0  # a fresh match refills the emerald budget
-	_begin_round()
+	# Reset the sim authority (scores 0, round 1, both wizards + projectiles). OVER is
+	# quiescent, so this off-tick reset is the same risk profile as the old _begin_round.
+	if _roundflow != null:
+		_roundflow.reset_match()
+	player_score = 0
+	opponent_score = 0
+	round_number = 1
+	match_state = MatchState.ROUND_ACTIVE
+	_window_open_flag = false
+	_set_sim_running(true)
+	_clear_emerald()
+	_reseed_emeralds()
+	round_started.emit(round_number)
 
 
 # =====================================================================
@@ -633,45 +671,80 @@ func _on_player_spell_staged(_card: CardResource) -> void:
 # Round flow (best of 3)
 # =====================================================================
 
-func _on_knocked_out(ko_was_player: bool) -> void:
-	if match_state != MatchState.ROUND_ACTIVE:
-		return
-	var player_won_round: bool = not ko_was_player
-	if player_won_round:
-		player_score += 1
-	else:
-		opponent_score += 1
+## ROUND FLOW — presentation reactions to the RoundFlowResolver's deterministic sim
+## beats. Each is GUARDED against rollback re-sims (a corrected tick must not re-fire
+## the cinematics / re-announce), exactly like _on_resolver_resolved. The resolver owns
+## the SIM (scores, reset); these handlers own the CINEMATICS + the UI signals.
 
-	_set_sim_running(false)
-	if _resolver != null:
-		_resolver.cancel()  # stop the stack countdown so it can't resolve into a dead round
+## ACTIVE -> DEATH_WAIT: a KO landed this tick. Begin the slow-mo death beat. The
+## resolver already banked the score + cancelled the stack IN-TICK, so here we only
+## mirror + present. player_won_round = the Player (blue) won (the eliminated wizard is
+## the Opponent); the death cam frames `not player_won_round` = the local Player dying.
+func _on_resolver_ko(player_won_round: bool, match_over: bool) -> void:
+	if SyncManager != null and SyncManager.is_in_rollback():
+		return
+	_sync_mirror()
 	_window_open_flag = false
 	_clear_emerald()
-
-	# The resolver countdown was already cancelled above, so no staged spell can fire
-	# into the break. Set the match state before any window teardown.
-	var match_over: bool = player_score >= rounds_to_win or opponent_score >= rounds_to_win
-	match_state = MatchState.MATCH_OVER if match_over else MatchState.POST_ROUND
-
+	_set_sim_running(false)
 	# Clear any open PRESENTATION window WITHOUT keeping normal speed — the death
 	# sequence owns the dilation next (hold_dilation overrides the resume ramp).
 	if _stack != null:
 		_stack.close_window()
+	# DEATH SEQUENCE (Sprint 20): slow-mo + death cam + bigger explosion + screen ripple
+	# + the VICTORY/DEFEAT verdict. The resolver counts the death ticks to the break/match.
+	_begin_death_sequence(not player_won_round, match_over, player_won_round)
 
-	# DEATH SEQUENCE (Sprint 20): slow-mo + death cam + bigger explosion + screen
-	# ripple + the VICTORY/DEFEAT verdict; the result overlay (and the break clock)
-	# wait death_sequence_seconds while the knockout animation plays.
-	_begin_death_sequence(ko_was_player, match_over, player_won_round)
+
+## DEATH_WAIT -> POST_ROUND: the death beat elapsed; resume speed + raise the round
+## result overlay + open the break (the resolver counts the break ticks to the reset).
+func _on_resolver_break(player_won_round: bool, p_score: int, o_score: int) -> void:
+	if SyncManager != null and SyncManager.is_in_rollback():
+		return
+	_sync_mirror()
+	_in_death_sequence = false
+	_resume_from_death()
+	round_ended.emit(player_won_round, p_score, o_score, post_round_seconds)
+	Sfx.play(&"round_win" if player_won_round else &"round_lose")
+
+
+## DEATH_WAIT -> OVER: the death beat elapsed on a match-ending KO; resume speed + raise
+## the result screen.
+func _on_resolver_match_concluded(player_won_match: bool) -> void:
+	if SyncManager != null and SyncManager.is_in_rollback():
+		return
+	_sync_mirror()
+	_in_death_sequence = false
+	_resume_from_death()
+	match_ended.emit(player_won_match)
+	Sfx.play(&"victory" if player_won_match else &"round_lose")
+
+
+## POST_ROUND -> ACTIVE: the resolver reset the round IN-TICK (wizards + projectiles).
+## Here we do the PRESENTATION reset (unpark the local sim, refresh the emerald spawner)
+## + pop the round call-out.
+func _on_resolver_round_reset(new_round_number: int) -> void:
+	if SyncManager != null and SyncManager.is_in_rollback():
+		return
+	_sync_mirror()
+	_window_open_flag = false
+	_set_sim_running(true)
+	_clear_emerald()
+	_reseed_emeralds()
+	round_started.emit(new_round_number)
 
 
 ## Begins the slow-mo knockout beat: dilate the world, zoom + track the eliminated
-## wizard, fire the screen ripple, pop the VICTORY/DEFEAT verdict, and schedule the
-## result overlay after death_sequence_seconds of REAL time (dilation-immune).
+## wizard, fire the screen ripple, pop the VICTORY/DEFEAT verdict. The beat's END (resume
+## speed + result overlay) is now the RoundFlowResolver's deterministic DEATH_WAIT
+## countdown, NOT a wall-clock timer — so it lands on the same tick on both peers
+## (death_seconds × tick_rate ticks span death_seconds of real time, even under slow-mo).
 func _begin_death_sequence(ko_was_player: bool, match_over: bool, player_won_round: bool) -> void:
 	_in_death_sequence = true
 	var dying: Node = _player if ko_was_player else _opponent
 
-	# Death slow-mo, HELD until _finish_death_sequence resumes normal speed.
+	# Death slow-mo, HELD until _resume_from_death (driven by the resolver's DEATH_WAIT
+	# countdown) resumes normal speed.
 	if _stack != null:
 		_stack.hold_dilation(death_time_scale)
 	else:
@@ -694,33 +767,23 @@ func _begin_death_sequence(ko_was_player: bool, match_over: bool, player_won_rou
 		if dying_rig != null:
 			_trigger_ripple(dying_rig.global_position + Vector3(0.0, 1.0, 0.0), death_ripple_strength)
 
-	# VICTORY/DEFEAT verdict heading — emitted in the SAME frame the death cam
-	# begins so the banner and the dolly zoom start together (Creative Director).
+	# VICTORY/DEFEAT verdict heading — emitted in the SAME frame the death cam begins so
+	# the banner and the dolly zoom start together (Creative Director). The beat ENDS on
+	# the resolver's DEATH_WAIT countdown (_on_resolver_break / _on_resolver_match_concluded),
+	# not a wall-clock timer.
 	knockout_began.emit(match_over, player_won_round)
 
-	# The result overlay waits out the death beat (wall-clock, dilation-immune).
-	var timer: SceneTreeTimer = get_tree().create_timer(death_sequence_seconds, true, false, true)
-	timer.timeout.connect(_finish_death_sequence.bind(match_over, player_won_round))
 
-
-## Ends the death beat: resume normal speed, release the death cam, and NOW raise
-## the post-round / post-game result overlay (and start the break clock).
-func _finish_death_sequence(match_over: bool, player_won_round: bool) -> void:
-	_in_death_sequence = false
+## Resumes normal speed + releases the death cam at the END of the death beat. Called by
+## the resolver's break / match-concluded handlers (the overlay raise + the break clock
+## are now the resolver's deterministic tick, not this function's old wall-clock timer).
+func _resume_from_death() -> void:
 	if _stack != null:
 		_stack.resume_speed()
 	else:
 		Engine.time_scale = 1.0
 	if _camera != null and _camera.has_method(&"end_death_cam"):
 		_camera.end_death_cam()
-
-	if match_over:
-		match_ended.emit(player_score >= rounds_to_win)
-		Sfx.play(&"victory" if player_score >= rounds_to_win else &"round_lose")
-	else:
-		_post_round_deadline_msec = Time.get_ticks_msec() + int(post_round_seconds * 1000.0)
-		round_ended.emit(player_won_round, player_score, opponent_score, post_round_seconds)
-		Sfx.play(&"round_win" if player_won_round else &"round_lose")
 
 
 ## Fires the retro-lens screen ripple (the displacement shockwave) from a WORLD
@@ -737,23 +800,6 @@ func _trigger_ripple(world_pos: Vector3, strength: float) -> void:
 	_lens_mat.set_shader_parameter(&"ripple_strength", strength)
 	_ripple_progress = 0.0
 	_ripple_active = true
-
-
-func _begin_round() -> void:
-	round_number += 1
-	if _resolver != null:
-		_resolver.cancel()
-	_window_open_flag = false
-	_clear_projectiles()
-	_clear_emerald()
-	_reseed_emeralds()
-	if _player != null and _player.has_method(&"reset_for_round"):
-		_player.reset_for_round(0, SGFixed.from_float(player_spawn_y))
-	if _opponent != null and _opponent.has_method(&"reset_for_round"):
-		_opponent.reset_for_round(0, SGFixed.from_float(opponent_spawn_y))
-	_set_sim_running(true)
-	match_state = MatchState.ROUND_ACTIVE
-	round_started.emit(round_number)
 
 
 ## Parks/resumes the deterministic sim between rounds by switching the local
@@ -797,6 +843,10 @@ func _enter_netplay() -> void:
 	# not via the spawn-time check the projectiles use.
 	if _resolver != null and _resolver.has_method(&"set_netplay"):
 		_resolver.set_netplay()
+	# The RoundFlowResolver joins the same way (scene-authored sim node), so its KO
+	# poll + the round reset run on synced ticks once the handshake starts.
+	if _roundflow != null and _roundflow.has_method(&"set_netplay"):
+		_roundflow.set_netplay()
 	# Re-point the fireball cast button's charge ring at the LOCAL wizard's caster. The
 	# button hard-codes the blue Player; the CLIENT owns the red Opponent, so without this
 	# its charge ring shows — and reacts to — the WRONG player's charge (playtest report:
@@ -838,24 +888,37 @@ func _enter_netplay() -> void:
 	nm.notify_scene_loaded()
 
 
-func _clear_projectiles() -> void:
-	if _projectiles == null:
-		return
-	for child in _projectiles.get_children():
-		# Route through the entity's rollback-aware free (SyncManager.despawn under a live
-		# netplay match) — a bare queue_free() of a SyncManager-tracked node leaves its
-		# spawn record dangling and crashes the next rollback. Offline this is queue_free.
-		# (NOTE: round transitions are still wall-clock in netplay — full tick-deterministic
-		# round flow is a separate, larger netplay task.)
-		if child.has_method(&"_despawn"):
-			child._despawn()
-		else:
-			child.queue_free()
-
-
 # =====================================================================
 # Helpers
 # =====================================================================
+
+## Copies the RoundFlowResolver's authoritative (rolled-back) sim state into the UI
+## read-surface mirror (player_score / opponent_score / round_number / match_state).
+## Called per-frame in _process AND synchronously from every resolver signal handler —
+## the handler call is what makes the mirror current the INSTANT a signal fires
+## (SceneTree.process_frame is emitted BEFORE _process, so a listener that reads
+## match_state right after awaiting a signal would otherwise see a one-frame-stale value).
+func _sync_mirror() -> void:
+	if _roundflow == null:
+		return
+	player_score = _roundflow.get_player_score()
+	opponent_score = _roundflow.get_opponent_score()
+	round_number = _roundflow.get_round_number()
+	match_state = _phase_to_state(_roundflow.get_phase())
+
+
+## Maps the RoundFlowResolver's sim phase to the legacy MatchState the UI + tests read.
+## DEATH_WAIT and POST_ROUND both present as POST_ROUND (the round is between active
+## play); OVER becomes MATCH_OVER (reached only once the death beat has elapsed).
+func _phase_to_state(phase: int) -> MatchState:
+	match phase:
+		RoundFlowResolver.Phase.OVER:
+			return MatchState.MATCH_OVER
+		RoundFlowResolver.Phase.ACTIVE:
+			return MatchState.ROUND_ACTIVE
+		_:
+			return MatchState.POST_ROUND
+
 
 func _is_under_player(node: Node) -> bool:
 	if _player == null:

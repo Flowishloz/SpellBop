@@ -44,9 +44,9 @@ func _run() -> void:
 
 	# Round 1 KO, end the break, round 2 KO -> 2-0 match over.
 	arena.get_node("Opponent/Health").apply_damage(5)
-	await _wait(0.8)
-	arena._post_round_deadline_msec = Time.get_ticks_msec()
-	await _wait(0.8)
+	# Sub-phase 3: the break now elapses on the RoundFlowResolver's tick countdown
+	# (post_round_seconds=0.3 ≈ 18 ticks) — no wall-clock deadline to poke.
+	await _wait(1.2)
 	arena.get_node("Opponent/Health").apply_damage(5)
 	await _wait(1.2)
 

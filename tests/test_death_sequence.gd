@@ -70,13 +70,15 @@ func _run() -> void:
 		await process_frame
 
 	# --- KO the OPPONENT: the player wins round 1 (not a match end yet) -----
+	# Sub-phase 3: the KO is now detected by the RoundFlowResolver POLLING HP on its next
+	# sim tick (not the synchronous knocked_out signal), so AWAIT the detection rather than
+	# assuming a fixed frame count — in headless, idle frames can outrun the 60 Hz physics.
 	arena.get_node("Opponent/Health").apply_damage(5)
-	await process_frame
-	await process_frame
+	var ko_seen: bool = await _await(func() -> bool: return ko_fired[0], 2000)
 
+	_ck(ko_seen, "knockout_began fired on the KO")
 	_ck(Engine.time_scale < 0.5,
 		"world dilated to death slow-mo on the KO (time_scale %.2f < 0.5)" % Engine.time_scale)
-	_ck(ko_fired[0], "knockout_began fired on the KO")
 	_ck(not ko_fired[1], "a round KO reports is_match_end = false")
 	_ck(ko_fired[2], "player_won_round = true (the opponent was eliminated)")
 

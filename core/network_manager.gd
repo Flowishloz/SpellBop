@@ -438,4 +438,11 @@ func _smoke_fingerprint() -> String:
 			if b.has_method(&"get_global_fixed_position"):
 				var p = b.get_global_fixed_position()
 				parts.append("(%d,%d)" % [p.x, p.y])
+	# Round flow (Sub-phase 3): fold the RoundFlowResolver's deterministic state so the
+	# fingerprint proves both peers agree on phase / scores / round number — and, when a
+	# KO lands within the smoke (fireballs whittle HP to 0), that the round reset fired on
+	# the SAME tick on both peers (a wall-clock round flow would diverge here).
+	var rf := arena.get_node_or_null(^"RoundFlowResolver")
+	if rf != null and rf.has_method(&"get_phase"):
+		parts.append("rf=(ph%d,ps%d,os%d,rn%d)" % [rf.get_phase(), rf.get_player_score(), rf.get_opponent_score(), rf.get_round_number()])
 	return ", ".join(parts)

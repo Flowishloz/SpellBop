@@ -1,4 +1,4 @@
-[gd_scene load_steps=21 format=3]
+[gd_scene load_steps=22 format=3]
 
 [ext_resource type="Script" path="res://core/match_controller.gd" id="1_mc"]
 [ext_resource type="PackedScene" uid="uid://ce775qyi5wy6l" path="res://scenes/player.tscn" id="2_pl"]
@@ -15,6 +15,7 @@
 [ext_resource type="Script" path="res://scripts/ui/move_joystick_hud.gd" id="14_joy"]
 [ext_resource type="PackedScene" path="res://scenes/emerald.tscn" id="15_emerald"]
 [ext_resource type="Script" path="res://scripts/arena/stack_resolver.gd" id="16_resolver"]
+[ext_resource type="Script" path="res://scripts/arena/round_flow_resolver.gd" id="17_roundflow"]
 
 [sub_resource type="StandardMaterial3D" id="Mat_floor"]
 albedo_color = Color(0.16, 0.165, 0.19, 1)
@@ -110,6 +111,9 @@ shape = SubResource("SGRectangleShape2D_sidewall")
 
 [node name="StackResolver" type="Node" parent="." groups=["stack_resolver"]]
 script = ExtResource("16_resolver")
+
+[node name="RoundFlowResolver" type="Node" parent="." groups=["round_flow"]]
+script = ExtResource("17_roundflow")
 
 [node name="RetroPostFX" type="CanvasLayer" parent="."]
 layer = 0
