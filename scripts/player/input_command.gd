@@ -42,6 +42,27 @@ const KEY_CARD: StringName = &"k"
 ## rolled-back tick on BOTH peers (an off-tick / RPC reset would desync).
 const KEY_REMATCH: StringName = &"r"
 
+## Dictionary key for the AIMING sector (Mobile-MP B2): a signed int in
+## [-AIM_SECTORS, +AIM_SECTORS] encoding the lateral firing angle (0 = straight
+## down-court, ±AIM_SECTORS = full lateral tilt). The aim drives a projectile's
+## vx = SIM velocity, so it MUST ride the synced input as an INT (never a raw
+## float). The TOUCH joystick writes touch_aim_sector (below) from its lateral
+## push and capture_local() injects it here; KEYBOARD derives the SAME sector from
+## the held-direction duration in MovementComponent — so the sim has ONE aim
+## representation. Key omitted when 0 (straight down-court).
+const KEY_AIM: StringName = &"a"
+
+## Aim quantization granularity: the firing-angle cone is sliced into this many
+## sectors PER SIDE (2*N+1 distinct aim directions). Shared by the joystick
+## (quantize), MovementComponent (keyboard derivation), and the casters (vx math).
+const AIM_SECTORS: int = 12
+
+## LIVE touch-aim sector (render-rate, LOCAL only): the virtual joystick writes its
+## current lateral push here each drag (and 0 on release); capture_local() reads it
+## into KEY_AIM for the local wizard. Static = one local stick per process; a remote
+## wizard's aim arrives over the network, never from this. NOT sim state.
+static var touch_aim_sector: int = 0
+
 ## Default action names polled by capture_local(). Override by passing a custom
 ## actions dictionary if a player slot uses prefixed actions (e.g. "p2_move_left").
 const DEFAULT_ACTIONS: Dictionary = {
@@ -95,6 +116,11 @@ static func capture_local(actions: Dictionary = DEFAULT_ACTIONS) -> Dictionary:
 			input[KEY_CARD] = slot
 			break
 
+	# Aim sector (Mobile-MP B2): the touch joystick's live lateral push (0 = none).
+	# Keyboard leaves this 0 and derives its aim from held-direction duration in the sim.
+	if touch_aim_sector != 0:
+		input[KEY_AIM] = clampi(touch_aim_sector, -AIM_SECTORS, AIM_SECTORS)
+
 	return input
 
 
@@ -122,10 +148,16 @@ static func get_rematch(input: Dictionary) -> int:
 	return int(input.get(KEY_REMATCH, 0))
 
 
+## Returns the aim sector (signed; 0 = straight down-court) from an input
+## Dictionary, tolerating the compact empty form.
+static func get_aim(input: Dictionary) -> int:
+	return int(input.get(KEY_AIM, 0))
+
+
 ## True if this input represents "no buttons held" (the canonical empty input).
 static func is_empty(input: Dictionary) -> bool:
 	return input.is_empty() or (get_x(input) == 0 and get_cast(input) == 0
-			and get_card(input) == 0 and get_rematch(input) == 0)
+			and get_card(input) == 0 and get_rematch(input) == 0 and get_aim(input) == 0)
 
 
 ## Value-equality between two input dictionaries, treating missing keys as
@@ -133,7 +165,8 @@ static func is_empty(input: Dictionary) -> bool:
 ## when comparing predicted vs. confirmed inputs.
 static func equals(a: Dictionary, b: Dictionary) -> bool:
 	return get_x(a) == get_x(b) and get_cast(a) == get_cast(b) \
-			and get_card(a) == get_card(b) and get_rematch(a) == get_rematch(b)
+			and get_card(a) == get_card(b) and get_rematch(a) == get_rematch(b) \
+			and get_aim(a) == get_aim(b)
 
 
 ## Returns a new canonical empty input. Provided for readability at call sites.

@@ -412,17 +412,34 @@ func _spawn_projectile(velocity_multiplier_fp: int = SGFixed.ONE, charge_level: 
 		spell_cast.emit(projectile, spell)
 
 
-## Lateral launch component from the held movement input: dir x forward
-## speed x aim_max_fraction x (held ticks / full ticks, capped at 1).
+## Lateral launch velocity from the unified AIM SECTOR (Mobile-MP B2):
+## vx = forward_speed x aim_max_fraction x (sector / AIM_SECTORS). The sector is the
+## TOUCH joystick's firing angle, or the KEYBOARD's held-direction duration mapped to
+## the same scale. Pure fixed-point (no trig) so it stays bit-identical cross-platform.
 func _aim_vx_fp(forward_speed_fp: int) -> int:
-	if _movement == null or aim_full_hold_ticks <= 0:
+	if _movement == null:
 		return 0
-	var ticks: int = mini(_movement.get_aim_ticks(), aim_full_hold_ticks)
-	if ticks <= 0 or _movement.get_aim_dir() == 0:
+	var sector: int = _aim_sector_now()
+	if sector == 0:
 		return 0
-	var fraction_fp: int = SGFixed.div(SGFixed.from_int(ticks), SGFixed.from_int(aim_full_hold_ticks))
+	var lateral_fp: int = SGFixed.div(SGFixed.from_int(sector), SGFixed.from_int(InputCommand.AIM_SECTORS))
 	var max_vx_fp: int = SGFixed.mul(forward_speed_fp, SGFixed.from_float(clampf(aim_max_fraction, 0.0, 1.0)))
-	return _movement.get_aim_dir() * SGFixed.mul(max_vx_fp, fraction_fp)
+	return SGFixed.mul(max_vx_fp, lateral_fp)
+
+
+## The unified aim SECTOR in [-AIM_SECTORS, +AIM_SECTORS] (0 = straight down-court):
+## the TOUCH joystick's KEY_AIM when present, else the KEYBOARD's held-direction
+## duration mapped onto the same scale (aim_dir x ticks/full x N, integer -> the old
+## hold-to-tilt feel, quantized). Move + aim together: the stick's lateral push both
+## steers and aims; on keys, holding a direction longer steepens the throw.
+func _aim_sector_now() -> int:
+	var touch: int = _movement.get_aim_key()
+	if touch != 0:
+		return clampi(touch, -InputCommand.AIM_SECTORS, InputCommand.AIM_SECTORS)
+	if aim_full_hold_ticks <= 0:
+		return 0
+	var ticks: int = clampi(_movement.get_aim_ticks(), 0, aim_full_hold_ticks)
+	return _movement.get_aim_dir() * ticks * InputCommand.AIM_SECTORS / aim_full_hold_ticks
 
 
 ## The lane half-width (fixed-point) spawns clamp to — read from our sibling

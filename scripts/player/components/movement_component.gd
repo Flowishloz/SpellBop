@@ -108,6 +108,10 @@ var _slow_scale_fp: int = SGFixed.ONE
 # mobile the virtual joystick's push distance will feed this instead.
 var _aim_dir: int = 0
 var _aim_ticks: int = 0
+# Touch-joystick aim sector for THIS tick (Mobile-MP B2): the analog firing angle
+# from KEY_AIM in the synced input (0 = none, so the keyboard hold-duration aim
+# above applies instead). Transient/input-derived — replayed each tick, NOT saved.
+var _aim_key: int = 0
 
 var _body: SGCharacterBody2D
 
@@ -168,6 +172,10 @@ func _network_process(input: Dictionary) -> void:
 			_aim_ticks = 1
 	elif _aim_ticks > 0:
 		_aim_ticks -= 1  # idle: the banked aim fades, never hard-resets
+
+	# Touch aim (Mobile-MP B2): the joystick's quantized firing angle for this tick.
+	# 0 when absent (keyboard) -> the casters fall back to the held-duration aim above.
+	_aim_key = InputCommand.get_aim(input)
 
 	# --- LOCOMOTION (accelerate toward the held direction, else decelerate) -
 	if input_x != 0:
@@ -240,6 +248,13 @@ func get_aim_ticks() -> int:
 	return _aim_ticks
 
 
+## This tick's TOUCH aim sector (Mobile-MP B2): the joystick's quantized firing
+## angle from the synced input (0 = none, so the casters use the held-direction aim
+## above). Casters fold this with get_aim_dir()/get_aim_ticks() into one sector.
+func get_aim_key() -> int:
+	return _aim_key
+
+
 ## The cached arena half-width in fixed-point — the SAME lane edge this body is
 ## clamped to (see _clamp_to_arena). Spawn sites read this so projectile / wall
 ## / wave ORIGINS clamp to the same bound the wizard uses; spawns and bodies
@@ -275,6 +290,7 @@ func halt() -> void:
 	_slow_scale_fp = SGFixed.ONE
 	_aim_dir = 0
 	_aim_ticks = 0
+	_aim_key = 0
 	var vel: SGFixedVector2 = _body.velocity
 	vel.x = 0
 	vel.y = 0

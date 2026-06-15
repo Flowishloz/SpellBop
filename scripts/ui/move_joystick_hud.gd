@@ -99,7 +99,7 @@ func _drag(pos: Vector2) -> void:
 	if offset.length() > stick_radius:
 		offset = offset.normalized() * stick_radius
 	_knob = _origin + offset
-	# Digital X axis from horizontal deflection past the deadzone.
+	# Digital X axis from horizontal deflection past the deadzone (MOVEMENT).
 	var dx: float = offset.x / stick_radius
 	var new_dir: int = 0
 	if dx > deadzone_fraction:
@@ -108,6 +108,11 @@ func _drag(pos: Vector2) -> void:
 		new_dir = -1
 	if new_dir != _dir:
 		_apply_dir(new_dir)
+	# AIM (Mobile-MP B2): the lateral push IS the firing angle - move + aim together.
+	# The full deflection (dx in [-1, 1]) maps across the aim cone, quantized to a
+	# sector that rides the synced input as KEY_AIM (small pushes round to 0 = straight).
+	InputCommand.touch_aim_sector = clampi(roundi(dx * InputCommand.AIM_SECTORS), \
+			-InputCommand.AIM_SECTORS, InputCommand.AIM_SECTORS)
 	_draw.queue_redraw()
 
 
@@ -125,6 +130,7 @@ func _apply_dir(new_dir: int) -> void:
 
 func _end() -> void:
 	_apply_dir(0)
+	InputCommand.touch_aim_sector = 0  # release clears the aim (back to straight)
 	_touch_index = -2
 	_draw.visible = false
 
