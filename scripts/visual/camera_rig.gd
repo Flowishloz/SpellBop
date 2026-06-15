@@ -80,6 +80,18 @@ extends Camera3D
 ## "locked" during slow-mo when this used scaled delta).
 @export var shoulder_glide_speed: float = 1.5
 
+## REDUCED SHOULDER LEAN (Creative Director: the adaptive tilt is BACK, but SUBTLER than
+## the original over-the-shoulder, and it rests NEUTRAL near centre — the signed-off spawn
+## framing). When the wizard plays past shoulder_swap_threshold to one side the camera eases
+## this far toward that side (metres) and yaws this many degrees; inside shoulder_return_
+## threshold it eases back to dead-centre (0,0). Was a full ±1.45 m / ±8° hold; now a gentle
+## lean from neutral.
+@export var shoulder_offset_x: float = 0.7
+@export var shoulder_yaw_degrees: float = 4.0
+## Player |x| (metres) INSIDE which the lean returns to neutral. Smaller than
+## shoulder_swap_threshold so there is a hold band between (hysteresis — no wobble at the edge).
+@export var shoulder_return_threshold: float = 0.45
+
 @export_group("Shake")
 ## Master switch for the trauma shake (charging rumble, cast bursts, hits).
 @export var shake_enabled: bool = true
@@ -143,9 +155,14 @@ var _death_start_msec: int = 0
 var _default_base_x: float = 0.0
 var _default_yaw: float = 0.0
 
-# Current shoulder: +1 = right, -1 = left. The PREFERRED side (used when the
-# player is centered) comes from handedness; play position overrides it.
+# Current shoulder: +1 = right, -1 = left. Now only seeded by handedness (vestigial —
+# the lean below is symmetric + position-driven, so it no longer biases the camera).
 var _side: float = 1.0
+
+# Current ADAPTIVE LEAN state: +1 right, -1 left, 0 neutral. Held across the dead band
+# between shoulder_return_threshold and shoulder_swap_threshold (hysteresis). Starts NEUTRAL
+# so the round spawns dead-centre.
+var _shoulder: float = 0.0
 
 
 func _ready() -> void:
@@ -229,18 +246,22 @@ func _process(delta: float) -> void:
 		_update_death_cam(real_delta)
 		return
 
-	# DYNAMIC SHOULDER: pick the side from the player's court position
-	# (hysteresis holds the current side near center), then glide the base
-	# offset AND the yaw toward that shoulder's mirror.
+	# ADAPTIVE SHOULDER LEAN (Creative Director): a SUBTLE tilt toward whichever shoulder the
+	# wizard plays past the threshold, easing back to NEUTRAL near centre (the signed-off
+	# spawn framing). Hysteresis: engage at shoulder_swap_threshold, release inside
+	# shoulder_return_threshold, hold between — no edge wobble. Reduced magnitude vs the old
+	# full over-the-shoulder hold (±0.7 m / ±4° from neutral, not ±1.45 m / ±8°).
 	if _target != null and shoulder_swap_enabled:
 		var px: float = _target.global_position.x
 		if px > shoulder_swap_threshold:
-			_side = 1.0
+			_shoulder = 1.0
 		elif px < -shoulder_swap_threshold:
-			_side = -1.0
+			_shoulder = -1.0
+		elif absf(px) < shoulder_return_threshold:
+			_shoulder = 0.0
 		var glide: float = 1.0 - exp(-shoulder_glide_speed * real_delta)
-		_base_x = lerpf(_base_x, _default_base_x * _side, glide)
-		yaw_degrees = lerpf(yaw_degrees, _default_yaw * _side, glide)
+		_base_x = lerpf(_base_x, shoulder_offset_x * _shoulder, glide)
+		yaw_degrees = lerpf(yaw_degrees, shoulder_yaw_degrees * _shoulder, glide)
 
 	# Soft pan toward the player — on the WALL clock, so the camera never
 	# freezes inside the Stack window (Creative Director slow-mo lock fix).
