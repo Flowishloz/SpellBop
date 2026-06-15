@@ -797,6 +797,14 @@ func _enter_netplay() -> void:
 	# not via the spawn-time check the projectiles use.
 	if _resolver != null and _resolver.has_method(&"set_netplay"):
 		_resolver.set_netplay()
+	# Re-point the fireball cast button's charge ring at the LOCAL wizard's caster. The
+	# button hard-codes the blue Player; the CLIENT owns the red Opponent, so without this
+	# its charge ring shows — and reacts to — the WRONG player's charge (playtest report:
+	# "red's UI doesn't change; blue's UI controls red's"). Host: local == Player (no-op).
+	var local_wizard: Node = _player if is_host else _opponent
+	var cast_btn: Node = get_node_or_null(^"MatchHUD/CastButton")
+	if cast_btn != null and cast_btn.has_method(&"set_caster") and local_wizard != null:
+		cast_btn.set_caster(local_wizard.get_node_or_null(^"SpellCasterComponent"))
 	# CLIENT VIEW (visual mirror): each player should see THEIR OWN wizard in the
 	# near, well-lit foreground. The HOST owns Player (already near) — nothing to do.
 	# The CLIENT owns Opponent (normally the FAR wizard), so the court is MIRRORED
@@ -828,7 +836,15 @@ func _clear_projectiles() -> void:
 	if _projectiles == null:
 		return
 	for child in _projectiles.get_children():
-		child.queue_free()
+		# Route through the entity's rollback-aware free (SyncManager.despawn under a live
+		# netplay match) — a bare queue_free() of a SyncManager-tracked node leaves its
+		# spawn record dangling and crashes the next rollback. Offline this is queue_free.
+		# (NOTE: round transitions are still wall-clock in netplay — full tick-deterministic
+		# round flow is a separate, larger netplay task.)
+		if child.has_method(&"_despawn"):
+			child._despawn()
+		else:
+			child.queue_free()
 
 
 # =====================================================================

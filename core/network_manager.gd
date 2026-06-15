@@ -240,12 +240,11 @@ func _on_sync_started() -> void:
 	emit_signal(&"status", "Rollback active — fight!")
 	if _smoke_mode != "":
 		print("[NET-SMOKE] sync_started host=", multiplayer.is_server(), " uid=", multiplayer.get_unique_id())
-		# Host-only move proves authority routing; BOTH peers hold cast so each
-		# fires fireballs — the fingerprint then also verifies projectile SPAWN-
-		# rollback determinism (identical count + positions on both peers).
-		# The host reads the A/D scheme now (HOST_ACTIONS), so press its action.
-		if multiplayer.is_server() and InputMap.has_action(&"move_right_ad"):
-			Input.action_press(&"move_right_ad")
+		# BOTH peers hold cast (each fires fireballs) and NEITHER moves, so the straight
+		# shots HIT the opposite wizard. The fingerprint verifies projectile SPAWN-rollback
+		# determinism AND hit-DAMAGE rollback determinism (identical wizard HEALTH on both
+		# peers). Combined with the forced rollbacks (see _run_smoke) this regression-guards
+		# the netplay hit-latch desync that caused the playtest "freeze + crash".
 		# (cast is pulsed per-tick in _on_smoke_tick — the fireball is release-fire.)
 		if SyncManager != null and not SyncManager.tick_finished.is_connected(_on_smoke_tick):
 			SyncManager.tick_finished.connect(_on_smoke_tick)
@@ -355,6 +354,14 @@ func _parse_smoke_args() -> void:
 
 func _run_smoke() -> void:
 	await get_tree().create_timer(0.5).timeout
+	# Force VARIABLE-depth rollbacks (random 0..7 per tick, independently per peer — the
+	# real-play asymmetric condition). Zero-latency localhost otherwise never rolls back,
+	# so without this the smoke can't exercise the spawn/despawn/hit re-sim path where
+	# rollback-only bugs hide. Variable depth (not a constant) is what surfaces the
+	# despawn-retire-window crash (a detached ball still group-driven) AND the hit-latch
+	# desync — a bug here is a crash or a fingerprint mismatch instead of passing silently.
+	if SyncManager != null:
+		SyncManager.debug_random_rollback_ticks = 8
 	match _smoke_mode:
 		"host": lan_host("smoke-host")
 		"client": lan_join_direct("127.0.0.1")
@@ -380,13 +387,13 @@ func _on_smoke_tick(is_rollback: bool) -> void:
 			Input.action_press(&"cast_spell")
 		else:
 			Input.action_release(&"cast_spell")
-	# Sample at a FIXED sim tick (not a signal count) so both peers fingerprint the
-	# SAME tick — rollback guarantees identical state there, even after re-sims.
-	if t >= 120:
+	# Sample at a FIXED sim tick (not a signal count) so both peers fingerprint the SAME
+	# tick. ~300 ticks is several cast cycles in, so by then the fingerprint's wizard
+	# HEALTH has dropped a few points — a hit-damage rollback desync shows up here as a
+	# fingerprint mismatch.
+	if t >= 300:
 		_smoke_done = true
 		print("[NET-SMOKE] tick=", t, " fp=", _smoke_fingerprint())
-		# Capture the REAL-game render (windowed only) so the client's reverse view
-		# can be inspected — proves whether the flip renders in the actual loop.
 		var img := get_viewport().get_texture().get_image()
 		if img != null:
 			img.save_png("res://tests/_net_smoke_%s.png" % ("host" if multiplayer.is_server() else "client"))
@@ -403,7 +410,13 @@ func _smoke_fingerprint() -> String:
 		var w := arena.get_node_or_null(path)
 		if w != null and w.has_method(&"get_global_fixed_position"):
 			var p = w.get_global_fixed_position()
-			parts.append("%s=(%d,%d)" % [path, p.x, p.y])
+			# HEALTH too (Sprint 22 netplay fix): a hit-damage rollback desync diverges
+			# the wizards' health between peers — fold it into the deterministic fingerprint.
+			var hp: int = -1
+			var h := w.get_node_or_null(^"Health")
+			if h != null and h.has_method(&"get_health"):
+				hp = h.get_health()
+			parts.append("%s=(%d,%d,hp%d)" % [path, p.x, p.y, hp])
 	# Projectiles (spawn-rollback proof): count + each fireball's fixed position,
 	# sorted by node name (deterministic SpawnManager naming) so both peers compare
 	# equal byte-for-byte.

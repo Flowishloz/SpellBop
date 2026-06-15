@@ -167,16 +167,24 @@ func _on_bounced(normal_x: int, _normal_y: int) -> void:
 
 
 func _on_hit(body: Node) -> void:
-	# Deal the payload to the struck wizard via ITS public APIs (never poke
-	# its internals), then this ball is spent. Damage and frost are both
-	# optional — an ice wave is damage 0 + slow, a fireball is damage + no slow.
+	# Deal the payload to the struck wizard via ITS public APIs (never poke its
+	# internals). Damage and frost are both optional — an ice wave is damage 0 + slow,
+	# a fireball is damage + no slow. The HitDetectionComponent._has_hit latch (sim
+	# state) guarantees this fires at most once per ball, and re-fires identically on a
+	# rollback re-sim.
 	if damage > 0 and body.has_method(&"apply_damage"):
 		body.apply_damage(damage)
 	if slow_ticks > 0 and body.has_method(&"apply_slow"):
 		body.apply_slow(slow_ticks, slow_scale_fp)
-		Sfx.play(&"frost_hit")
-	_spawn_impact_burst()
-	_despawn()
+	# Presentation (frost sfx, impact burst) fires only on the LIVE hit, never on a
+	# rollback re-sim (which would otherwise stack duplicate bursts + sounds). The hit
+	# itself is rollback-safe now that the _has_hit latch is saved/loaded (see
+	# _save_state): a rollback restores the latch, the re-sim re-fires the hit, and the
+	# damage stays in lockstep across peers.
+	if SyncManager == null or not SyncManager.is_in_rollback():
+		if slow_ticks > 0:
+			Sfx.play(&"frost_hit")
+		_spawn_impact_burst()
 
 
 ## IMPACT FX (pure visual): a burst that CARRIES THE BALL'S MOMENTUM — the
@@ -369,6 +377,14 @@ func apply_size(radius_units: float) -> void:
 ## Advances all simulated components by one tick. Mirrors the contract the
 ## rollback framework calls on network-synced nodes.
 func _network_process(input: Dictionary) -> void:
+	# DESPAWN-WINDOW GUARD (Sprint 22 netplay crash fix): after SyncManager.despawn() a
+	# ball is removed from the tree but kept in the rollback "retire" buffer for ~20 ticks
+	# (so a rollback can restore it). During that window it is DETACHED yet can still be
+	# group-driven by SyncManager — and the hit scan's get_tree().get_nodes_in_group()
+	# then crashes on a null tree. Skip any tick while detached: a despawned ball is out
+	# of the live sim, and a rollback that restores it re-adds it to the tree first.
+	if not is_inside_tree():
+		return
 	_movement._network_process(input)
 	if shatters_ice:
 		_scan_ice_shatter()
@@ -376,20 +392,29 @@ func _network_process(input: Dictionary) -> void:
 		_hit_detection._network_process(input)
 
 
-## Aggregates component states keyed by component name, plus the tick counter.
-## Leaf values are ints only (fixed-point) — rollback-serialization safe.
+## Snapshots the tick counter plus each stateful child under a STABLE key ("movement" /
+## "hit") — stable so it never depends on a scene's node names and the headless suites can
+## assert on it directly. Leaf values are ints only (fixed-point) — rollback-safe. CRITICAL:
+## the HitDetectionComponent's `_has_hit` latch MUST be saved ("hit") — omitting it meant the
+## latch never rolled back, so a rollback past a hit left it stuck true, the re-sim never
+## re-fired the hit, the cross-node damage was reverted-but-not-reapplied -> health desync ->
+## netplay crash. (The fireball's only stateful children are the mover and the hit scan.)
 func _save_state() -> Dictionary:
-	return {
-		"tick": current_tick,
-		"movement": _movement._save_state(),
-	}
+	var state: Dictionary = {"tick": current_tick}
+	if _movement != null:
+		state["movement"] = _movement._save_state()
+	if _hit_detection != null:
+		state["hit"] = _hit_detection._save_state()
+	return state
 
 
-## Restores an aggregate snapshot produced by _save_state().
+## Restores a snapshot produced by _save_state().
 func _load_state(state: Dictionary) -> void:
 	current_tick = int(state.get("tick", current_tick))
-	if state.has("movement"):
+	if _movement != null and state.has("movement"):
 		_movement._load_state(state["movement"])
+	if _hit_detection != null and state.has("hit"):
+		_hit_detection._load_state(state["hit"])
 
 
 ## ROLLBACK SPAWN (Sprint 22): the deterministic, rewindable initializer. Called

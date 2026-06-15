@@ -26,6 +26,16 @@ func _on_ready_extra() -> void:
 		_caster = null
 
 
+## Re-point the charge ring at a different wizard's SpellCasterComponent. NETPLAY fix
+## (Sprint 22): the button hard-codes the blue Player, but the CLIENT owns the red
+## Opponent — MatchController calls this so each peer's button reads (and reacts to) ITS
+## OWN wizard's charge, not the other player's.
+func set_caster(caster: Node) -> void:
+	if caster != null and caster.has_method(&"charge_fraction"):
+		_caster = caster
+		queue_redraw()
+
+
 func _button_action() -> StringName:
 	return &"cast_spell"
 
