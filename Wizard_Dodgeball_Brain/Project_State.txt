@@ -1,5 +1,5 @@
 PROJECT STATE — WIZARD DODGEBALL
-Last sync: 2026-06-15 | Sprint 22 Sub-phase 3 COMPLETE (deterministic ROUND FLOW via RoundFlowResolver — the last netplay desync hole; the WHOLE match now runs online). Phase 1 (base fireball) + Phase 2 (rollback cards) + Sub-phase 3 (round flow) all done. On branch feature/spawn-rollback-cards.
+Last sync: 2026-06-15 | SPAWN-ROLLBACK ROADMAP COMPLETE: Phase 1 (base fireball) + Phase 2 (rollback cards) + Sub-phase 3 (round flow) + Healing Emerald (deterministic cadence, commit 9f1cdb8) all done — every mid-match spawn and the round flow are rollback-correct, the WHOLE match runs online, and online Play Again is synced (commit 4579f67). On branch feature/spawn-rollback-cards.
 
 ===========================================================
 COMPLETED SYSTEMS
@@ -2137,3 +2137,90 @@ seconds x tick_rate sim ticks to time a real-duration beat that must survive slo
 
 Commit since the Phase 2 doc sync, oldest->newest: d54f807 (Sub-phase 3 deterministic round flow —
 RoundFlowResolver). NOT re-exported to Android this sprint.
+
+[SPRINT 22 ONLINE PLAY AGAIN — DETERMINISTIC SYNCED REMATCH (2026-06-15)]
+Play Again was DEAD in netplay (request_rematch was _netplay-guarded; Sub-phase 3 deferred the online
+rematch as a separate feature). Now it works on BOTH peers, rollback-correct. The Creative Director
+playtested Sub-phase 3 and reported rounds transition seamlessly online, with this one bug — now fixed.
+Built on git branch feature/spawn-rollback-cards; commit 4579f67. All 19 headless suites BIT-IDENTICAL
+on Godot 4.6.3-stable (the new "rmt" save_state key keeps determinism); LAN smoke byte-identical.
+
+THE FIX — the rematch trigger rides the SYNCED INPUT stream so the reset lands on the SAME tick on both
+peers (an off-tick / RPC reset would desync):
+- InputCommand gains KEY_REMATCH ("r"), folded into is_empty / equals so it is never dropped or
+  mis-compared.
+- PlayerController.latch_rematch() sets a render-rate latch that _get_local_input injects as KEY_REMATCH
+  for ONE synced tick (netplay, authority only); the wizard derives a SAVED _rematch_requested flag each
+  tick and exposes wants_rematch() (saved key "rmt").
+- RoundFlowResolver POLLS wants_rematch() on BOTH wizards in its OVER phase and calls reset_match() IN-TICK
+  when either requests it. reset_match() now emits round_reset(1) so MatchController runs the presentation
+  reset (hide the result screen, reset stats + emerald budget, pop ROUND 1) — the step that was missing.
+
+MATCHCONTROLLER:
+- request_rematch() latches in netplay / resets directly (via reset_match -> round_reset) offline; the
+  SPACE shortcut + the PLAY AGAIN button both route through it.
+- _on_resolver_round_reset resets match-scoped stats when round_number == 1 (the fresh-match marker — round
+  1 at match start is announced directly, never via round_reset).
+
+NOTES:
+- Either player can trigger the rematch (the resolver checks both wizards); mutual consent is a possible
+  future refinement.
+- Reusable technique (recorded in HANDOFF.md): to make a LOCAL UI action land on the SAME rolled-back tick
+  on both peers, route it through the synced input stream as a one-tick latch, then poll a SAVED wants_*()
+  getter in a network_sync node and act in-tick (mirrors the KO-by-HP-poll pattern).
+
+VERIFICATION: 19 headless suites BIT-IDENTICAL on Godot 4.6.3-stable; LAN smoke
+(run_net_smoke.ps1 -Mode lan -Headless) byte-identical; test_play_again also drives the resolver's
+OVER-phase rematch poll (offline).
+
+[SPRINT 22 HEALING EMERALD — SPAWN-ROLLBACK (2026-06-15)]
+The healing-emerald spawner was the LAST _netplay-disabled piece (a wall-clock MatchController
+._physics_process LCG cadence). It now spawns rollback-correct on a deterministic sim tick, so it works
+online — COMPLETING the spawn-rollback roadmap (the WHOLE match — fireball + cards + round flow + emerald —
+runs online deterministically). Built on git branch feature/spawn-rollback-cards; commit 9f1cdb8. All 19
+headless suites BIT-IDENTICAL on Godot 4.6.3-stable (two sweeps); test_emerald / test_emerald_cap green;
+LAN smoke byte-identical including the new emerald fold.
+
+THE CADENCE — now ROLLED-BACK sim state owned by RoundFlowResolver:
+- The LCG _em_rng, the _em_cd countdown, and the per-match _em_cnt cap are SAVED (keys erng / ecd / ecnt),
+  advanced in the resolver's ACTIVE phase, and reseeded (mixing round_number) on each round / match reset;
+  the resolver also clears live emeralds IN-TICK on a KO + round reset.
+- The actual SyncManager.spawn is a HOOK into MatchController (_spawn_emerald_synced) so the resolver stays
+  SyncManager-FREE (no compile-order risk); "one at a time" liveness is the deterministic "pickups" group
+  membership.
+
+EMERALDCONTROLLER — now rollback-spawnable (scripts/pickups/emerald_controller.gd):
+- _network_spawn(data) rebuilds it from an int/path payload (px / py + drift seed + Projectiles scan path).
+- _ready joins the network_sync group + idles its local driver under a live session.
+- _despawn() routes self-frees through SyncManager.despawn (the _grant_heal queue_frees + _clear_emerald +
+  the struck ball all converted).
+- _grant_heal's presentation (burst / heart / ripple / SFX) is is_in_rollback-guarded so the heal + despawn
+  stay deterministic + rolled back.
+
+MATCHCONTROLLER:
+- Drops the wall-clock _physics_process cadence + all its emerald LCG / clear methods + fields, keeping only
+  the spawn hook + the claimed->ripple presentation.
+
+NETWORKMANAGER:
+- _smoke_fingerprint() folds in the resolver's emerald cadence (ecd / ecnt) + the "pickups" group, so the
+  new save_state keys are byte-identical under forced rollbacks (confirmed: ecd1541,ecnt0,npick=0 identical
+  on both peers at tick 300; no emerald spawns in-window at the default 25-40s cadence).
+
+NOTES:
+- The emerald claimed->ripple + HeartPopFX remain PURE-VISUAL (now is_in_rollback-guarded).
+- Reusable technique (recorded in HANDOFF.md): a periodic spawn CADENCE (LCG countdown + RNG + per-match
+  cap) lives as rolled-back sim state in a network_sync node, reseeding on round / match reset; the actual
+  SyncManager.spawn is a HOOK into a presentation node so the resolver stays SyncManager-free.
+
+VERIFICATION: 19 headless suites BIT-IDENTICAL on Godot 4.6.3-stable (two sweeps); test_emerald /
+test_emerald_cap green (the per-match cap is now read from the resolver _em_cnt); LAN smoke
+(run_net_smoke.ps1 -Mode lan -Headless) byte-identical including the emerald fold.
+
+SPAWN-ROLLBACK ROADMAP COMPLETE: Phase 1 (base fireball) + Phase 2 (cards) + Sub-phase 3 (round flow) +
+Healing Emerald are ALL done — every mid-match spawn and the round flow are rollback-correct, and online
+Play Again is synced. The only remaining online-multiplayer work is OUTSIDE this roadmap (cross-compile
+delta_rollback arm64 for mobile; a live online KO + rematch are the Creative Director's playtest).
+
+Commits since the Sub-phase 3 doc sync (d54f807), oldest->newest: 4579f67 (online Play Again — deterministic
+synced rematch), 9f1cdb8 (healing-emerald spawn-rollback — deterministic cadence + enable online). NOT
+re-exported to Android this sprint.
