@@ -110,8 +110,14 @@ shared by both players and every rollback re-simulation.
   to 64.16 fixed-point ONCE at cast time.
 - Press edges derive from the PREVIOUS tick's input, stored as sim state
   (`"pr"`) — never from presentation.
-- The reactive lock + counter WOA read the wall-clock Stack state — flagged
-  call sites convert to tick math with the rollback sprint.
+- The reactive lock + counter WOA now read `StackResolver`'s tick-counted,
+  all-int `window_fraction_fp` (Sprint 22 Phase 2a) — NOT `TheStack`'s wall
+  clock, which is presentation-only. Stack resolution fires on a counted sim
+  tick (identical on both peers); `TheStack` only paces the slow-mo.
+- Card spawns are ROLLBACK-ROUTED (Sprint 22 Phase 2b): attack / counter /
+  defense resolve through `SyncManager.spawn` with int/path payloads, each
+  entity rebuilt by its `_network_spawn(data)` on spawn AND every rollback
+  re-sim — so cards cast correctly online (Phase 2c).
 - The barrier's "random" ricochet is a position parity hash; the AI's missed
   blocks are a tick % 3 gate — zero RNG anywhere.
 - Shape sub-resources are DUPLICATED before runtime mutation (graveyard rule).

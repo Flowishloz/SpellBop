@@ -1,5 +1,5 @@
 PROJECT STATE — WIZARD DODGEBALL
-Last sync: 2026-06-14 | Sprint 22 Phase 1 COMPLETE (base fireball spawn-rollback). On branch main.
+Last sync: 2026-06-15 | Sprint 22 Phase 2 COMPLETE (rollback cards: tick-counted Stack + card spawns + cards enabled online) + netplay stability/perspective fixes. On branch feature/spawn-rollback-cards.
 
 ===========================================================
 COMPLETED SYSTEMS
@@ -1886,3 +1886,169 @@ that spawn + fly to BYTE-IDENTICAL fixed-point positions. Files: scripts/project
 scripts/player/components/spell_caster_component.gd, scripts/player/player_controller.gd,
 core/network_manager.gd. The general spawn-rollback RULE and the Phase 2/3 roadmap are in HANDOFF.md.
 Merged to main (commit 43414a5).
+
+[SPRINT 22 PHASE 2 — ROLLBACK CARDS + NETPLAY STABILITY (2026-06-15)]
+Cards now cast ONLINE, rollback-correct, end-to-end — the second slice of routing mid-match spawns
+through the rollback SyncManager. Built on git branch feature/spawn-rollback-cards. All 19 headless
+suites pass on Godot 4.6.3-stable with BIT-IDENTICAL single-player determinism; the LAN smoke
+(tests/run_net_smoke.ps1 -Mode lan) is BYTE-IDENTICAL with both peers pulsing a CARD (plus a fireball)
+under forced variable-depth random rollbacks; the Creative Director playtested and confirmed BOTH
+offline and online. Delivered in three sub-phases (2a/2b/2c) plus a stability pass and client-perspective
+retargets.
+
+PHASE 2a — TICK-COUNTED STACK RESOLUTION (StackResolver):
+- THE BLOCKER (per the roadmap): card spawns resolved off TheStack's WALL-CLOCK window
+  (Engine.time_scale + Time.get_ticks_msec), which is NOT a deterministic sim tick — it closes at a
+  different tick per peer -> desync. (Sprint 7 deliberately UNIFIED the stack on wall-clock for the
+  "one event, one clock" countdown; for rollback we RE-SPLIT it: wall clock for presentation, a tick
+  count for resolution.)
+- NEW scripts/arena/stack_resolver.gd + a StackResolver node in scenes/match_arena.tscn (a network_sync
+  node). It OWNS the stack resolution: the resolution countdown (_resolve_ticks), the window fraction,
+  and the last-stager (the stack WINNER) — all ALL-INT sim state, saved/loaded. It self-drives in
+  single-player; joins the network_sync group via set_netplay() in a netplay match, resolving on a
+  COUNTED sim tick that lands identically on both peers.
+- CardCasterComponent arms the resolver from its own _stage() tick (IDEMPOTENT — both casters share one
+  clock) and records its side; the counter reactive-lock + WOA now read the resolver's all-int
+  window_fraction_fp instead of TheStack's wall clock.
+- MatchController DROPPED the rollback-unsafe _stack_entries resolution + the off-tick winner award
+  entirely. It only OPENS the slow-mo presentation window (rollback-guarded) and reacts to
+  resolver.resolved for cleanup; KO / round-reset call resolver.cancel().
+- TheStack is now PRESENTATION-ONLY (wall-clock slow-mo pacing). Its auto-_expire_window close was
+  removed; the window now closes when the resolver resolves (close_window()).
+- Files: scripts/arena/stack_resolver.gd (NEW), core/match_controller.gd, core/the_stack.gd,
+  scripts/player/components/card_caster_component.gd, scenes/match_arena.tscn, tests/test_card_system.gd
+  (PHASE C arms the resolver to fake the enemy window), tests/test_match_smoke.gd (asserts close_window()
+  resumes, not wall-clock auto-expiry). run_net_smoke.ps1 repointed to Godot 4.6.3-stable.
+
+PHASE 2a TUNING FIX — "THE STACK RESOLVES INSTANTLY" OFFLINE:
+- SYMPTOM: after 2a, staged spells resolved almost immediately offline (~0.3 s) while the on-screen
+  countdown still showed ~2.7 s.
+- ROOT CAUSE: the resolver counts RAW sim ticks, which advance at the FIXED tick_rate regardless of
+  the slow-mo — Engine.time_scale scales each tick's DELTA, NOT how often _physics_process fires. The
+  window was computed as seconds x tick_rate x stack_time_scale (3.0 x 60 x 0.1 = 18 ticks), so 18 ticks
+  elapsed in ~0.3 s of wall time.
+- FIX: window = seconds x tick_rate (3.0 x 60 = 180 ticks = 3.0 real seconds), matching the countdown.
+  Correct for BOTH offline and netplay (sim ticks are time-scale-independent in both). Also restores the
+  counter's reaction window. Files: card_caster_component.gd, test_card_system.gd. (See the graveyard
+  rule: never fold the slow-mo factor into a tick count.)
+
+PHASE 2b — CARD SPAWNS THROUGH SyncManager.spawn (single-player bit-identical):
+- _resolve_attack / _resolve_counter / _resolve_defense (card_caster_component.gd) + FireballController
+  .split_on_barrier now build INT/PATH payloads and call SyncManager.spawn instead of instantiate+
+  add_child — the same proven pattern as the base fireball (an int-only payload + _network_spawn() that
+  reconstructs the entity identically on the spawn tick AND every rollback re-sim; freed via _despawn()).
+- FireballController._network_spawn EXTENDED for the card paths: homing target by ABSOLUTE PATH (tgt/hstr)
+  + an explicit lifespan in ticks (life). split_on_barrier re-spawns each shard via SyncManager.spawn
+  from the ball's own scene_file_path — the old duplicate() left the shard UNREGISTERED with SyncManager,
+  crashing on the next rollback.
+- NEW ProjectileMovementComponent.set_lifespan_ticks(int): tick-exact lifespan for the payload (no float
+  round-trip).
+- NEW BarrierController._network_spawn(data) (deploy + arm_window_of_affect from the payload, owner by
+  path) + _despawn + the SyncManager.started _ready gating. It now SAVES _woa_armed — an unsaved
+  capture-arm latch was a rollback hole (a rollback past the arm left it stuck).
+- The counter's WOA -> slow-scale lerp was converted to FIXED-POINT (the float lerp was a cross-peer
+  desync risk).
+- card_caster resolves SyncManager via the /root NODE PATH, not the bare autoload global: card_caster
+  compiles EARLY (pulled in by AIBrainComponent) before the autoload registers as a GDScript global, so a
+  bare reference won't COMPILE (--import does not fix it). spell_caster / fireball compile late and use
+  the bare identifier fine.
+- Files: scripts/player/components/card_caster_component.gd, scripts/projectiles/fireball_controller.gd,
+  scripts/projectiles/components/projectile_movement_component.gd, scripts/arena/barrier_controller.gd.
+
+PHASE 2c — CARDS ENABLED IN NETPLAY:
+- player_controller._get_local_input gates the KEY_CARD strip on _netplay_casting (was an UNCONDITIONAL
+  erase). NetworkManager.netplay_casting_enabled = true on connect; both peers run the unified
+  _on_peer_connected, so it is symmetric.
+- The LAN net smoke now pulses a CARD too: both peers stage an attack at ~tick 100 so the StackResolver
+  resolves it under the forced random rollbacks — exercising CARD spawn-rollback determinism, not just
+  fireballs.
+- Files: core/network_manager.gd, scripts/player/player_controller.gd.
+
+NETPLAY STABILITY — THE ROLLBACK CRASH HUNT (commits 37a2fb8 + ae325f4):
+(1) HIT-LATCH DESYNC (the hit-damage crash):
+- FireballController._save_state/_load_state switched to STABLE EXPLICIT keys ("movement" + "hit") and now
+  snapshot the HitDetectionComponent _has_hit latch. The latch was UNSAVED, so a rollback PAST a hit left
+  it stuck true -> the re-sim never re-fired the hit -> cross-node damage was reverted-but-not-reapplied
+  -> health DESYNC -> crash.
+- The explicit keys ALSO keep 4 headless suites green: test_determinism / test_collision_layers /
+  test_spawn_bounds / test_spawn_offset read the saved fireball state by the literal key ["movement"];
+  the old node-name-derived keys would have silently changed under a rename. (Graveyard rule: rollback
+  save-state keys are a CONTRACT.)
+- _network_process now SKIPS a tick while detached (the despawn retire window): a despawned-but-still-
+  group-driven ball crashed on get_tree() == null. _on_hit presentation (impact burst / frost sfx) is
+  SUPPRESSED during a rollback re-sim so a corrected tick does not stack duplicate VFX/SFX.
+(2) DETACHED-ENTITY NULL-GUARDS (the recurring get_tree()-null crash at hit_detection:96):
+- The rollback SyncManager drives an entity while it is DETACHED — the despawn retire window, or (the
+  trigger here, since card damage can KO) a WALL-CLOCK round-reset _clear_projectiles() landing mid-tick.
+  The FireballController PARENT passed its own is_inside_tree() guard, but its CHILD component read a null
+  tree. Casting cards online made it reproducible (more projectiles spawning/despawning across
+  human-timed rollbacks).
+- Guarded every tick-path get_tree()/get_parent() at ITS OWN site: HitDetectionComponent._network_process
+  + BarrierController._network_process bail while not is_inside_tree(); FireballController._arena_bound_fp
+  null-checks get_tree() (falls back to the authored lane bound); split_on_barrier bails on a null parent.
+  This stops the CRASH — the underlying off-tick round reset is still a determinism hole, and Sub-phase 3
+  (deterministic round flow) is the real fix.
+(3) MatchController._clear_projectiles routes each child through _despawn() (SyncManager.despawn under a
+  live match) instead of a bare queue_free() that dangled the spawn record and crashed the next rollback.
+- SMOKE HARDENING (NetworkManager): both peers now fire-and-HOLD so the straight shots land hits, force
+  variable-depth random rollbacks, fold wizard HEALTH into the fingerprint, and sample at tick 300 —
+  regression-guarding the hit-latch desync.
+- Files: scripts/projectiles/fireball_controller.gd, scripts/projectiles/components/
+  hit_detection_component.gd, scripts/arena/barrier_controller.gd, core/match_controller.gd,
+  core/network_manager.gd.
+
+CLIENT-PERSPECTIVE FIXES (netplay-only, PRESENTATION — sim + determinism unchanged):
+(1) CLIENT PROJECTILE MIRROR: the client's projectiles fired from the FAR end ("as if I was the
+  opponent"). The front-to-back court mirror (VisualBridge.view_flip_z) was set only on bridges present
+  at scene LOAD, so mid-match spawns rendered un-mirrored downcourt. FIX: every VisualBridgeComponent
+  SELF-COMPUTES view_flip_z in _ready from its netplay role, so the wizards AND every spawn (projectiles,
+  barriers, emerald) mirror uniformly. Removed the now-redundant per-bridge loop in
+  MatchController._enter_netplay (kept the camera-follow + HUD swap). Confirmed on the client smoke
+  screenshot: the red wizard and its fireball sit at the near baseline.
+(2) PER-ROLE MOVE KEYS: the HOST instance moves with A/D, the CLIENT with the LEFT/RIGHT arrows (two local
+  windows, unambiguous controls). Added 4 InputMap actions (move_left_ad/move_right_ad/move_left_arrows/
+  move_right_arrows) + InputCommand.HOST_ACTIONS/CLIENT_ACTIONS; _get_local_input picks the scheme by
+  multiplayer.is_server() in netplay. Single-player keeps the default move_left/move_right (A/D AND arrows).
+(3) CAST-BUTTON CHARGE RING: retargeted at the LOCAL wizard (the client owns the red Opponent; the ring
+  read the wrong player's charge). New CastButtonHUD.set_caster(), called from _enter_netplay.
+(4) CLIENT CARD HAND: CardHandHUD.set_caster(caster) rebinds the 5 caster signals (cast_charge_started/
+  canceled, spell_staged, card_cast, card_rejected) so the CLIENT sees its OWN card cast fly-out + per-slot
+  cooldown dim (was hard-bound to the blue Player in _ready). Faces aren't rebuilt (both wizards share the
+  same 3-card test hand). Called from _enter_netplay for the LOCAL wizard. Same class as the cast-button /
+  health-bar perspective retargets.
+- Files: scripts/player/components/visual_bridge_component.gd, scripts/player/input_command.gd,
+  scripts/player/player_controller.gd, scripts/ui/cast_button_hud.gd, scripts/ui/card_hand_hud.gd,
+  core/match_controller.gd, core/network_manager.gd, project.godot.
+
+DEFERRED / KNOWN LIMITATIONS (carry into Sub-phase 3 or note as debt):
+- Card presentation rollback guards (COSMETIC): the card spell_cast / card_cast / spell_staged emits are
+  NOT is_in_rollback-guarded (unlike the fireball impact burst) -> possible duplicate cast VFX/SFX during
+  an online rollback correction. The SIM is deterministic regardless (smoke-proven); add the guards if the
+  windowed playtest shows doubled VFX.
+- Barrier CAPTURE-state rollback (pre-existing debt): _captured_ball / _owner_body are LIVE node refs, not
+  in _save_state. Barriers ship rollback-correct for deploy / expire / reflect + the new _woa_armed save,
+  but a rollback straddling an in-flight capture is not yet covered.
+- Healing emerald CADENCE stays _netplay-disabled (a tick-counted spawn is a Phase-3-style follow-up).
+  HeartPopFX + the emerald claimed->ripple stay pure-visual.
+
+NEXT — SUB-PHASE 3 (DETERMINISTIC ROUND FLOW, the last netplay piece): KO detection is deterministic
+(HP->0 on a tick), but the death-sequence timer (SceneTreeTimer) and the post-round break clock
+(Time.get_ticks_msec) are WALL-CLOCK, and _begin_round() mutates SIM state OFF-TICK from a non-rollback
+node (reposition wizards, _health.reset(), _clear_projectiles() despawns, round_number) -> desync on the
+first online KO (and the ROOT CAUSE the ae325f4 crash-guards only paper over). Plan: a RoundFlowResolver
+network_sync node (mirror StackResolver) — DETECT the KO by POLLING HP in _network_process (NOT the
+knocked_out signal, which re-fires on a rollback re-sim and would double-count), hold round phase +
+countdown + scores as rolled-back ints, perform the reset on a deterministic countdown-zero tick; DEMOTE
+MatchController's wall-clock death/break timers to presentation guarded by is_in_rollback(). Full design +
+the Phase-2 deferred items are in HANDOFF.md.
+
+VERIFICATION: Godot 4.6.3-stable console binary for ALL headless/CLI (4.6.1 has GDExtension regressions
+vs delta_rollback). Run the 19 headless suites STRICTLY SEQUENTIALLY (two instances deadlock on the
+.godot import lock). LAN smoke: tests/run_net_smoke.ps1 -Mode lan (-Headless for CI) -> both peers
+byte-identical. User playtested and confirmed offline + online.
+
+Commits since the last doc sync (0d5cba6), oldest->newest: 6c2475d (Phase 2a StackResolver),
+1097440 (client mirror + per-role keys), 37a2fb8 (hit-latch fix + charge UI + smoke hardening),
+6b3428a (offline stack-timing fix), 10827bb (Phase 2b card spawns through SyncManager.spawn),
+70c70e3 (Phase 2c cards enabled in netplay), ae325f4 (detached-entity null-guards),
+8f8c4a7 (client card-hand retarget). NOT re-exported to Android this sprint.
