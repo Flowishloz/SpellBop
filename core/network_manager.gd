@@ -186,7 +186,7 @@ func _on_peer_connected(peer_id: int) -> void:
 		# We assigned the peer as a client (connected_to_server path sets HOST=remote).
 		role = Role.CLIENT
 	netplay = true
-	netplay_casting_enabled = false
+	netplay_casting_enabled = true  # Phase 2c: cards + Stack are rollback-routed (2a/2b)
 	if _lobby != null and _lobby.has_method(&"on_peer_locked"):
 		_lobby.on_peer_locked()  # e.g. stop the UDP beacon
 	emit_signal(&"status", "Opponent connected — loading arena…")
@@ -387,6 +387,15 @@ func _on_smoke_tick(is_rollback: bool) -> void:
 			Input.action_press(&"cast_spell")
 		else:
 			Input.action_release(&"cast_spell")
+	# Pulse a CARD too (Phase 2c): stage an attack at ~tick 100 so the StackResolver
+	# resolves it on a deterministic tick (+~180) and the spawned bolt is alive at the
+	# tick-300 fingerprint — exercises CARD spawn-rollback determinism, not just fireballs.
+	# (Press-edge on a forward tick only; rollback re-sims replay the buffered input.)
+	if not is_rollback and InputMap.has_action(&"card_slot_1"):
+		if t >= 100 and t < 104:
+			Input.action_press(&"card_slot_1")
+		else:
+			Input.action_release(&"card_slot_1")
 	# Sample at a FIXED sim tick (not a signal count) so both peers fingerprint the SAME
 	# tick. ~300 ticks is several cast cycles in, so by then the fingerprint's wizard
 	# HEALTH has dropped a few points — a hit-damage rollback desync shows up here as a
