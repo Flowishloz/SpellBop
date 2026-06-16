@@ -250,13 +250,17 @@ func _try_capture() -> void:
 		if child.get_hit_source() == _owner_body:
 			continue  # the owner's own throw: plain physics bounce only
 		var ball_pos: SGFixedVector2 = child.get_global_fixed_position()
-		# SPEED-AWARE BAND (WOA consistency fix): a fast ball can bounce off
-		# the wall and travel a full tick-step before this scan runs (tick
-		# ORDER depends on who entered the container first) — widen the band
-		# by the ball's per-tick speed so one tick of escape never dodges
-		# the capture.
-		var dyn_band_y: int = band_y + absi(child.get_velocity_y())
-		if absi(my_pos.x - ball_pos.x) >= band_x or absi(my_pos.y - ball_pos.y) >= dyn_band_y:
+		# BALL-SIZE-AWARE BAND: include the BALL's OWN half-extents so this is a true AABB overlap,
+		# not a centre-distance test. The wide frost wave (rect half-width ~200) used to be SKIPPED
+		# when its CENTRE drifted off the barrier (the player slid sideways) even though its body
+		# crossed the wall — the shield-capture missed intermittently on ice. A circle reports its
+		# radius; the rect reports (extents_x, extents_y). Mirrors the wizard hit-detection overlap.
+		var ext: SGFixedVector2 = child.get_collider_half_extents() if child.has_method(&"get_collider_half_extents") else SGFixed.vector2(0, 0)
+		# SPEED-AWARE BAND (WOA consistency fix): a fast ball can bounce off the wall and travel a
+		# full tick-step before this scan runs (tick ORDER depends on container entry order) — widen
+		# the Y band by the ball's per-tick speed so one tick of escape never dodges the capture.
+		var dyn_band_y: int = band_y + ext.y + absi(child.get_velocity_y())
+		if absi(my_pos.x - ball_pos.x) >= band_x + ext.x or absi(my_pos.y - ball_pos.y) >= dyn_band_y:
 			continue
 		# BARRIER BREAKER (Spark Bolt): no capture — the wall SHATTERS and
 		# the bolt splits into two 1-damage shards that continue through.
