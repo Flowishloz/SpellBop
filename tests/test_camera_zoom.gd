@@ -1,6 +1,8 @@
-## test_camera_zoom.gd — Phase 2: the camera widens its default FOV (+15%) and
-## tightens it (zoom in 15%) while the stack resolves in slow-mo, easing back to
-## the base FOV as normal speed resumes (headless — FOV is a plain property).
+## test_camera_zoom.gd — Sprint 22: the camera FOV is LOCKED stable during play.
+## The stack slow-mo NO LONGER zooms the lens (the old "dynamic stack zoom" was removed per
+## the Creative Director) — the FOV stays at the widened base (+15%) whether or not the world
+## is dilated, so the time-dilation reads without a camera push. (The death cam is the only
+## remaining FOV change; it is not exercised here.)
 ##
 ## Run: <godot> --headless --path . -s res://tests/test_camera_zoom.gd
 extends SceneTree
@@ -43,22 +45,44 @@ func _run() -> void:
 	var base_fov: float = cam.fov
 	_ck(base_fov > 78.0 and base_fov < 85.0, "default FOV widened ~15%% (%.1f, 71 -> ~81.6)" % base_fov)
 
-	# Open the stack -> slow-mo -> camera tightens the FOV (zoom in).
+	# Open the stack -> slow-mo. The FOV must stay STABLE (the stack zoom was removed entirely).
 	stack.stack_time_scale = 0.1
 	stack.open_window(2.0)
 	await _wait(0.6)
-	_ck(cam.fov < base_fov - 3.0, "stack slow-mo ZOOMED IN (fov %.1f < base %.1f)" % [cam.fov, base_fov])
-	var zoomed: float = cam.fov
+	_ck(absf(cam.fov - base_fov) < 1.0,
+		"stack slow-mo keeps the FOV STABLE — no zoom (fov %.1f ~= base %.1f)" % [cam.fov, base_fov])
 
-	# Close -> resume -> FOV eases back to base.
+	# Close -> resume. The FOV is still stable at base (it never moved).
 	stack.close_window()
 	await _wait(1.4)
-	_ck(cam.fov > zoomed + 2.0 and absf(cam.fov - base_fov) < 1.5,
-		"FOV eased back to base after resume (%.1f -> %.1f, base %.1f)" % [zoomed, cam.fov, base_fov])
+	_ck(absf(cam.fov - base_fov) < 1.0,
+		"FOV stayed stable through the whole stack (%.1f, base %.1f)" % [cam.fov, base_fov])
+
+	# CHARGE FRAMING (Sprint 22): charging a fireball SMOOTHLY tightens the FOV, DIPS the camera
+	# down, and tilts it UP (a subtle in-the-action lean); all three snap back on release.
+	# MatchController._ready wired the camera's charge source to the Player's SpellCasterComponent.
+	var player: Node = arena.get_node("Player")
+	var spell: Node = player.get_node("SpellCasterComponent")
+	player.local_tick_driver_enabled = false      # take manual control of the caster
+	var rest_y: float = cam.global_position.y
+	var rest_pitch: float = cam.rotation_degrees.x
+	for i in 70:
+		spell._network_process({"c": 1})          # hold the cast -> build a strong charge
+	await _wait(0.5)                               # let the camera ease in
+	_ck(cam.fov < base_fov - 2.0, "charging ZOOMED the FOV in (%.1f < base %.1f)" % [cam.fov, base_fov])
+	_ck(cam.global_position.y < rest_y - 0.2, "charging DIPPED the camera down (%.2f < rest %.2f)" % [cam.global_position.y, rest_y])
+	_ck(cam.rotation_degrees.x > rest_pitch + 1.5, "charging tilted the camera UP (%.1f > rest %.1f)" % [cam.rotation_degrees.x, rest_pitch])
+	var charged_fov: float = cam.fov
+	spell._network_process({})                    # release -> fire -> snap back out
+	await _wait(0.5)
+	_ck(cam.fov > charged_fov + 2.0 and absf(cam.fov - base_fov) < 1.5,
+		"releasing snapped the FOV back out (%.1f -> %.1f, base %.1f)" % [charged_fov, cam.fov, base_fov])
+	_ck(absf(cam.global_position.y - rest_y) < 0.2 and absf(cam.rotation_degrees.x - rest_pitch) < 1.0,
+		"camera height + pitch returned to rest after release")
 
 	if _fails == 0:
-		print("CAMERA ZOOM TEST: ALL PASS")
+		print("CAMERA FOV TEST: ALL PASS")
 		quit(0)
 	else:
-		print("CAMERA ZOOM TEST: %d FAILURE(S)" % _fails)
+		print("CAMERA FOV TEST: %d FAILURE(S)" % _fails)
 		quit(1)

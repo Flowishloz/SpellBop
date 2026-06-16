@@ -56,14 +56,30 @@ extends Camera3D
 @export var pullback_factor: float = 1.15
 @export var base_fov_scale: float = 1.15
 
-@export_group("Dynamic Stack Zoom")
-## PHASE 2 (Creative Director): while the stack resolves in slow-mo, tighten the
-## FOV to base_fov * stack_zoom_scale (0.85 = zoom in 15%), easing back as normal
-## speed resumes. Driven off Engine.time_scale (dilated == stack active).
-@export var stack_zoom_scale: float = 0.85
+@export_group("FOV Return")
+## SPRINT 22 (Creative Director): the stack slow-mo NO LONGER zooms the camera — the
+## FOV stays LOCKED at the base during play so the time-dilation reads cleanly without
+## a lens push (the old "dynamic stack zoom" was removed entirely). This is only the
+## ease rate the FOV uses to RETURN to base after the death cam — the one remaining
+## effect that changes FOV — releases.
 @export var stack_zoom_speed: float = 5.0
-## Engine.time_scale below this counts as "in the stack" (dilated) -> zoom in.
-@export var stack_zoom_time_threshold: float = 0.92
+
+@export_group("Charge Zoom")
+## CHARGE ZOOM (Sprint 22, Creative Director): while the LOCAL wizard CHARGES a fireball the
+## camera tightens its FOV the longer the hold (full charge = base * charge_zoom_scale), then
+## snaps RAPIDLY back out on release. Distinct from the removed stack zoom — this tracks the
+## fireball charge via the caster's presentation-only charge_fraction(). MatchController points
+## set_charge_source() at the local wizard (retargeted to the client's own wizard like the rumble).
+@export var charge_zoom_scale: float = 0.85
+## Ease rate (per second) of the zoom-IN as the charge builds — tracks the gradual charge.
+@export var charge_zoom_in_speed: float = 7.0
+## Ease rate (per second) of the snap-OUT on release — higher = a faster "punch out".
+@export var charge_zoom_out_speed: float = 16.0
+## As the charge tightens the FOV, also DROP the camera this many metres and tilt it UP this many
+## degrees (a subtle lean toward a closer, in-the-action 3rd-person framing — "not too much").
+## Driven by the SAME eased charge amount as the FOV, so they move + snap back in lockstep.
+@export var charge_dip_y: float = 0.6
+@export var charge_look_up_degrees: float = 4.5
 
 @export_group("Dynamic Shoulder")
 ## DYNAMIC SHOULDER SWAP (Creative Director): same angles and perspective,
@@ -86,8 +102,8 @@ extends Camera3D
 ## this far toward that side (metres) and yaws this many degrees; inside shoulder_return_
 ## threshold it eases back to dead-centre (0,0). Was a full ±1.45 m / ±8° hold; now a gentle
 ## lean from neutral.
-@export var shoulder_offset_x: float = 0.7
-@export var shoulder_yaw_degrees: float = 4.0
+@export var shoulder_offset_x: float = 0.77
+@export var shoulder_yaw_degrees: float = 4.4
 ## Player |x| (metres) INSIDE which the lean returns to neutral. Smaller than
 ## shoulder_swap_threshold so there is a hold band between (hysteresis — no wobble at the edge).
 @export var shoulder_return_threshold: float = 0.45
@@ -139,6 +155,11 @@ var _base_z: float = 0.0
 var _follow_x: float = 0.0
 var _base_fov: float = 75.0
 var _fov_zoom: float = 1.0
+# CHARGE ZOOM (Sprint 22): the eased 0..1 charge AMOUNT (0 = idle, 1 = full charge) driven by
+# the local wizard's fireball charge — it drives the FOV tighten, the camera DIP, and the
+# look-UP together, so they stay in lockstep and snap back as one on release.
+var _charge_amt: float = 0.0
+var _charge_caster: Node = null
 
 # DEATH CAM (Sprint 20): the eliminated wizard's sprite to frame (or null), the
 # per-knockout end-distance tightness, and the start framing + wall-clock start
@@ -235,6 +256,14 @@ func set_follow_target(target: Node3D) -> void:
 		_follow_x = target.global_position.x  # reset the pan so there's no jump
 
 
+## CHARGE ZOOM (Sprint 22): point the FOV charge-zoom at the LOCAL wizard's fireball caster
+## (a SpellCasterComponent). While it charges, its presentation-only charge_fraction() eases the
+## FOV down; on release the FOV snaps back out. MatchController retargets this to the client's own
+## wizard, exactly like the charge rumble. Pass null to disable. Presentation only — never sim.
+func set_charge_source(caster: Node) -> void:
+	_charge_caster = caster
+
+
 func _process(delta: float) -> void:
 	# Decay on the WALL clock so bursts feel identical inside slow-mo.
 	var real_delta: float = delta / maxf(Engine.time_scale, 0.001)
@@ -250,7 +279,7 @@ func _process(delta: float) -> void:
 	# wizard plays past the threshold, easing back to NEUTRAL near centre (the signed-off
 	# spawn framing). Hysteresis: engage at shoulder_swap_threshold, release inside
 	# shoulder_return_threshold, hold between — no edge wobble. Reduced magnitude vs the old
-	# full over-the-shoulder hold (±0.7 m / ±4° from neutral, not ±1.45 m / ±8°).
+	# full over-the-shoulder hold (±0.77 m / ±4.4° from neutral, not ±1.45 m / ±8°; Sprint 22 +10%).
 	if _target != null and shoulder_swap_enabled:
 		var px: float = _target.global_position.x
 		if px > shoulder_swap_threshold:
@@ -289,17 +318,33 @@ func _process(delta: float) -> void:
 		offset_y = max_shake_offset.y * magnitude * sin(wobble_t * 2.3 + 1.3)
 		roll = max_shake_roll_degrees * magnitude * sin(wobble_t * 1.3 + 0.7)
 
-	# DYNAMIC STACK ZOOM (Phase 2): tighten the FOV while the world is dilated
-	# (the stack resolving in slow-mo), ease back as normal speed resumes.
-	var want_zoom: float = stack_zoom_scale if Engine.time_scale < stack_zoom_time_threshold else 1.0
+	# FOV: the stack slow-mo no longer zooms (removed Sprint 22) — _fov_zoom only eases back to
+	# 1.0 after the death cam releases. ON TOP of that, the CHARGE ZOOM tightens the FOV while the
+	# LOCAL wizard charges a fireball (the longer the hold, the more zoom-in) and snaps it RAPIDLY
+	# back out on release. Both are pure presentation multipliers on the base FOV.
 	var zt: float = 1.0 - exp(-stack_zoom_speed * real_delta)
-	_fov_zoom = lerpf(_fov_zoom, want_zoom, zt)
-	fov = _base_fov * _fov_zoom
+	_fov_zoom = lerpf(_fov_zoom, 1.0, zt)
+	# Charge framing (Creative Director): track the caster's charge_fraction() (0..1, presentation
+	# getter — never sim) into ONE eased amount that SMOOTHLY follows the continuous gauge fill (not
+	# the discrete 1/2/3 steps). Asymmetric ease: IN as the charge builds, OUT fast on release. This
+	# single amount drives the FOV tighten (below) AND the dip + look-up (at the position write).
+	var charge_f: float = 0.0
+	if _charge_caster != null and is_instance_valid(_charge_caster) and _charge_caster.has_method(&"charge_fraction"):
+		charge_f = clampf(_charge_caster.charge_fraction(), 0.0, 1.0)
+	var c_speed: float = charge_zoom_out_speed if charge_f < _charge_amt else charge_zoom_in_speed
+	var ct: float = 1.0 - exp(-c_speed * real_delta)
+	_charge_amt = lerpf(_charge_amt, charge_f, ct)
+	fov = _base_fov * _fov_zoom * lerpf(1.0, charge_zoom_scale, _charge_amt)
 
 	# Hard yaw guard so the camera never flips past a sane angle (Phase 2).
 	var clamped_yaw: float = clampf(yaw_degrees, -max_yaw_degrees, max_yaw_degrees)
-	global_position = Vector3(_follow_x + offset_x, _base_y + offset_y, _base_z)
-	rotation_degrees = Vector3(pitch_degrees, clamped_yaw, roll)
+	# CHARGE FRAMING (Sprint 22, Creative Director): as the charge tightens the FOV, the camera also
+	# DIPS down and looks UP slightly — easing toward a closer, more "in the action" 3rd-person
+	# framing — in lockstep with _charge_amt, so it eases in with the gauge and snaps back on release.
+	var charge_y: float = _base_y + offset_y - charge_dip_y * _charge_amt
+	var charge_pitch: float = pitch_degrees + charge_look_up_degrees * _charge_amt
+	global_position = Vector3(_follow_x + offset_x, charge_y, _base_z)
+	rotation_degrees = Vector3(charge_pitch, clamped_yaw, roll)
 
 
 ## DEATH CAM framing (Sprint 20): ease the camera toward a close shot of the
