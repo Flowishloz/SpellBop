@@ -1,0 +1,8 @@
+[gd_resource type="Resource" script_class="WizardPoseManifest" format=3 uid="uid://1qo13uerqvi6"]
+
+[ext_resource type="Script" uid="uid://bp7t3q64v1xgy" path="res://scripts/visual/wizard_pose_manifest.gd" id="1_ohmq2"]
+
+[resource]
+script = ExtResource("1_ohmq2")
+names = PackedStringArray("cast_fire", "cast_ice", "cast_shield", "charging", "close_call", "hurt", "idle", "running")
+paths = PackedStringArray("res://assets_final/sprites/wizards/cast_fire.png", "res://assets_final/sprites/wizards/cast_ice.png", "res://assets_final/sprites/wizards/cast_shield.png", "res://assets_final/sprites/wizards/charging.png", "res://assets_final/sprites/wizards/close_call.png", "res://assets_final/sprites/wizards/hurt.png", "res://assets_final/sprites/wizards/idle.png", "res://assets_final/sprites/wizards/running.png")

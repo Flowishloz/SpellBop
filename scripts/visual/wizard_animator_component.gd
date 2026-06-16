@@ -56,6 +56,28 @@ extends Node
 @export var hit_pop_amount: float = 0.24
 @export var hit_pop_frequency: float = 30.0
 
+## CHARACTER FRAME PIPELINE (Sprint 24) — static "key pose" textures swapped on the Sprite3D's
+## palette_swap.gdshader material_override, layered UNDER all the procedural motion above.
+## PRESENTATION ONLY: no sim/rollback state, exactly like the rest of this component.
+##
+## This wizard's active SKIN (the recolour) + the BASE skin (the reference palette the art was
+## drawn in = the shader's match source). blue / red / future shop skins. Leave null to render
+## the art un-recoloured (the shader falls back to identity passthrough).
+@export var skin: SkinPalette
+@export var base_skin: SkinPalette
+## Container scanned for the close_call near-miss read (the arena's hostile projectiles).
+@export var projectile_container_path: NodePath = ^"../../Projectiles"
+## Wizard body half-width in SIM units (the close_call HIT boundary; 52.5 = default collider).
+@export var body_half_width: float = 52.5
+## Sim units OUTSIDE the hit boundary that still count as a "barely missed" close call.
+@export var close_call_margin: float = 80.0
+## Seconds a momentary pose (cast / hurt / close_call) holds before falling back to motion poses.
+@export var pose_hold_seconds: float = 0.25
+## Visual speed (m/s) above which the running pose shows.
+@export var run_pose_speed: float = 0.6
+## True if the art is drawn FACING RIGHT (flip_h then mirrors it when moving left). Flip if not.
+@export var face_art_default_right: bool = true
+
 var _rig: Node3D
 var _sprite: Node3D
 var _sprite_base_pos: Vector3 = Vector3.ZERO  # the sprite's authored local offset
@@ -81,6 +103,20 @@ var _dead: bool = false
 var _death_vel: Vector3 = Vector3.ZERO
 var _death_off: Vector3 = Vector3.ZERO
 var _death_t: float = 0.0
+
+# --- FRAME PIPELINE state (presentation only; never saved, never sim) ---
+var _material: ShaderMaterial = null   # the Sprite3D's palette_swap material_override (or null)
+var _body: Node = null                 # the SGCharacterBody2D parent (close_call scan)
+var _container: Node = null            # the projectile container (close_call scan)
+var _cur_tex: Texture2D = null         # the pose texture currently on the sprite
+var _uploaded_tex: Texture2D = null    # last texture pushed to the shader's pose_tex uniform
+var _cast_pose: StringName = &"cast_fire"
+var _cast_until_msec: int = 0
+var _hurt_until_msec: int = 0
+var _close_call_until_msec: int = 0
+var _ball_prev_dy: Dictionary = {}     # projectile instance_id -> last dy (sim fixed int)
+var _body_half_x_fp: int = 0
+var _close_margin_fp: int = 0
 
 
 func _ready() -> void:
@@ -110,6 +146,22 @@ func _ready() -> void:
 			# FROST FLASH (Sprint 23 batch 2): a frost wave deals 0 damage, so it never reaches the
 			# damage path — flash ICE-blue + pop off the movement slow instead (being frozen IS its hit).
 			sibling.slow_started.connect(_on_slowed)
+
+	# --- FRAME PIPELINE wiring (presentation only) ---
+	_body = get_parent()
+	_container = get_node_or_null(projectile_container_path)
+	if _sprite != null:
+		# Duplicate the material_override so EACH wizard owns its ShaderMaterial. opponent.tscn
+		# INSTANCES player.tscn, so without this both wizards share one material and would fight
+		# over pose_tex + the palette (both showing the same pose / same colour).
+		var mat: Material = _sprite.get(&"material_override") as Material
+		if mat is ShaderMaterial:
+			_material = (mat as ShaderMaterial).duplicate() as ShaderMaterial
+			_sprite.set(&"material_override", _material)
+	_body_half_x_fp = SGFixed.from_float(maxf(0.0, body_half_width))
+	_close_margin_fp = SGFixed.from_float(maxf(0.0, close_call_margin))
+	_apply_skin()
+	_apply_pose(&"idle")
 
 
 func _process(delta: float) -> void:
@@ -212,6 +264,13 @@ func _process(delta: float) -> void:
 	if wall_dt > 0.0:
 		pass  # (wall_dt reserved for future wall-clock blends)
 
+	# --- FRAME PIPELINE (Sprint 24, presentation only): facing + close-call + key-pose ---
+	_scan_close_call(now)
+	if _sprite != null:
+		if dir != 0:
+			_sprite.set(&"flip_h", (dir < 0) if face_art_default_right else (dir > 0))
+		_apply_pose(_select_pose_name(now, speed))
+
 
 func _on_damaged(_amount: int) -> void:
 	# PRESENTATION ONLY — suppress on rollback re-sims. The damaged signal re-fires every
@@ -223,6 +282,7 @@ func _on_damaged(_amount: int) -> void:
 	var now: int = Time.get_ticks_msec()
 	_flicker_until_msec = now + int(flicker_seconds * 1000.0)
 	_hit_pop_msec = now
+	_hurt_until_msec = now + int(pose_hold_seconds * 1000.0)  # show the hurt key-pose
 	# Flash + pop in the STRIKING element's colour (Sprint 23 batch 2): fire = orange, spark = yellow.
 	var elem: int = _health.get_last_hit_element() if (_health != null and _health.has_method(&"get_last_hit_element")) else Elements.FIRE
 	_flash_color = Elements.flash_color(elem)
@@ -238,6 +298,7 @@ func _on_slowed(_duration_ticks: int) -> void:
 	var now: int = Time.get_ticks_msec()
 	_flicker_until_msec = now + int(flicker_seconds * 1000.0)
 	_hit_pop_msec = now
+	_hurt_until_msec = now + int(pose_hold_seconds * 1000.0)  # show the hurt key-pose (frost)
 	_flash_color = Elements.flash_color(Elements.ICE)
 
 
@@ -254,6 +315,7 @@ func _on_knocked_out() -> void:
 	if _dead or _sprite == null:
 		return
 	_dead = true
+	_apply_pose(&"hurt")  # hold the hurt key-pose through the death fling (_process early-returns)
 	_death_t = 0.0
 	_death_off = Vector3.ZERO
 	var back: float = signf(_rig.global_position.z) if _rig != null else 1.0
@@ -296,9 +358,14 @@ func _on_health_changed(current: int, _max_health: int) -> void:
 		_death_t = 0.0
 		_death_off = Vector3.ZERO
 		_hit_pop_msec = 0
+		_hurt_until_msec = 0
+		_cast_until_msec = 0
+		_close_call_until_msec = 0
+		_ball_prev_dy.clear()
 		_sprite.position = _sprite_base_pos
 		_sprite.scale = Vector3.ONE
 		_sprite.set(&"modulate", Color.WHITE)
+		_apply_pose(&"idle")
 
 
 func _on_charge_started(_spell: Resource) -> void:
@@ -315,7 +382,139 @@ func _on_charge_ended() -> void:
 	_charge_level = 0
 
 
-func _on_cast_released(_projectile: Node, _spell: Resource) -> void:
+func _on_cast_released(_projectile: Node, spell: Resource) -> void:
 	_charging = false
 	_charge_level = 0
 	_recoil = 1.0
+	# CAST KEY-POSE by element: fireball/attack -> cast_fire, counter -> cast_ice, defense ->
+	# cast_shield. The emitting signal is already rollback-guarded at the caster, so this only
+	# fires on the forward tick.
+	_cast_pose = _cast_pose_for(spell)
+	_cast_until_msec = Time.get_ticks_msec() + int(pose_hold_seconds * 1000.0)
+
+
+# =====================================================================
+# FRAME PIPELINE (Sprint 24) — PRESENTATION ONLY (no sim / no saved state)
+# =====================================================================
+
+## Upload this wizard's skin to the palette_swap material: src = base palette (what the art
+## was drawn in), dst = the active skin's recolour. sRGB values — the shader matches in sRGB.
+## color_count 0 = identity passthrough (no skin assigned -> art renders as drawn).
+func _apply_skin() -> void:
+	if _material == null:
+		return
+	var base: SkinPalette = base_skin if base_skin != null else skin
+	if base == null or skin == null or base.colors.is_empty():
+		_material.set_shader_parameter(&"color_count", 0)
+		return
+	var n: int = mini(skin.colors.size(), base.colors.size())
+	var src := PackedVector3Array()
+	var dst := PackedVector3Array()
+	for i in n:
+		var s: Color = base.colors[i]
+		var d: Color = skin.colors[i]
+		src.append(Vector3(s.r, s.g, s.b))
+		dst.append(Vector3(d.r, d.g, d.b))
+	_material.set_shader_parameter(&"color_count", n)
+	_material.set_shader_parameter(&"src_colors", src)
+	_material.set_shader_parameter(&"dst_colors", dst)
+
+
+## Swap the Sprite3D to a pose texture (and feed the shader). Graceful: a missing pose falls
+## back to idle; with NO art at all the .tscn placeholder texture stays put. Keeps the shader's
+## pose_tex synced to whatever texture is actually shown, so the no-art path still renders.
+func _apply_pose(pose: StringName) -> void:
+	if _sprite == null:
+		return
+	var tex: Texture2D = WizardPoseLibrary.get_pose(pose)
+	if tex == null and pose != &"idle":
+		tex = WizardPoseLibrary.get_pose(&"idle")
+	if tex != null and tex != _cur_tex:
+		_sprite.set(&"texture", tex)
+		_cur_tex = tex
+	var shown: Texture2D = _sprite.get(&"texture") as Texture2D
+	if _material != null and shown != _uploaded_tex:
+		_material.set_shader_parameter(&"pose_tex", shown)
+		_uploaded_tex = shown
+
+
+## The current pose name by priority. hurt > close_call > cast > charging > running > idle.
+func _select_pose_name(now: int, speed: float) -> StringName:
+	if now < _hurt_until_msec:
+		return &"hurt"
+	if now < _close_call_until_msec:
+		return &"close_call"
+	if now < _cast_until_msec:
+		return _cast_pose
+	if _charging:
+		return &"charging"
+	if speed > run_pose_speed:
+		return &"running"
+	return &"idle"
+
+
+## Map a cast to its key-pose. DEFENSE -> shield; otherwise by the spell/card element.
+func _cast_pose_for(spell: Object) -> StringName:
+	if spell is CardResource:
+		if spell.card_type == CardResource.CardType.DEFENSE:
+			return &"cast_shield"
+		return _elem_pose(int(spell.element))
+	if spell != null:
+		var e: Variant = spell.get(&"element")
+		if e != null:
+			return _elem_pose(int(e))
+	return &"cast_fire"
+
+
+func _elem_pose(element: int) -> StringName:
+	match element:
+		Elements.ICE:
+			return &"cast_ice"
+		Elements.SPARK:
+			# Optional dedicated spark pose if the artist drops one in; else the fire cast.
+			return &"cast_spark" if WizardPoseLibrary.has_pose(&"cast_spark") else &"cast_fire"
+		_:
+			return &"cast_fire"
+
+
+## CLOSE CALL — a hostile ball that passes JUST OUTSIDE the hitbox (within close_call_margin)
+## but never connects triggers the close_call pose. ROLLBACK-SAFE BY CONSTRUCTION: this runs at
+## render rate in _process (which does NOT execute during a rollback re-sim), reads sim positions
+## WITHOUT ever writing sim/saved state, and the pose sits BELOW hurt in priority — so a rollback
+## cannot double-fire it, and a near-miss that re-sims into a real hit shows hurt instead. The
+## explicit is_in_rollback() guard is belt-and-braces (the recently-shipped animator-hook idiom).
+func _scan_close_call(now: int) -> void:
+	if SyncManager != null and SyncManager.is_in_rollback():
+		return
+	if _body == null or _container == null or not is_instance_valid(_container):
+		return
+	if not _body.has_method(&"get_global_fixed_position"):
+		return
+	var my: SGFixedVector2 = _body.get_global_fixed_position()
+	var alive: Dictionary = {}
+	for child in _container.get_children():
+		if not child.has_method(&"get_velocity_y") or not child.has_method(&"get_hit_source"):
+			continue
+		if child.get_hit_source() == _body:
+			continue  # our own throw
+		var id: int = child.get_instance_id()
+		alive[id] = true
+		var bp: SGFixedVector2 = child.get_global_fixed_position()
+		var dy: int = my.y - bp.y
+		var prev: Variant = _ball_prev_dy.get(id)
+		_ball_prev_dy[id] = dy
+		if prev == null:
+			continue
+		if (int(prev) > 0) == (dy > 0):
+			continue  # hasn't crossed our baseline this frame
+		# Crossed our depth line — was it a BARELY-missed pass on X (outside the hitbox, but close)?
+		var dx: int = absi(my.x - bp.x)
+		var ext: SGFixedVector2 = child.get_collider_half_extents() if child.has_method(&"get_collider_half_extents") else SGFixed.vector2(0, 0)
+		var inner: int = _body_half_x_fp + ext.x          # the hit boundary
+		var outer: int = inner + _close_margin_fp
+		if dx > inner and dx <= outer:
+			_close_call_until_msec = now + int(pose_hold_seconds * 1000.0)
+	# Prune departed projectiles so the dictionary can't grow unbounded.
+	for id in _ball_prev_dy.keys():
+		if not alive.has(id):
+			_ball_prev_dy.erase(id)

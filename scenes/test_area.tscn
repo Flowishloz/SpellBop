@@ -28,7 +28,7 @@ arena_half_width = 500.0
 
 [node name="Sprite3D" parent="Player/WizardRig" index="0"]
 transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 0.85, 0)
-pixel_size = 0.0066
+pixel_size = 0.0132
 
 [node name="ShadowSprite" parent="Player" index="7"]
 pixel_size = 0.0015

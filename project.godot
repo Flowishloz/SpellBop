@@ -24,6 +24,10 @@ SoundFX="*res://core/sound_fx.gd"
 SyncManager="*res://addons/delta_rollback/SyncManager.gd"
 NetworkManager="*res://core/network_manager.gd"
 
+[editor_plugins]
+
+enabled=PackedStringArray("res://addons/wizard_pipeline/plugin.cfg")
+
 [display]
 
 window/size/viewport_width=1080
