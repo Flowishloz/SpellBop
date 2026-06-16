@@ -74,6 +74,12 @@ var _resume_last_msec: int = 0
 # stack resolves spell-by-spell (MatchController drives the staggered releases).
 var _resolving: bool = false
 
+## HITSTOP (Sprint 23, Creative Director): how frozen the world goes during an impact crunch
+## (0.04 = near-stopped). The biggest "explosive" lever — a sharp, brief freeze on every hit.
+@export_range(0.0, 0.5) var hitstop_scale: float = 0.04
+# Wall-clock deadline (msec) of the current hitstop freeze (0 = none).
+var _hitstop_until_msec: int = 0
+
 
 ## Opens the time-slow window (or refreshes the deadline if already open).
 ## Called by arena orchestration (MatchController) whenever any caster fires.
@@ -85,6 +91,7 @@ func open_window(duration_s: float = -1.0) -> void:
 	if state == State.NORMAL:
 		state = State.STACK_WINDOW
 		Engine.time_scale = stack_time_scale
+	_hitstop_until_msec = 0  # the stack window supersedes any in-flight hitstop crunch
 	stack_opened.emit(seconds)
 
 
@@ -131,7 +138,21 @@ func hold_dilation(scale: float) -> void:
 	state = State.NORMAL
 	_resolving = true   # held: _process won't touch Engine.time_scale
 	_resuming = false
+	_hitstop_until_msec = 0  # a held dilation (death / stack resolve) supersedes a hitstop crunch
 	Engine.time_scale = clampf(scale, 0.01, 1.0)
+
+
+## HITSTOP (Sprint 23): a sharp, brief presentation FREEZE on impact — the "crunch" (the biggest
+## "explosive" lever). Wall-clock timed (immune to Engine.time_scale), rollback-safe — it re-paces
+## presentation only, never the tick math. SKIPPED while a stack window or a held dilation (death
+## beat / stack resolve) already owns the clock; otherwise it overrides any resume ramp and snaps
+## back SHARP (in _process) for the punch. MatchController calls it on hits, scaling the duration.
+func hitstop(duration_ms: int) -> void:
+	if state == State.STACK_WINDOW or _resolving:
+		return
+	_hitstop_until_msec = Time.get_ticks_msec() + maxi(1, duration_ms)
+	_resuming = false
+	Engine.time_scale = hitstop_scale
 
 
 ## REAL seconds until the window closes (0.0 when closed).
@@ -142,6 +163,14 @@ func remaining_seconds() -> float:
 
 
 func _process(_delta: float) -> void:
+	# HITSTOP: hold the freeze until its wall-clock deadline, then SNAP back to 1.0 (sharp =
+	# punchy). Takes priority — a crunch overrides the gentle resume ramp.
+	if _hitstop_until_msec > 0:
+		if Time.get_ticks_msec() < _hitstop_until_msec:
+			Engine.time_scale = hitstop_scale
+			return
+		_hitstop_until_msec = 0
+		Engine.time_scale = 1.0
 	# Fast-but-gradual speed-up after a window closes (wall-clock paced).
 	if _resuming and state == State.NORMAL:
 		var now: int = Time.get_ticks_msec()

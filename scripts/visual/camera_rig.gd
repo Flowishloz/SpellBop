@@ -80,6 +80,12 @@ extends Camera3D
 ## Driven by the SAME eased charge amount as the FOV, so they move + snap back in lockstep.
 @export var charge_dip_y: float = 0.6
 @export var charge_look_up_degrees: float = 4.5
+## RELEASE PUNCH (Sprint 23, Creative Director): on firing, the FOV kicks WIDER than base (a
+## punch-out OVERSHOOT past default) then smooths back — fov_punch_max is the widen fraction at a
+## full charge (a tap still punches a little), fov_punch_decay the settle rate. Layers on top of
+## the charge zoom snapping back, so a charged shot reads as a satisfying "whoomph" out.
+@export var fov_punch_max: float = 0.12
+@export var fov_punch_decay: float = 6.0
 
 @export_group("Dynamic Shoulder")
 ## DYNAMIC SHOULDER SWAP (Creative Director): same angles and perspective,
@@ -102,8 +108,8 @@ extends Camera3D
 ## this far toward that side (metres) and yaws this many degrees; inside shoulder_return_
 ## threshold it eases back to dead-centre (0,0). Was a full ±1.45 m / ±8° hold; now a gentle
 ## lean from neutral.
-@export var shoulder_offset_x: float = 0.77
-@export var shoulder_yaw_degrees: float = 4.4
+@export var shoulder_offset_x: float = 0.847
+@export var shoulder_yaw_degrees: float = 4.84
 ## Player |x| (metres) INSIDE which the lean returns to neutral. Smaller than
 ## shoulder_swap_threshold so there is a hold band between (hysteresis — no wobble at the edge).
 @export var shoulder_return_threshold: float = 0.45
@@ -160,6 +166,7 @@ var _fov_zoom: float = 1.0
 # look-UP together, so they stay in lockstep and snap back as one on release.
 var _charge_amt: float = 0.0
 var _charge_caster: Node = null
+var _fov_punch: float = 0.0   # transient FOV WIDEN overshoot on fireball release (decays to 0)
 
 # DEATH CAM (Sprint 20): the eliminated wizard's sprite to frame (or null), the
 # per-knockout end-distance tightness, and the start framing + wall-clock start
@@ -264,6 +271,13 @@ func set_charge_source(caster: Node) -> void:
 	_charge_caster = caster
 
 
+## RELEASE PUNCH (Sprint 23): called by MatchController when the LOCAL wizard FIRES a fireball —
+## kick the FOV WIDER than base (an overshoot past default), scaled by the charge at release (a tap
+## still punches a little via the 0.3 floor). Decays back to base in _process. Presentation only.
+func fov_punch() -> void:
+	_fov_punch = maxf(_fov_punch, fov_punch_max * maxf(0.3, _charge_amt))
+
+
 func _process(delta: float) -> void:
 	# Decay on the WALL clock so bursts feel identical inside slow-mo.
 	var real_delta: float = delta / maxf(Engine.time_scale, 0.001)
@@ -279,7 +293,7 @@ func _process(delta: float) -> void:
 	# wizard plays past the threshold, easing back to NEUTRAL near centre (the signed-off
 	# spawn framing). Hysteresis: engage at shoulder_swap_threshold, release inside
 	# shoulder_return_threshold, hold between — no edge wobble. Reduced magnitude vs the old
-	# full over-the-shoulder hold (±0.77 m / ±4.4° from neutral, not ±1.45 m / ±8°; Sprint 22 +10%).
+	# full over-the-shoulder hold (±0.847 m / ±4.84° from neutral, not ±1.45 m / ±8°; +10% in S22, +10% again).
 	if _target != null and shoulder_swap_enabled:
 		var px: float = _target.global_position.x
 		if px > shoulder_swap_threshold:
@@ -334,7 +348,9 @@ func _process(delta: float) -> void:
 	var c_speed: float = charge_zoom_out_speed if charge_f < _charge_amt else charge_zoom_in_speed
 	var ct: float = 1.0 - exp(-c_speed * real_delta)
 	_charge_amt = lerpf(_charge_amt, charge_f, ct)
-	fov = _base_fov * _fov_zoom * lerpf(1.0, charge_zoom_scale, _charge_amt)
+	# RELEASE PUNCH overshoot (Sprint 23): decays to 0; widens the FOV PAST base for the kick.
+	_fov_punch = maxf(0.0, _fov_punch - fov_punch_decay * real_delta)
+	fov = _base_fov * _fov_zoom * lerpf(1.0, charge_zoom_scale, _charge_amt) * (1.0 + _fov_punch)
 
 	# Hard yaw guard so the camera never flips past a sane angle (Phase 2).
 	var clamped_yaw: float = clampf(yaw_degrees, -max_yaw_degrees, max_yaw_degrees)
