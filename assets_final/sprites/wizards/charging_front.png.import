@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://dvblvfm5d3tfx"
-path="res://.godot/imported/cast_fire.png-a9627813a3fd78ca6153a1c164e52876.ctex"
+uid="uid://nki7w5ivf7ux"
+path="res://.godot/imported/charging_front.png-3e502f2b1fc87f0b4f788995b043f0dd.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets_final/sprites/wizards/cast_fire.png"
-dest_files=["res://.godot/imported/cast_fire.png-a9627813a3fd78ca6153a1c164e52876.ctex"]
+source_file="res://assets_final/sprites/wizards/charging_front.png"
+dest_files=["res://.godot/imported/charging_front.png-3e502f2b1fc87f0b4f788995b043f0dd.ctex"]
 
 [params]
 

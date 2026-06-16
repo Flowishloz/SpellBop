@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://cs6ofsf58l6eb"
-path="res://.godot/imported/cast_shield.png-0abfa3f4c32b8dc456d155c8af8bb7bc.ctex"
+uid="uid://c8fakytv0a75x"
+path="res://.godot/imported/cast_shield_front.png-3cfbfe78d0259d8c600f0d7b4899a76a.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets_final/sprites/wizards/cast_shield.png"
-dest_files=["res://.godot/imported/cast_shield.png-0abfa3f4c32b8dc456d155c8af8bb7bc.ctex"]
+source_file="res://assets_final/sprites/wizards/cast_shield_front.png"
+dest_files=["res://.godot/imported/cast_shield_front.png-3cfbfe78d0259d8c600f0d7b4899a76a.ctex"]
 
 [params]
 

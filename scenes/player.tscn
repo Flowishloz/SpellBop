@@ -7,7 +7,7 @@
 [ext_resource type="Script" uid="uid://cubbwkvifimoa" path="res://scripts/player/components/spell_caster_component.gd" id="5_tuyoq"]
 [ext_resource type="Resource" uid="uid://b6ireohf3omuk" path="res://resources/spells/base_fireball.tres" id="6_fjrip"]
 [ext_resource type="Script" uid="uid://d1g836cxah0aa" path="res://scripts/visual/drop_shadow_component.gd" id="7_shdw"]
-[ext_resource type="Texture2D" path="res://assets_final/sprites/wizards/idle.png" id="8_wiz"]
+[ext_resource type="Texture2D" path="res://assets_final/sprites/wizards/idle_front.png" id="8_wiz"]
 [ext_resource type="Texture2D" uid="uid://wwm6xori8t3j" path="res://resources/SVG/Fireball_Shadow.png" id="9_shdw"]
 [ext_resource type="Script" path="res://scripts/player/components/health_component.gd" id="10_hp"]
 [ext_resource type="Script" path="res://scripts/visual/cast_charge_vfx_component.gd" id="11_vfx"]

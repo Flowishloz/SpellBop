@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://c8so32l27eccn"
-path="res://.godot/imported/charging.png-e527b0cc8032dec64b0c5fff901f21e6.ctex"
+uid="uid://b8uhook0hj6xo"
+path="res://.godot/imported/hurt_front.png-1238bc0e2c59b3d033c775e817f059e8.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets_final/sprites/wizards/charging.png"
-dest_files=["res://.godot/imported/charging.png-e527b0cc8032dec64b0c5fff901f21e6.ctex"]
+source_file="res://assets_final/sprites/wizards/hurt_front.png"
+dest_files=["res://.godot/imported/hurt_front.png-1238bc0e2c59b3d033c775e817f059e8.ctex"]
 
 [params]
 

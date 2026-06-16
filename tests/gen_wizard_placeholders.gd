@@ -1,29 +1,35 @@
-## gen_wizard_placeholders.gd — bootstraps the character pipeline's PLACEHOLDER assets so it
-## is testable before the Creative Director's real Aseprite art lands:
-##   * 8 distinct 128x128 pose PNGs in res://assets_final/sprites/wizards/
+## gen_wizard_placeholders.gd — bootstraps the character pipeline's PLACEHOLDER assets so it is
+## testable before the Creative Director's real Aseprite art lands:
+##   * 8 poses x {FRONT, BACK} 128x128 PNGs in res://assets_final/sprites/wizards/
+##     (front = with a face; back = no face / collar — the directional tell)
 ##   * default_blue.tres (identity) + default_red.tres (robe recolour) skins
-##   * wizard_pose_manifest.tres
-## The reference-palette colours defined here ARE the swap palette (default_blue.colors), so
-## the artist can later paint over the PNGs using these exact hex codes and skins keep working.
+##   * cyber_wizard/ PREMIUM skin folder (a DIFFERENT wide hat) + cyber_wizard.tres
+##     (texture_folder_override + a teal recolour) — proves geometry-override skins
+##   * wizard_pose_manifest.tres (facing-aware)
+## The reference-palette colours here ARE the swap palette (default_blue.colors).
 ## Run once:  <godot> --path . -s res://tests/gen_wizard_placeholders.gd
-## Overwrite any PNG with real art any time — the pipeline keys poses by filename.
+## Overwrite any PNG with real art any time — the pipeline keys poses by filename + _front/_back.
 extends SceneTree
 
 const W := 128
 const OUT_DIR := "res://assets_final/sprites/wizards/"
 const SKIN_DIR := "res://assets_final/skins/"
+const CYBER_DIR := "res://assets_final/skins/cyber_wizard/"
 const MANIFEST := "res://assets_final/sprites/wizard_pose_manifest.tres"
 
-# Reference palette — index order is STABLE (skins remap BY INDEX). sRGB.
+# Reference palette — index order STABLE (skins remap BY INDEX). sRGB.
 #   0 outline  1 robe  2 robe_dark  3 robe_light  4 skin  5 skin_dark  6 hat_star  7 eye
 var REF := [
 	Color8(26, 20, 38), Color8(59, 93, 201), Color8(42, 61, 143), Color8(107, 140, 255),
 	Color8(240, 201, 160), Color8(201, 143, 107), Color8(255, 211, 77), Color8(245, 245, 245),
 ]
-# default_red: remap the three robe slots (1/2/3) to crimson; everything else identity.
 var RED := [
 	Color8(26, 20, 38), Color8(201, 59, 59), Color8(143, 42, 42), Color8(255, 120, 120),
 	Color8(240, 201, 160), Color8(201, 143, 107), Color8(255, 211, 77), Color8(245, 245, 245),
+]
+var TEAL := [
+	Color8(20, 30, 34), Color8(28, 196, 178), Color8(18, 130, 124), Color8(120, 255, 235),
+	Color8(240, 201, 160), Color8(201, 143, 107), Color8(180, 255, 120), Color8(245, 245, 245),
 ]
 
 var POSES := [
@@ -45,21 +51,30 @@ func _init() -> void:
 func _run() -> void:
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(OUT_DIR))
 	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(SKIN_DIR))
+	DirAccess.make_dir_recursive_absolute(ProjectSettings.globalize_path(CYBER_DIR))
 
 	for pose in POSES:
-		var img: Image = _draw(pose)
-		var path: String = OUT_DIR + str(pose["name"]) + ".png"
-		img.save_png(path)
-		print("wrote ", path)
+		var name: String = str(pose["name"])
+		_draw(pose, false, "cone").save_png(OUT_DIR + name + "_front.png")
+		_draw(pose, true, "cone").save_png(OUT_DIR + name + "_back.png")
+	print("wrote ", POSES.size() * 2, " base pose PNGs to ", OUT_DIR)
 
-	_save_skin("default_blue", "Azure Apprentice", REF, SKIN_DIR + "default_blue.tres")
-	_save_skin("default_red", "Crimson Apprentice", RED, SKIN_DIR + "default_red.tres")
+	# PREMIUM demo: a "cyber" wizard with a DIFFERENT (wide) hat — idle only is enough to prove the
+	# folder override (other poses fall back to this folder's idle).
+	var cyber_idle := {"name": "idle", "arm": "down", "accent": Color8(120, 255, 235)}
+	_draw(cyber_idle, false, "wide").save_png(CYBER_DIR + "idle_front.png")
+	_draw(cyber_idle, true, "wide").save_png(CYBER_DIR + "idle_back.png")
+	print("wrote cyber premium idle to ", CYBER_DIR)
+
+	_save_skin("default_blue", "Azure Apprentice", REF, "", 0, SKIN_DIR + "default_blue.tres")
+	_save_skin("default_red", "Crimson Apprentice", RED, "", 0, SKIN_DIR + "default_red.tres")
+	_save_skin("cyber_wizard", "Cyber Wizard", TEAL, CYBER_DIR, 500, SKIN_DIR + "cyber_wizard.tres")
 	_save_manifest()
-	print("DONE: placeholders + skins + manifest")
+	print("DONE: directional placeholders + 3 skins (incl. premium) + facing-aware manifest")
 	quit(0)
 
 
-func _save_skin(id: String, disp: String, cols: Array, path: String) -> void:
+func _save_skin(id: String, disp: String, cols: Array, folder: String, price: int, path: String) -> void:
 	var skin := SkinPalette.new()
 	skin.id = StringName(id)
 	skin.display_name = disp
@@ -67,19 +82,25 @@ func _save_skin(id: String, disp: String, cols: Array, path: String) -> void:
 	for c in cols:
 		pc.append(c)
 	skin.colors = pc
+	skin.texture_folder_override = folder
+	skin.price = price
 	ResourceSaver.save(skin, path)
 	print("wrote ", path)
 
 
 func _save_manifest() -> void:
 	var m := WizardPoseManifest.new()
-	var names := PackedStringArray()
-	var paths := PackedStringArray()
+	var pn := PackedStringArray()
+	var fp := PackedStringArray()
+	var bp := PackedStringArray()
 	for pose in POSES:
-		names.append(str(pose["name"]))
-		paths.append(OUT_DIR + str(pose["name"]) + ".png")
-	m.names = names
-	m.paths = paths
+		var name: String = str(pose["name"])
+		pn.append(name)
+		fp.append(OUT_DIR + name + "_front.png")
+		bp.append(OUT_DIR + name + "_back.png")
+	m.pose_names = pn
+	m.front_paths = fp
+	m.back_paths = bp
 	ResourceSaver.save(m, MANIFEST)
 	print("wrote ", MANIFEST)
 
@@ -88,7 +109,7 @@ func _save_manifest() -> void:
 # Drawing
 # =====================================================================
 
-func _draw(pose: Dictionary) -> Image:
+func _draw(pose: Dictionary, back: bool, hat: String) -> Image:
 	var img := Image.create(W, W, false, Image.FORMAT_RGBA8)
 	img.fill(Color(0, 0, 0, 0))
 	var cx: int = 64 + int(pose.get("dx", 0))
@@ -99,7 +120,7 @@ func _draw(pose: Dictionary) -> Image:
 	var STAR: Color = REF[6]
 	var EYE: Color = REF[7]
 
-	# robe body (trapezoid, shoulders -> hem) with a shaded left edge + outline
+	# robe body (trapezoid) with a shaded left edge + outline
 	for y in range(66, 117):
 		var t: float = float(y - 66) / 50.0
 		var half: int = int(round(lerpf(15.0, 28.0, t)))
@@ -137,42 +158,59 @@ func _draw(pose: Dictionary) -> Image:
 
 	# head
 	_disc(img, cx, 52, 15, SKIN)
-	# eyes
-	if bool(pose.get("xeyes", false)):
-		_xeye(img, cx - 6, 50, O)
-		_xeye(img, cx + 6, 50, O)
+	if back:
+		# BACK of the head: a robe HOOD over the crown (no face), only the nape shows skin —
+		# unmistakably "facing away".
+		for hy in range(37, 56):
+			var dyh: int = hy - 52
+			var hw: int = int(round(sqrt(maxf(0.0, 225.0 - float(dyh * dyh)))))
+			_rect(img, cx - hw, hy, cx + hw, hy, ROBE)
+		_rect(img, cx - 13, 64, cx + 13, 67, ROBE_D)  # collar
 	else:
-		_disc(img, cx - 6, 51, 3, EYE)
-		_disc(img, cx + 6, 51, 3, EYE)
-		_disc(img, cx - 6, 51, 1, O)
-		_disc(img, cx + 6, 51, 1, O)
+		# FRONT: eyes (or X eyes / sweat for reaction poses).
+		if bool(pose.get("xeyes", false)):
+			_xeye(img, cx - 6, 50, O)
+			_xeye(img, cx + 6, 50, O)
+		else:
+			_disc(img, cx - 6, 51, 3, EYE)
+			_disc(img, cx + 6, 51, 3, EYE)
+			_disc(img, cx - 6, 51, 1, O)
+			_disc(img, cx + 6, 51, 1, O)
 
-	# hat (cone + brim + tip star) — drawn over the head top
-	for y in range(12, 41):
-		var t2: float = float(y - 12) / 28.0
-		var half2: int = int(round(lerpf(2.0, 22.0, t2)))
-		_rect(img, cx - half2, y, cx + half2, y, ROBE)
-		_px(img, cx - half2, y, O)
-		_px(img, cx + half2, y, O)
-	_rect(img, cx - 26, 40, cx + 26, 42, ROBE_D)
-	_rect(img, cx - 26, 43, cx + 26, 43, O)
-	_disc(img, cx, 14, 3, STAR)
+	# hat
+	if hat == "wide":
+		# PREMIUM cyber silhouette: low dome + a WIDE brim (clearly not the base cone).
+		for y in range(18, 35):
+			var td: float = float(y - 18) / 16.0
+			var hd: int = int(round(lerpf(4.0, 16.0, td)))
+			_rect(img, cx - hd, y, cx + hd, y, ROBE)
+			_px(img, cx - hd, y, O)
+			_px(img, cx + hd, y, O)
+		_rect(img, cx - 34, 34, cx + 34, 38, ROBE_D)
+		_rect(img, cx - 34, 38, cx + 34, 38, O)
+	else:
+		for y in range(12, 41):
+			var t2: float = float(y - 12) / 28.0
+			var half2: int = int(round(lerpf(2.0, 22.0, t2)))
+			_rect(img, cx - half2, y, cx + half2, y, ROBE)
+			_px(img, cx - half2, y, O)
+			_px(img, cx + half2, y, O)
+		_rect(img, cx - 26, 40, cx + 26, 42, ROBE_D)
+		_rect(img, cx - 26, 43, cx + 26, 43, O)
+		_disc(img, cx, 14, 3, STAR)
 
-	# chest accent gem (an out-of-palette colour -> passes through the skin swap unchanged)
-	var accent: Color = pose.get("accent", Color8(150, 150, 160))
-	_disc(img, cx, 86, 7, O)
-	_disc(img, cx, 86, 5, accent)
-
-	# shield arc (cast_shield)
-	if bool(pose.get("shield", false)):
-		for y in range(58, 104):
-			_px(img, cx + 30, y, Color(accent.r, accent.g, accent.b, 0.9))
-			_px(img, cx + 31, y, Color(accent.r, accent.g, accent.b, 0.6))
-			_px(img, cx + 29, y, Color(accent.r, accent.g, accent.b, 0.6))
-
-	# sweat drop (close_call)
-	if bool(pose.get("sweat", false)):
-		_disc(img, cx + 16, 44, 2, Color8(150, 210, 255))
+	# chest accent gem — FRONT only (an out-of-palette colour -> survives the skin swap)
+	if not back:
+		var accent: Color = pose.get("accent", Color8(150, 150, 160))
+		_disc(img, cx, 86, 7, O)
+		_disc(img, cx, 86, 5, accent)
+		if bool(pose.get("shield", false)):
+			for y in range(58, 104):
+				_px(img, cx + 30, y, Color(accent.r, accent.g, accent.b, 0.9))
+				_px(img, cx + 31, y, Color(accent.r, accent.g, accent.b, 0.6))
+				_px(img, cx + 29, y, Color(accent.r, accent.g, accent.b, 0.6))
+		if bool(pose.get("sweat", false)):
+			_disc(img, cx + 16, 44, 2, Color8(150, 210, 255))
 
 	# lean shear (hurt / close_call) — baked into the texture (the billboard ignores node roll)
 	var shear: int = int(pose.get("shear", 0))

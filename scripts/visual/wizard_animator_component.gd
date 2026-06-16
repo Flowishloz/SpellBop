@@ -117,6 +117,12 @@ var _close_call_until_msec: int = 0
 var _ball_prev_dy: Dictionary = {}     # projectile instance_id -> last dy (sim fixed int)
 var _body_half_x_fp: int = 0
 var _close_margin_fp: int = 0
+# Directional facing (front = toward camera, back = away). Static per wizard per perspective:
+# cast_direction_y picks the down-court side; view_flip_z is the online mirror.
+var _facing: StringName = &"front"
+var _cast_dir: int = -1                 # this wizard's down-court sign (from a sibling caster)
+var _bridge: VisualBridgeComponent = null
+var _skin_folder: String = ""           # premium-skin override folder ("" = base art)
 
 
 func _ready() -> void:
@@ -142,10 +148,13 @@ func _ready() -> void:
 			sibling.cast_charge_canceled.connect(_on_charge_ended)
 			sibling.spell_cast.connect(_on_cast_released)
 			sibling.cast_charge_level_changed.connect(_on_charge_level)
+			_cast_dir = sibling.cast_direction_y  # down-court sign -> front/back facing
 		elif sibling is MovementComponent:
 			# FROST FLASH (Sprint 23 batch 2): a frost wave deals 0 damage, so it never reaches the
 			# damage path — flash ICE-blue + pop off the movement slow instead (being frozen IS its hit).
 			sibling.slow_started.connect(_on_slowed)
+		elif sibling is VisualBridgeComponent:
+			_bridge = sibling  # read view_flip_z (the online perspective mirror) for facing
 
 	# --- FRAME PIPELINE wiring (presentation only) ---
 	_body = get_parent()
@@ -160,6 +169,7 @@ func _ready() -> void:
 			_sprite.set(&"material_override", _material)
 	_body_half_x_fp = SGFixed.from_float(maxf(0.0, body_half_width))
 	_close_margin_fp = SGFixed.from_float(maxf(0.0, close_call_margin))
+	_skin_folder = skin.texture_folder_override if skin != null else ""
 	_apply_skin()
 	_apply_pose(&"idle")
 
@@ -266,6 +276,12 @@ func _process(delta: float) -> void:
 
 	# --- FRAME PIPELINE (Sprint 24, presentation only): facing + close-call + key-pose ---
 	_scan_close_call(now)
+	# FRONT/BACK (Sprint 24b): the wizard faces its opponent down-court. Its facing points AWAY
+	# from the camera (BACK) on the near side, TOWARD it (FRONT) on the far side. cast_direction_y
+	# is the down-court sign; view_flip_z is the online perspective mirror (so each peer sees its
+	# OWN wizard's back + the foe's front). flip_h (below) still mirrors L/R on top.
+	var flip_z: bool = _bridge != null and _bridge.view_flip_z
+	_facing = &"front" if (_cast_dir * (-1 if flip_z else 1)) > 0 else &"back"
 	if _sprite != null:
 		if dir != 0:
 			_sprite.set(&"flip_h", (dir < 0) if face_art_default_right else (dir > 0))
@@ -420,15 +436,23 @@ func _apply_skin() -> void:
 	_material.set_shader_parameter(&"dst_colors", dst)
 
 
-## Swap the Sprite3D to a pose texture (and feed the shader). Graceful: a missing pose falls
-## back to idle; with NO art at all the .tscn placeholder texture stays put. Keeps the shader's
-## pose_tex synced to whatever texture is actually shown, so the no-art path still renders.
+## Swap this wizard's skin at RUNTIME (wardrobe / shop preview): re-upload the palette, switch the
+## premium-folder source, and force the next frame to re-fetch the pose from the new source.
+func set_skin(new_skin: SkinPalette) -> void:
+	skin = new_skin
+	_skin_folder = new_skin.texture_folder_override if new_skin != null else ""
+	_apply_skin()
+	_cur_tex = null
+	_uploaded_tex = null
+
+
+## Swap the Sprite3D to a pose texture for the CURRENT facing + skin folder (and feed the shader).
+## get_pose applies the front<->back<->idle fallback; with NO art at all the .tscn placeholder
+## texture stays put. Keeps the shader's pose_tex synced to whatever texture is actually shown.
 func _apply_pose(pose: StringName) -> void:
 	if _sprite == null:
 		return
-	var tex: Texture2D = WizardPoseLibrary.get_pose(pose)
-	if tex == null and pose != &"idle":
-		tex = WizardPoseLibrary.get_pose(&"idle")
+	var tex: Texture2D = WizardPoseLibrary.get_pose(pose, _facing, _skin_folder)
 	if tex != null and tex != _cur_tex:
 		_sprite.set(&"texture", tex)
 		_cur_tex = tex

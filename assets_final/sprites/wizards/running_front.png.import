@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://dvvbpgwgaf6c3"
-path="res://.godot/imported/close_call.png-990ea6e0c71598a542481b94124c82a8.ctex"
+uid="uid://cvlib8u1w2ssq"
+path="res://.godot/imported/running_front.png-2fd4c1d36e60eff831edd5455d684226.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets_final/sprites/wizards/close_call.png"
-dest_files=["res://.godot/imported/close_call.png-990ea6e0c71598a542481b94124c82a8.ctex"]
+source_file="res://assets_final/sprites/wizards/running_front.png"
+dest_files=["res://.godot/imported/running_front.png-2fd4c1d36e60eff831edd5455d684226.ctex"]
 
 [params]
 

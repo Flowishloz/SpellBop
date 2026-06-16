@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://wu4x416ea2sw"
-path="res://.godot/imported/running.png-519188a1b7dcd9da780872a60c5336ee.ctex"
+uid="uid://blsxucjqlf65f"
+path="res://.godot/imported/cast_ice_back.png-ce101b74e65917826f007ba3f153531c.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets_final/sprites/wizards/running.png"
-dest_files=["res://.godot/imported/running.png-519188a1b7dcd9da780872a60c5336ee.ctex"]
+source_file="res://assets_final/sprites/wizards/cast_ice_back.png"
+dest_files=["res://.godot/imported/cast_ice_back.png-ce101b74e65917826f007ba3f153531c.ctex"]
 
 [params]
 

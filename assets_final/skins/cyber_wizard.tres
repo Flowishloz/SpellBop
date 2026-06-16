@@ -1,0 +1,11 @@
+[gd_resource type="Resource" script_class="SkinPalette" format=3]
+
+[ext_resource type="Script" path="res://scripts/visual/skin_palette.gd" id="1_0jqjl"]
+
+[resource]
+script = ExtResource("1_0jqjl")
+id = &"cyber_wizard"
+display_name = "Cyber Wizard"
+colors = PackedColorArray(0.078431375, 0.11764706, 0.13333334, 1, 0.10980392, 0.76862746, 0.69803923, 1, 0.07058824, 0.50980395, 0.4862745, 1, 0.47058824, 1, 0.92156863, 1, 0.9411765, 0.7882353, 0.627451, 1, 0.7882353, 0.56078434, 0.41960785, 1, 0.7058824, 1, 0.47058824, 1, 0.9607843, 0.9607843, 0.9607843, 1)
+texture_folder_override = "res://assets_final/skins/cyber_wizard/"
+price = 500

@@ -1,8 +1,9 @@
-[gd_resource type="Resource" script_class="WizardPoseManifest" format=3 uid="uid://1qo13uerqvi6"]
+[gd_resource type="Resource" script_class="WizardPoseManifest" format=3 uid="uid://dx65rn5gxqr7o"]
 
 [ext_resource type="Script" uid="uid://bp7t3q64v1xgy" path="res://scripts/visual/wizard_pose_manifest.gd" id="1_ohmq2"]
 
 [resource]
 script = ExtResource("1_ohmq2")
-names = PackedStringArray("cast_fire", "cast_ice", "cast_shield", "charging", "close_call", "hurt", "idle", "running")
-paths = PackedStringArray("res://assets_final/sprites/wizards/cast_fire.png", "res://assets_final/sprites/wizards/cast_ice.png", "res://assets_final/sprites/wizards/cast_shield.png", "res://assets_final/sprites/wizards/charging.png", "res://assets_final/sprites/wizards/close_call.png", "res://assets_final/sprites/wizards/hurt.png", "res://assets_final/sprites/wizards/idle.png", "res://assets_final/sprites/wizards/running.png")
+pose_names = PackedStringArray("cast_fire", "cast_ice", "cast_shield", "charging", "close_call", "hurt", "idle", "running")
+front_paths = PackedStringArray("res://assets_final/sprites/wizards/cast_fire_front.png", "res://assets_final/sprites/wizards/cast_ice_front.png", "res://assets_final/sprites/wizards/cast_shield_front.png", "res://assets_final/sprites/wizards/charging_front.png", "res://assets_final/sprites/wizards/close_call_front.png", "res://assets_final/sprites/wizards/hurt_front.png", "res://assets_final/sprites/wizards/idle_front.png", "res://assets_final/sprites/wizards/running_front.png")
+back_paths = PackedStringArray("res://assets_final/sprites/wizards/cast_fire_back.png", "res://assets_final/sprites/wizards/cast_ice_back.png", "res://assets_final/sprites/wizards/cast_shield_back.png", "res://assets_final/sprites/wizards/charging_back.png", "res://assets_final/sprites/wizards/close_call_back.png", "res://assets_final/sprites/wizards/hurt_back.png", "res://assets_final/sprites/wizards/idle_back.png", "res://assets_final/sprites/wizards/running_back.png")
