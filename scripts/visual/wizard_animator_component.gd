@@ -48,6 +48,14 @@ extends Node
 @export var death_gravity: float = 9.5       # m/s^2 fall
 @export var death_spin_speed: float = 9.0    # flat-spin rate (scale.x flip)
 
+## HIT POP (Sprint 23 batch 2, Creative Director): on a hit the rig SQUASH/STRETCHES — a decaying
+## cosine pop (squash in, spring through a stretch, settle). Runs on the WALL clock so it snaps at
+## full speed inside slow-mo / a hitstop freeze (it's impact feedback, not motion). Layered on top
+## of the existing red flash + spark burst. hit_pop_amount = peak squash fraction.
+@export var hit_pop_seconds: float = 0.32
+@export var hit_pop_amount: float = 0.24
+@export var hit_pop_frequency: float = 30.0
+
 var _rig: Node3D
 var _sprite: Node3D
 var _sprite_base_pos: Vector3 = Vector3.ZERO  # the sprite's authored local offset
@@ -62,7 +70,12 @@ var _charging: bool = false
 var _charge_level: int = 0
 var _recoil: float = 0.0
 var _flicker_until_msec: int = 0
+var _flash_color: Color = Color(1.0, 0.5, 0.42)   # element tint (Elements.flash_color) of the current flash
 var _wall_last_msec: int = 0
+# HIT POP (Sprint 23 batch 2): wall-clock start of the squash/stretch impact pop (0 = none), and the
+# HealthComponent it reads the struck element from to tint the flash.
+var _hit_pop_msec: int = 0
+var _health: Node = null
 # DEATH state (visual only).
 var _dead: bool = false
 var _death_vel: Vector3 = Vector3.ZERO
@@ -81,11 +94,11 @@ func _ready() -> void:
 		push_warning("WizardAnimatorComponent: rig not found — animator inert.")
 		return
 
-	var health: Node = get_node_or_null(health_path)
-	if health != null:
-		health.damaged.connect(_on_damaged)
-		health.knocked_out.connect(_on_knocked_out)
-		health.health_changed.connect(_on_health_changed)
+	_health = get_node_or_null(health_path)
+	if _health != null:
+		_health.damaged.connect(_on_damaged)
+		_health.knocked_out.connect(_on_knocked_out)
+		_health.health_changed.connect(_on_health_changed)
 
 	for sibling in get_parent().get_children():
 		if sibling is SpellCasterComponent or sibling is CardCasterComponent:
@@ -93,6 +106,10 @@ func _ready() -> void:
 			sibling.cast_charge_canceled.connect(_on_charge_ended)
 			sibling.spell_cast.connect(_on_cast_released)
 			sibling.cast_charge_level_changed.connect(_on_charge_level)
+		elif sibling is MovementComponent:
+			# FROST FLASH (Sprint 23 batch 2): a frost wave deals 0 damage, so it never reaches the
+			# damage path — flash ICE-blue + pop off the movement slow instead (being frozen IS its hit).
+			sibling.slow_started.connect(_on_slowed)
 
 
 func _process(delta: float) -> void:
@@ -149,8 +166,22 @@ func _process(delta: float) -> void:
 
 	_rig.position.y = bob
 	_rig.rotation.z = _lean
-	var s: float = 1.0 - crouch + pulse + _recoil * 0.08
-	_rig.scale = Vector3(1.0 + crouch * 0.6 - pulse * 0.5, s, 1.0)
+	# HIT POP (Sprint 23 batch 2): a squash/stretch on impact — a decaying cosine on the WALL clock so
+	# it snaps at full speed inside slow-mo / a hitstop freeze. At impact (wave = +1) the rig SQUASHES
+	# (shorter + wider); it springs through a stretch and settles as the cosine decays.
+	var pop_sx: float = 0.0
+	var pop_sy: float = 0.0
+	if _hit_pop_msec > 0:
+		var pe: float = float(now - _hit_pop_msec) / 1000.0
+		if pe < hit_pop_seconds:
+			var decay: float = 1.0 - pe / hit_pop_seconds
+			var wave: float = cos(pe * hit_pop_frequency) * decay * decay
+			pop_sy = -hit_pop_amount * wave
+			pop_sx = hit_pop_amount * 0.6 * wave
+		else:
+			_hit_pop_msec = 0
+	var s: float = 1.0 - crouch + pulse + _recoil * 0.08 + pop_sy
+	_rig.scale = Vector3(1.0 + crouch * 0.6 - pulse * 0.5 + pop_sx, s, 1.0)
 
 	# CHARGE SHAKE (Creative Director): the wizard rattles harder as each fireball
 	# gauge banks. Pure visual jitter on the SPRITE within the rig (rig X/Z belong
@@ -174,7 +205,7 @@ func _process(delta: float) -> void:
 		if now < _flicker_until_msec:
 			var phase: float = float(now) / 1000.0 * flicker_hz
 			var on_frame: bool = fmod(phase, 1.0) < 0.5
-			_sprite.set(&"modulate", Color(1.0, 0.45, 0.45, 1.0 if on_frame else 0.25))
+			_sprite.set(&"modulate", Color(_flash_color.r, _flash_color.g, _flash_color.b, 1.0 if on_frame else 0.25))
 		elif _flicker_until_msec != 0:
 			_flicker_until_msec = 0
 			_sprite.set(&"modulate", Color.WHITE)
@@ -183,7 +214,21 @@ func _process(delta: float) -> void:
 
 
 func _on_damaged(_amount: int) -> void:
-	_flicker_until_msec = Time.get_ticks_msec() + int(flicker_seconds * 1000.0)
+	var now: int = Time.get_ticks_msec()
+	_flicker_until_msec = now + int(flicker_seconds * 1000.0)
+	_hit_pop_msec = now
+	# Flash + pop in the STRIKING element's colour (Sprint 23 batch 2): fire = orange, spark = yellow.
+	var elem: int = _health.get_last_hit_element() if (_health != null and _health.has_method(&"get_last_hit_element")) else Elements.FIRE
+	_flash_color = Elements.flash_color(elem)
+
+
+## FROZEN (a frost wave's 0-damage "hit"): flash ICE-blue + a squash pop so getting chilled reads as
+## an impact too. The damage path never sees the wave (0 damage); this slow is its feedback hook.
+func _on_slowed(_duration_ticks: int) -> void:
+	var now: int = Time.get_ticks_msec()
+	_flicker_until_msec = now + int(flicker_seconds * 1000.0)
+	_hit_pop_msec = now
+	_flash_color = Elements.flash_color(Elements.ICE)
 
 
 ## LETHAL hit: fling the wizard BACKWARD off its own baseline edge (the side of
@@ -234,6 +279,7 @@ func _on_health_changed(current: int, _max_health: int) -> void:
 		_dead = false
 		_death_t = 0.0
 		_death_off = Vector3.ZERO
+		_hit_pop_msec = 0
 		_sprite.position = _sprite_base_pos
 		_sprite.scale = Vector3.ONE
 		_sprite.set(&"modulate", Color.WHITE)
