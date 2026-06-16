@@ -34,8 +34,10 @@ extends SGStaticBody2D
 ## Emitted when the barrier's lifetime expires (it frees itself afterwards).
 signal barrier_expired
 
-## A hostile ball stuck to the wall and is charging (anticipation hold).
-signal capture_started
+## A hostile ball stuck to the wall and is charging (anticipation hold). [param intensity]
+## (0..1 = the WOA blended with the incoming speed) scales the presentation for the whole beat:
+## ripple size/speed, slow-mo depth, rumble, and the release slam (MatchController reads it).
+signal capture_started(intensity: float)
 
 ## Per held tick: progress 0..1 toward release. Camera-shake hook
 ## (MatchController ramps rumble off this — pure presentation).
@@ -47,12 +49,18 @@ signal capture_released
 ## When false, the local tick driver idles (rollback SyncManager later).
 @export var local_tick_driver_enabled: bool = true
 
-## MINIMUM capture-hold (Sprint 20 round-4, Creative Director): even a low-WOA
-## early block holds the ball on the wall at least this many ticks, so the reflect
-## ANTICIPATION beat is ALWAYS visible (it ran instantly for early blocks before —
-## "sometimes I don't see it working"). 24 = 0.4 s of sim, stretched by the shield
-## slow-mo into a clear, dramatic charge-up.
-@export var min_capture_ticks: int = 24
+## VARIABLE ANTICIPATION HOLD (Sprint 23, Creative Director): the captured ball waits on the
+## wall for a hold scaled by the reflect INTENSITY (= WOA blended with incoming speed) — a low
+## intensity (slow ball / loose timing) gives a short pause, a high intensity (fast ball / a
+## last-moment block) the full dramatic hold. Ticks @ 60 Hz: 8 = 0.13 s, 36 = 0.6 s (then
+## stretched by the shield slow-mo). The same intensity scales the ripple + slow-mo + rumble + slam.
+@export var capture_hold_min_ticks: int = 8
+@export var capture_hold_max_ticks: int = 36
+## Incoming speed (sim units/tick) that counts as a FULL-intensity fast ball — the captured
+## |velocity| is normalised against this (clamped 0..1) for the speed half of the intensity blend.
+@export var capture_ref_speed: float = 35.0
+## Fraction of the intensity that comes from SPEED (the rest from the WOA block-timing). 0.5 = even.
+@export_range(0.0, 1.0) var capture_speed_weight: float = 0.5
 
 ## Visual rig (a Node3D holding the wall mesh). The barrier positions it from
 ## the sim ONCE at deploy (and per tick when drifting) — barriers have no
@@ -85,6 +93,7 @@ var _woa_armed: bool = false      # one capture per barrier
 var _age_ticks: int = 0
 var _capture_remaining: int = 0   # > 0 = a ball is held, charging
 var _captured_speed_fp: int = 0   # |velocity| at capture
+var _capture_total: int = 0       # effective hold length (charge-progress denominator; saved as "ct")
 var _captured_ball: Node = null   # node ref (rollback lifecycle debt, see header)
 
 var _visual_root: Node3D
@@ -259,7 +268,13 @@ func _try_capture() -> void:
 		var vel: SGFixedVector2 = SGFixed.vector2(child.get_velocity_x(), child.get_velocity_y())
 		_captured_speed_fp = vel.length()
 		_captured_ball = child
-		_capture_remaining = maxi(min_capture_ticks, _hold_ticks)
+		# REFLECT INTENSITY (0..ONE, deterministic): blend the WOA (block timing — a tighter /
+		# last-moment block reads higher) with the incoming speed (faster reads higher). Drives the
+		# variable sim hold here AND the presentation (emitted on capture_started). Fixed-point int.
+		var intensity_fp: int = _reflect_intensity_fp()
+		var span: int = maxi(0, capture_hold_max_ticks - capture_hold_min_ticks)
+		_capture_total = maxi(1, capture_hold_min_ticks + (span * intensity_fp) / SGFixed.ONE)
+		_capture_remaining = _capture_total
 		_woa_armed = false  # one capture per barrier
 		child.launch(0, 0, SGFixed.ONE)
 		# INTERCEPT FX (pure visual): shield-colored shards FLATTEN against
@@ -269,8 +284,20 @@ func _try_capture() -> void:
 			BurstFX.spawn(get_parent(), _visual_root.global_position + Vector3(0, 0.2, 0),
 					Vector3.UP, Color(0.45, 0.9, 0.6, 0.95), 30, 3.6, 0.07, 80.0)
 		Sfx.play(&"shield_capture")
-		capture_started.emit()
+		capture_started.emit(float(intensity_fp) / float(SGFixed.ONE))
 		return
+
+
+## Reflect INTENSITY in fixed-point 0..ONE: a deterministic blend of the WOA (0..ONE block
+## quality) and the incoming speed normalised against capture_ref_speed; capture_speed_weight
+## splits the two. Used for the variable hold + the presentation scale — both inputs are sim state.
+func _reflect_intensity_fp() -> int:
+	var ref_fp: int = SGFixed.from_float(maxf(1.0, capture_ref_speed))
+	var speed_norm_fp: int = clampi(SGFixed.div(_captured_speed_fp, ref_fp), 0, SGFixed.ONE)
+	var w_fp: int = SGFixed.from_float(clampf(capture_speed_weight, 0.0, 1.0))
+	var spd_part: int = SGFixed.mul(speed_norm_fp, w_fp)
+	var woa_part: int = SGFixed.mul(clampi(_woa_fp, 0, SGFixed.ONE), SGFixed.ONE - w_fp)
+	return clampi(spd_part + woa_part, 0, SGFixed.ONE)
 
 
 ## GLASS SHATTER (a barrier breaker got through): shard burst flattened
@@ -295,7 +322,7 @@ func _tick_capture() -> void:
 		# cleanup (ProjectileMovementComponent's stall despawn) from reclaiming it mid-hold.
 		if _captured_ball.has_method(&"keep_alive"):
 			_captured_ball.keep_alive()
-		var total: float = float(maxi(1, _hold_ticks))
+		var total: float = float(maxi(1, _capture_total))
 		capture_charging.emit(1.0 - float(_capture_remaining) / total)
 		return
 
@@ -342,6 +369,7 @@ func _save_state() -> Dictionary:
 		"px": pos.x,
 		"py": pos.y,
 		"cap": _capture_remaining,
+		"ct": _capture_total,
 		"cs": _captured_speed_fp,
 		"wa": 1 if _woa_armed else 0,
 	}
@@ -350,6 +378,7 @@ func _save_state() -> Dictionary:
 func _load_state(state: Dictionary) -> void:
 	_age_ticks = int(state.get("age", 0))
 	_capture_remaining = int(state.get("cap", 0))
+	_capture_total = int(state.get("ct", 0))
 	_captured_speed_fp = int(state.get("cs", 0))
 	_woa_armed = int(state.get("wa", 0)) == 1
 	var pos: SGFixedVector2 = fixed_position

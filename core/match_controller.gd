@@ -125,9 +125,30 @@ signal knockout_began(is_match_end: bool, player_won: bool)
 ## this scale for the capture-hold so the Window-of-Affect reflect is clearly
 ## visible, with a screen ripple and a heavy release slam. 1.0 disables the slow-mo.
 @export_range(0.05, 1.0) var shield_capture_time_scale: float = 0.4
-## Peak UV displacement of the shield-contact and emerald screen ripples.
-@export var shield_ripple_strength: float = 0.045
+## VARIABLE SHIELD REFLECT (Sprint 23, Creative Director): the barrier emits a reflect INTENSITY
+## (0..1 = WOA blended with incoming speed) on capture_started; these MIN/MAX pairs scale the whole
+## beat by it — a low-intensity block (slow ball / loose timing) gets a small + FAST ripple, a mild
+## slow-mo + a light slam; a high-intensity one (fast ball / last-moment block) the full drama.
+## shield_capture_time_scale (above) is the DEEPEST (high-intensity) slow-mo; this is the mildest:
+@export_range(0.05, 1.0) var shield_capture_time_scale_mild: float = 0.62
+## Shield displacement-wave peak UV displacement (SIZE): min at low intensity, max at high.
+@export var shield_ripple_strength_min: float = 0.03
+@export var shield_ripple_strength_max: float = 0.055
+## Shield displacement-wave expansion time in seconds (SPEED): short/fast at low intensity, long at high.
+@export var shield_ripple_seconds_min: float = 0.32
+@export var shield_ripple_seconds_max: float = 0.7
+## Release SLAM camera trauma: min at low intensity, capture_release_trauma (above) at high.
+@export var capture_release_trauma_min: float = 0.5
+## The anticipation rumble is scaled by this at low intensity, up to 1.0 at high intensity.
+@export var shield_rumble_min_scale: float = 0.6
+## Peak UV displacement of the EMERALD screen ripple (unchanged — not part of the variable shield set).
 @export var emerald_ripple_strength: float = 0.04
+## HITSTOP (Sprint 23, Creative Director): a wizard taking a hit triggers a brief presentation freeze
+## (the impact "crunch", the_stack.hitstop), with the duration scaled by the damage — a 1-damage
+## graze gets ~hitstop_min_ms, a hitstop_ref_damage-point hit gets hitstop_max_ms.
+@export var hitstop_min_ms: int = 45
+@export var hitstop_max_ms: int = 110
+@export var hitstop_ref_damage: float = 3.0
 
 var match_state: MatchState = MatchState.ROUND_ACTIVE
 
@@ -184,6 +205,10 @@ var _stack_winner_boost_fp: int = 98304
 var _lens_mat: ShaderMaterial = null
 var _ripple_active: bool = false
 var _ripple_progress: float = 0.0
+var _ripple_seconds: float = 0.7   # per-ripple expansion duration (set by _trigger_ripple)
+# Reflect intensity (0..1) of the CURRENT shield capture (from capture_started) — scales the
+# rumble through the hold and the release slam; see _on_capture_started / _on_capture_released.
+var _capture_intensity: float = 1.0
 var _in_death_sequence: bool = false
 # True while a shield capture-hold is dilating time (so capture_released knows to
 # resume). Guards against resuming when the slow-mo wasn't ours to begin with.
@@ -216,6 +241,12 @@ func _ready() -> void:
 	_player = get_node_or_null(player_path)
 	_opponent = get_node_or_null(opponent_path)
 	_projectiles = get_node_or_null(projectiles_path)
+	# RELIABLE SHIELD-WAVE WIRING (Sprint 23): wire each barrier's capture presentation on spawn
+	# (child_entered_tree fires for EVERY spawn incl. rollback re-spawns), NOT via the caster's
+	# spell_cast signal — that is rollback-suppressed, so a barrier deployed on a rolled-back tick
+	# was never wired and its block produced no displacement wave. See _on_projectile_entered.
+	if _projectiles != null:
+		_projectiles.child_entered_tree.connect(_on_projectile_entered)
 	_stack_winner_boost_fp = SGFixed.from_float(maxf(1.0, stack_winner_speed_multiplier))
 
 	# Death screen-ripple driver: grab the retro-lens shader material and clear any
@@ -388,7 +419,7 @@ func _process(delta: float) -> void:
 func _update_death_ripple(delta: float) -> void:
 	if not _ripple_active or _lens_mat == null:
 		return
-	_ripple_progress += delta / maxf(0.0001, death_ripple_seconds)
+	_ripple_progress += delta / maxf(0.0001, _ripple_seconds)
 	_lens_mat.set_shader_parameter(&"ripple_progress", _ripple_progress)
 	if _ripple_progress >= 1.0:
 		_ripple_active = false
@@ -499,14 +530,10 @@ func _on_spell_cast(projectile: Node, spell: SpellResource) -> void:
 			trauma += spell.screen_shake_intensity
 		# Phase 5: amplify the FIRING impact by 20% on every projectile spawn.
 		_camera.add_trauma(trauma * fire_shake_multiplier)
-	# A deployed barrier's capture drama: the catch drops the world into slow-mo
-	# (the WOA anticipation, now clearly visible), rumble builds through the hold,
-	# and a heavy slam + a screen ripple punctuate the release.
-	if projectile != null and projectile.has_signal(&"capture_charging"):
-		if projectile.has_signal(&"capture_started"):
-			projectile.capture_started.connect(_on_capture_started.bind(projectile))
-		projectile.capture_charging.connect(_on_capture_charging)
-		projectile.capture_released.connect(_on_capture_released)
+	# A deployed barrier's capture drama (slow-mo + displacement wave + rumble + slam) is wired
+	# reliably on SPAWN via _on_projectile_entered (Sprint 23) — NOT here. This spell_cast hook is
+	# suppressed on rollback re-sims, which dropped the wiring for a barrier deployed on a rolled-
+	# back tick, so its block silently produced no wave ("sometimes they don't happen").
 	# Resolution SFX by effect type (placeholder set — see AUDIO_GUIDE.md).
 	if projectile != null and projectile.has_signal(&"capture_charging"):
 		Sfx.play(&"shield_deploy")
@@ -518,28 +545,49 @@ func _on_spell_cast(projectile: Node, spell: SpellResource) -> void:
 		Sfx.play(&"cast_fireball")
 
 
-## A shield CAUGHT a ball: drop into slow-mo for the anticipation hold (so the WOA
-## reflect is clearly visible) and fire a screen ripple from the wall. Skipped if
-## a death beat owns the dilation, or already dilated (a stack window).
-func _on_capture_started(barrier: Node) -> void:
+## Wire a freshly-spawned barrier's capture presentation (reliable across rollback re-spawns — see
+## the child_entered_tree hook in _ready). Non-barriers (fireballs / waves / shards) are ignored;
+## idempotent via _set_conn. Replaces the old spell_cast wiring, which rollback suppressed.
+func _on_projectile_entered(node: Node) -> void:
+	if node is BarrierController:
+		_set_conn(node.capture_started, _on_capture_started.bind(node), true)
+		_set_conn(node.capture_charging, _on_capture_charging, true)
+		_set_conn(node.capture_released, _on_capture_released, true)
+
+
+## A shield CAUGHT a ball: ALWAYS fire the displacement wave (Sprint 23 CD: "sometimes they don't
+## happen") + drop into the slow-mo anticipation hold. Both scale with the reflect intensity (WOA
+## blended with incoming speed). The wave fires even during a stack window / death beat (it is just
+## a shader pass); only the time DILATION is skipped when another system already owns the clock.
+func _on_capture_started(intensity: float, barrier: Node) -> void:
+	# Reflect intensity (0..1) scales the whole beat (wave + slow-mo + rumble + slam).
+	_capture_intensity = clampf(intensity, 0.0, 1.0)
+	# DISPLACEMENT WAVE — always. SIZE (strength) + SPEED (seconds) scale with intensity: small +
+	# fast at low, large + slow (the dramatic one) at high.
+	if barrier != null:
+		var visual: Node3D = barrier.get_node_or_null(^"Visual") as Node3D
+		if visual != null:
+			var strength: float = lerpf(shield_ripple_strength_min, shield_ripple_strength_max, _capture_intensity)
+			var seconds: float = lerpf(shield_ripple_seconds_min, shield_ripple_seconds_max, _capture_intensity)
+			_trigger_ripple(visual.global_position + Vector3(0.0, 0.3, 0.0), strength, seconds)
+	# Slow-mo anticipation HOLD — skipped only when a death beat or an open stack window already
+	# owns the clock (the wave + rumble + slam still play through those).
 	if _in_death_sequence:
 		return
 	if _stack != null and _stack.state == _stack.State.STACK_WINDOW:
 		return
-	if _stack != null and shield_capture_time_scale < 0.999:
-		_stack.hold_dilation(shield_capture_time_scale)
+	var time_scale: float = lerpf(shield_capture_time_scale_mild, shield_capture_time_scale, _capture_intensity)
+	if _stack != null and time_scale < 0.999:
+		_stack.hold_dilation(time_scale)
 		_shield_slowmo_active = true
-	# Screen ripple at the wall (the point of contact).
-	if barrier != null:
-		var visual: Node3D = barrier.get_node_or_null(^"Visual") as Node3D
-		if visual != null:
-			_trigger_ripple(visual.global_position + Vector3(0.0, 0.3, 0.0), shield_ripple_strength)
 
 
 func _on_capture_charging(progress: float) -> void:
 	if _camera != null:
-		# Sprint 20 round-4: a harder rumble builds through the hold (0.3 -> 0.9).
-		_camera.set_rumble(lerpf(0.3, 0.9, clampf(progress, 0.0, 1.0)))
+		# A harder rumble builds through the hold (0.3 -> 0.9), SCALED by the reflect intensity
+		# (a low-intensity block rumbles less — less anticipation; see _on_capture_started).
+		var build: float = lerpf(0.3, 0.9, clampf(progress, 0.0, 1.0))
+		_camera.set_rumble(build * lerpf(shield_rumble_min_scale, 1.0, _capture_intensity))
 
 
 func _on_capture_released() -> void:
@@ -550,7 +598,8 @@ func _on_capture_released() -> void:
 			_stack.resume_speed()
 	if _camera != null:
 		_camera.set_rumble(0.0)
-		_camera.add_trauma(capture_release_trauma)
+		# The release SLAM scales with the reflect intensity (light for a low-intensity block).
+		_camera.add_trauma(lerpf(capture_release_trauma_min, capture_release_trauma, _capture_intensity))
 	Sfx.play(&"shield_release")
 
 
@@ -558,6 +607,18 @@ func _on_wizard_damaged(amount: int, trauma: float, hit_was_player: bool) -> voi
 	if _camera != null:
 		_camera.add_trauma(trauma)
 	Sfx.play(&"hit_wizard")
+	# IMPACT CRUNCH (Sprint 23): a brief HITSTOP freeze + a spark BURST at the struck wizard, scaled
+	# / placed by the hit. Guarded against rollback re-sims so a corrected tick doesn't re-freeze or
+	# spam particles. Presentation only — determinism untouched.
+	if SyncManager == null or not SyncManager.is_in_rollback():
+		if _stack != null and _stack.has_method(&"hitstop"):
+			var t: float = clampf(float(amount) / maxf(1.0, hitstop_ref_damage), 0.0, 1.0)
+			_stack.hitstop(int(lerpf(float(hitstop_min_ms), float(hitstop_max_ms), t)))
+		var hit_wizard: Node = _player if hit_was_player else _opponent
+		var rig: Node3D = (hit_wizard.get_node_or_null(^"WizardRig") as Node3D) if hit_wizard != null else null
+		if rig != null:
+			BurstFX.spawn(rig.get_parent(), rig.global_position + Vector3(0.0, 0.9, 0.0),
+					Vector3.UP, Color(1.0, 0.72, 0.32, 0.95), 26, 6.5, 0.09, 95.0)
 	if hit_was_player:
 		_stat_damage_taken += amount
 	else:
@@ -592,6 +653,9 @@ func _on_player_charge_ended() -> void:
 func _on_player_cast_released(projectile: Node, _spell: SpellResource) -> void:
 	if _camera != null:
 		_camera.set_rumble(0.0)
+		# RELEASE PUNCH (Sprint 23): the FOV kicks WIDER than base on firing, then smooths back.
+		if _camera.has_method(&"fov_punch"):
+			_camera.fov_punch()
 	# Accuracy bookkeeping: only damaging launches count as throws (walls
 	# and the 0-damage frost wave are excluded).
 	if projectile != null and "damage" in projectile and projectile.damage > 0:
@@ -764,7 +828,7 @@ func _resume_from_death() -> void:
 ## Fires the retro-lens screen ripple (the displacement shockwave) from a WORLD
 ## point — reused by the knockout, a shield catching a fireball, and the emerald
 ## being struck. [param strength] is the peak UV displacement.
-func _trigger_ripple(world_pos: Vector3, strength: float) -> void:
+func _trigger_ripple(world_pos: Vector3, strength: float, seconds: float = -1.0) -> void:
 	if _lens_mat == null or _camera == null:
 		return
 	var screen_px: Vector2 = _camera.unproject_position(world_pos)
@@ -773,6 +837,9 @@ func _trigger_ripple(world_pos: Vector3, strength: float) -> void:
 		return
 	_lens_mat.set_shader_parameter(&"ripple_center", Vector2(screen_px.x / vp.x, screen_px.y / vp.y))
 	_lens_mat.set_shader_parameter(&"ripple_strength", strength)
+	# Expansion duration controls the wave SPEED — a per-ripple value (the shield's scales with
+	# intensity), defaulting to the death/emerald duration.
+	_ripple_seconds = death_ripple_seconds if seconds <= 0.0 else seconds
 	_ripple_progress = 0.0
 	_ripple_active = true
 
