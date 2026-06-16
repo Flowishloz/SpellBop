@@ -22,6 +22,8 @@ const NAMES: Array[StringName] = [
 	&"wall_bounce", &"heal",
 	&"round_win", &"round_lose", &"victory", &"ui_click",
 	&"tape_slow", &"stopwatch_tick", &"slap_on_card", &"shield_shatter",
+	# Sprint 23 batch 2 named hook (no placeholder yet — drop knockout.wav in to enable it):
+	&"knockout",
 ]
 
 var _streams: Dictionary = {}

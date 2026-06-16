@@ -91,8 +91,9 @@ func _run() -> void:
 	_ck(not round_ended_fired[0],
 		"result overlay WAITS through the death beat (round_ended not fired at 0.3 s)")
 
-	# After the full beat the overlay raises (round_ended) and speed resumes.
-	var ended: bool = await _await(func() -> bool: return round_ended_fired[0], 2500)
+	# After the full beat the overlay raises (round_ended) and speed resumes. (Sprint 23 batch 2: the
+	# hard-KO freeze prepends ~ko_hitstop_ms of real time before the slow-mo, so allow a little longer.)
+	var ended: bool = await _await(func() -> bool: return round_ended_fired[0], 3000)
 	_ck(ended, "round_ended fired AFTER the death beat (~0.8 s)")
 	var resumed: bool = await _await(func() -> bool: return is_equal_approx(Engine.time_scale, 1.0), 2000)
 	_ck(resumed, "normal speed resumed after the death beat")

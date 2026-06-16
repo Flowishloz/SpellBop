@@ -79,6 +79,10 @@ var _resolving: bool = false
 @export_range(0.0, 0.5) var hitstop_scale: float = 0.04
 # Wall-clock deadline (msec) of the current hitstop freeze (0 = none).
 var _hitstop_until_msec: int = 0
+# HARD KO HITSTOP (Sprint 23 batch 2): when a freeze is armed with a follow-on hold scale (> 0), it
+# EASES INTO that held slow-mo when it expires (the death beat) instead of snapping back to full speed
+# — the crunch, THEN the slow-mo. 0 = a plain hit hitstop that snaps to 1.0.
+var _after_freeze_scale: float = 0.0
 
 
 ## Opens the time-slow window (or refreshes the deadline if already open).
@@ -92,6 +96,7 @@ func open_window(duration_s: float = -1.0) -> void:
 		state = State.STACK_WINDOW
 		Engine.time_scale = stack_time_scale
 	_hitstop_until_msec = 0  # the stack window supersedes any in-flight hitstop crunch
+	_after_freeze_scale = 0.0
 	stack_opened.emit(seconds)
 
 
@@ -139,6 +144,7 @@ func hold_dilation(scale: float) -> void:
 	_resolving = true   # held: _process won't touch Engine.time_scale
 	_resuming = false
 	_hitstop_until_msec = 0  # a held dilation (death / stack resolve) supersedes a hitstop crunch
+	_after_freeze_scale = 0.0
 	Engine.time_scale = clampf(scale, 0.01, 1.0)
 
 
@@ -147,10 +153,13 @@ func hold_dilation(scale: float) -> void:
 ## presentation only, never the tick math. SKIPPED while a stack window or a held dilation (death
 ## beat / stack resolve) already owns the clock; otherwise it overrides any resume ramp and snaps
 ## back SHARP (in _process) for the punch. MatchController calls it on hits, scaling the duration.
-func hitstop(duration_ms: int) -> void:
+## HARD KO (Sprint 23 batch 2): pass [param then_hold_scale] > 0 to have the freeze EASE INTO that held
+## slow-mo when it expires (the death beat) instead of snapping back to 1.0 — the crunch, then the slow-mo.
+func hitstop(duration_ms: int, then_hold_scale: float = 0.0) -> void:
 	if state == State.STACK_WINDOW or _resolving:
 		return
 	_hitstop_until_msec = Time.get_ticks_msec() + maxi(1, duration_ms)
+	_after_freeze_scale = clampf(then_hold_scale, 0.0, 1.0)
 	_resuming = false
 	Engine.time_scale = hitstop_scale
 
@@ -170,6 +179,13 @@ func _process(_delta: float) -> void:
 			Engine.time_scale = hitstop_scale
 			return
 		_hitstop_until_msec = 0
+		# HARD KO (Sprint 23 batch 2): a freeze armed with a follow-on hold scale eases into that held
+		# slow-mo (the death beat) instead of snapping to full speed — the crunch, THEN the slow-mo.
+		if _after_freeze_scale > 0.0:
+			var hold_scale: float = _after_freeze_scale
+			_after_freeze_scale = 0.0
+			hold_dilation(hold_scale)
+			return
 		Engine.time_scale = 1.0
 	# Fast-but-gradual speed-up after a window closes (wall-clock paced).
 	if _resuming and state == State.NORMAL:

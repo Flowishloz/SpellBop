@@ -66,6 +66,10 @@ signal knockout_began(is_match_end: bool, player_won: bool)
 @export var card_cast_trauma: float = 0.3
 @export var player_hit_trauma: float = 0.5
 @export var opponent_hit_trauma: float = 0.25
+## LAUNCH KICK (Sprint 23 batch 2, Creative Director): an extra sharp camera trauma kick when the LOCAL
+## player FIRES a fireball — on top of the per-cast trauma + the FOV punch — so the throw has recoil.
+## Paired with a muzzle BURST at the spawn point (see _on_spell_cast).
+@export var launch_kick_trauma: float = 0.22
 ## Camera trauma SLAM when a shield flings a captured ball back. Sprint 20 round-4:
 ## raised 0.55 -> 0.9 to exaggerate the reflect release (Creative Director).
 @export var capture_release_trauma: float = 0.9
@@ -149,6 +153,11 @@ signal knockout_began(is_match_end: bool, player_won: bool)
 @export var hitstop_min_ms: int = 45
 @export var hitstop_max_ms: int = 110
 @export var hitstop_ref_damage: float = 3.0
+## HARD KO HITSTOP (Sprint 23 batch 2, Creative Director): a sharp FREEZE that lands BEFORE the death
+## slow-mo on a knockout — the kill connects with a crunch, THEN the world eases into the slow-mo death
+## beat (the_stack.hitstop's then-hold transition). Longer than a regular hit's freeze; fires only when
+## the death slow-mo is enabled (death_time_scale < 1.0).
+@export var ko_hitstop_ms: int = 130
 
 var match_state: MatchState = MatchState.ROUND_ACTIVE
 
@@ -304,7 +313,7 @@ func _ready() -> void:
 	for health in find_children("*", "HealthComponent", true, false):
 		var is_player_side: bool = _is_under_player(health)
 		var trauma: float = player_hit_trauma if is_player_side else opponent_hit_trauma
-		health.damaged.connect(_on_wizard_damaged.bind(trauma, is_player_side))
+		health.damaged.connect(_on_wizard_damaged.bind(health, trauma, is_player_side))
 
 	# Charge-up rumble + throw stat: LOCAL player's casters only (see player_path doc).
 	# Defaults to the blue Player (offline + the netplay HOST); the CLIENT retargets this
@@ -534,6 +543,17 @@ func _on_spell_cast(projectile: Node, spell: SpellResource) -> void:
 	# reliably on SPAWN via _on_projectile_entered (Sprint 23) — NOT here. This spell_cast hook is
 	# suppressed on rollback re-sims, which dropped the wiring for a barrier deployed on a rolled-
 	# back tick, so its block silently produced no wave ("sometimes they don't happen").
+	# LAUNCH MUZZLE BURST (Sprint 23 batch 2): a bright element-coloured pop at the spawn point on every
+	# damaging launch (fireball / spark bolt), spraying down-court along the ball's travel — the visible
+	# "kick" of the throw. Pure presentation; spell_cast is already rollback-suppressed at the caster.
+	if projectile is FireballController and "damage" in projectile and projectile.damage > 0:
+		var muzzle: Node3D = projectile.get_node_or_null(^"Visual") as Node3D
+		if muzzle != null:
+			var elem: int = projectile.element if "element" in projectile else Elements.FIRE
+			var dir3 := Vector3(projectile.get_velocity_x() / 65536.0 * 0.6, 0.15,
+					projectile.get_velocity_y() / 65536.0 * 0.6)
+			BurstFX.spawn(projectile.get_parent(), muzzle.global_position, dir3,
+					Elements.impact_color(elem), 16, maxf(4.0, dir3.length()), 0.075, 22.0)
 	# Resolution SFX by effect type (placeholder set — see AUDIO_GUIDE.md).
 	if projectile != null and projectile.has_signal(&"capture_charging"):
 		Sfx.play(&"shield_deploy")
@@ -603,7 +623,7 @@ func _on_capture_released() -> void:
 	Sfx.play(&"shield_release")
 
 
-func _on_wizard_damaged(amount: int, trauma: float, hit_was_player: bool) -> void:
+func _on_wizard_damaged(amount: int, health: Node, trauma: float, hit_was_player: bool) -> void:
 	if _camera != null:
 		_camera.add_trauma(trauma)
 	Sfx.play(&"hit_wizard")
@@ -618,7 +638,7 @@ func _on_wizard_damaged(amount: int, trauma: float, hit_was_player: bool) -> voi
 		var rig: Node3D = (hit_wizard.get_node_or_null(^"WizardRig") as Node3D) if hit_wizard != null else null
 		if rig != null:
 			BurstFX.spawn(rig.get_parent(), rig.global_position + Vector3(0.0, 0.9, 0.0),
-					Vector3.UP, Color(1.0, 0.72, 0.32, 0.95), 26, 6.5, 0.09, 95.0)
+					Vector3.UP, Elements.impact_color(health.get_last_hit_element() if (health != null and health.has_method(&"get_last_hit_element")) else Elements.FIRE), 26, 6.5, 0.09, 95.0)
 	if hit_was_player:
 		_stat_damage_taken += amount
 	else:
@@ -660,6 +680,10 @@ func _on_player_cast_released(projectile: Node, _spell: SpellResource) -> void:
 	# and the 0-damage frost wave are excluded).
 	if projectile != null and "damage" in projectile and projectile.damage > 0:
 		_stat_throws += 1
+		# LAUNCH KICK (Sprint 23 batch 2): a sharp camera jolt on the local player's own throw, layered
+		# on the FOV punch above — the throw kicks back.
+		if _camera != null:
+			_camera.add_trauma(launch_kick_trauma)
 
 
 ## Results-screen stats (MatchFlowOverlay reads these — presentation only).
@@ -781,11 +805,17 @@ func _on_resolver_round_reset(new_round_number: int) -> void:
 func _begin_death_sequence(ko_was_player: bool, match_over: bool, player_won_round: bool) -> void:
 	_in_death_sequence = true
 	var dying: Node = _player if ko_was_player else _opponent
+	Sfx.play(&"knockout")
 
-	# Death slow-mo, HELD until _resume_from_death (driven by the resolver's DEATH_WAIT
-	# countdown) resumes normal speed.
+	# HARD KO HITSTOP (Sprint 23 batch 2): a sharp FREEZE lands FIRST (the kill's crunch), then the_stack
+	# eases into the held death slow-mo when the freeze elapses (hitstop's then-hold-scale). Only when the
+	# slow-mo is actually enabled (death_time_scale < 1.0); the collapsed-beat tests hold straight to 1.0.
+	# Either way the slow-mo is HELD until _resume_from_death (the resolver's DEATH_WAIT countdown).
 	if _stack != null:
-		_stack.hold_dilation(death_time_scale)
+		if _stack.has_method(&"hitstop") and death_time_scale < 0.999:
+			_stack.hitstop(ko_hitstop_ms, death_time_scale)
+		else:
+			_stack.hold_dilation(death_time_scale)
 	else:
 		Engine.time_scale = clampf(death_time_scale, 0.05, 1.0)
 
