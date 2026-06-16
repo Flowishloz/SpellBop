@@ -214,6 +214,12 @@ func _process(delta: float) -> void:
 
 
 func _on_damaged(_amount: int) -> void:
+	# PRESENTATION ONLY — suppress on rollback re-sims. The damaged signal re-fires every
+	# time this tick is re-simulated (the HitDetection _has_hit latch is rolled back + re-set),
+	# so without this guard the squash-pop + flicker re-stamp from t=0 on each re-sim. The hit
+	# first plays on the forward (predicted) tick where is_in_rollback() is false.
+	if SyncManager != null and SyncManager.is_in_rollback():
+		return
 	var now: int = Time.get_ticks_msec()
 	_flicker_until_msec = now + int(flicker_seconds * 1000.0)
 	_hit_pop_msec = now
@@ -225,6 +231,10 @@ func _on_damaged(_amount: int) -> void:
 ## FROZEN (a frost wave's 0-damage "hit"): flash ICE-blue + a squash pop so getting chilled reads as
 ## an impact too. The damage path never sees the wave (0 damage); this slow is its feedback hook.
 func _on_slowed(_duration_ticks: int) -> void:
+	# PRESENTATION ONLY — suppress on rollback re-sims (slow_started re-fires per re-sim,
+	# same as the damage path above).
+	if SyncManager != null and SyncManager.is_in_rollback():
+		return
 	var now: int = Time.get_ticks_msec()
 	_flicker_until_msec = now + int(flicker_seconds * 1000.0)
 	_hit_pop_msec = now
@@ -235,6 +245,12 @@ func _on_slowed(_duration_ticks: int) -> void:
 ## the court it stands on) on a gravity arc. Pure visual — the sim is already
 ## parked by the round flow. Reset on the next round when health refills.
 func _on_knocked_out() -> void:
+	# PRESENTATION ONLY — suppress on rollback re-sims so the twin death-explosion bursts
+	# aren't re-spawned when a rollback crosses the KO tick (knocked_out re-fires on re-sim,
+	# and a rollback that restores health clears _dead, re-opening the duplicate path). The
+	# fling + burst play on the forward tick where is_in_rollback() is false.
+	if SyncManager != null and SyncManager.is_in_rollback():
+		return
 	if _dead or _sprite == null:
 		return
 	_dead = true
