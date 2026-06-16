@@ -685,7 +685,15 @@ func _on_resolver_match_concluded(player_won_match: bool) -> void:
 ## Here we do the PRESENTATION reset (unpark the local sim, refresh the emerald spawner)
 ## + pop the round call-out.
 func _on_resolver_round_reset(new_round_number: int) -> void:
-	if SyncManager != null and SyncManager.is_in_rollback():
+	# A REMATCH (match reset -> round 1) on the CLIENT fires ONLY inside the rollback that applies
+	# the host's synced play-again input: the client mispredicted "no rematch", so the OVER->ACTIVE
+	# reset never re-runs on a confirmed forward tick. Skipping it during rollback would strand the
+	# client on the result screen FOREVER (movement + the touch HUD gated off via round_started, the
+	# victory overlay never hidden). The rematch is authoritative — both peers agreed via the synced
+	# KEY_REMATCH — so presenting it mid-rollback is correct and never reverts. Between-round resets
+	# (round 2/3) land on a confirmed countdown-zero tick on both peers, so they keep skipping
+	# rollback re-sims (which could announce a mispredicted reset). (Sprint 22: online rematch fix.)
+	if SyncManager != null and SyncManager.is_in_rollback() and new_round_number != 1:
 		return
 	_sync_mirror()
 	# round_number == 1 means a FRESH MATCH (a rematch — the first round at match start is
@@ -954,6 +962,10 @@ func _wire_local_charge_feedback(wizard: Node, connect_it: bool) -> void:
 			_set_conn(caster.cast_charge_level_changed, _on_player_charge_level, connect_it)
 			_set_conn(caster.cast_charge_canceled, _on_player_charge_ended, connect_it)
 			_set_conn(caster.spell_cast, _on_player_cast_released, connect_it)
+		# CHARGE ZOOM (Sprint 22): point the camera FOV charge-zoom at the LOCAL wizard's fireball
+		# caster (retargeted to the client's own wizard on connect, exactly like the rumble above).
+		if connect_it and caster is SpellCasterComponent and _camera != null and _camera.has_method(&"set_charge_source"):
+			_camera.set_charge_source(caster)
 	var card_caster: Node = _find_child_of(wizard, "CardCasterComponent")
 	if card_caster != null:
 		_set_conn(card_caster.spell_staged, _on_player_spell_staged, connect_it)

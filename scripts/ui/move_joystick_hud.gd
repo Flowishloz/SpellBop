@@ -63,16 +63,44 @@ func _ready() -> void:
 	# the PLAY AGAIN button on the overlay above it.
 	var mc: Node = get_node_or_null(match_controller_path)
 	if mc != null:
-		mc.round_started.connect(func(_n: int) -> void: _active = true)
+		mc.round_started.connect(func(_n: int) -> void: _reactivate())
 		mc.round_ended.connect(func(_w: bool, _p: int, _o: int, _b: float) -> void: _set_inactive())
 		mc.match_ended.connect(func(_w: bool) -> void: _set_inactive())
 
 
-## Deactivate and cancel any in-progress drag (clears the held direction too).
+## Stand down between rounds / on the match-end screen. KEEPS following a still-held finger
+## (see _reactivate) so it re-engages next round instead of freezing until lift + re-press.
 func _set_inactive() -> void:
+	# (Sprint 22 round-start movement-freeze fix) Release the DRIVEN move actions so the wizard
+	# doesn't drift during the break, but do NOT _end() — keeping _touch_index means a finger/mouse
+	# held through the round break carries over and RESUMES in _reactivate. The old _end() forgot the
+	# held pointer, so movement stayed dead at the next round start until the player re-pressed
+	# (casting incidentally unstuck it on desktop by forcing a release + a new click).
 	_active = false
-	if _touch_index != -2:
-		_end()
+	if _dir != 0:
+		_apply_dir(0)
+	InputCommand.touch_aim_sector = 0
+	_draw.visible = false
+
+
+## Round start: re-arm. If a finger/mouse is STILL held (carried over the round break), RESUME the
+## stick from its current deflection so movement works immediately — no lift-and-re-press needed.
+func _reactivate() -> void:
+	_active = true
+	if _touch_index == -2:
+		return
+	_draw.visible = true
+	var dx: float = (_knob.x - _origin.x) / stick_radius
+	var resume_dir: int = 0
+	if dx > deadzone_fraction:
+		resume_dir = 1
+	elif dx < -deadzone_fraction:
+		resume_dir = -1
+	if resume_dir != _dir:
+		_apply_dir(resume_dir)
+	InputCommand.touch_aim_sector = clampi(roundi(dx * InputCommand.AIM_SECTORS), \
+			-InputCommand.AIM_SECTORS, InputCommand.AIM_SECTORS)
+	_draw.queue_redraw()
 
 
 func _zone_contains(pos: Vector2) -> bool:
@@ -106,13 +134,17 @@ func _drag(pos: Vector2) -> void:
 		new_dir = 1
 	elif dx < -deadzone_fraction:
 		new_dir = -1
-	if new_dir != _dir:
-		_apply_dir(new_dir)
+	# DRIVE movement/aim only while a round is LIVE. Between rounds we keep FOLLOWING the finger
+	# (updating _knob above) so a still-held thumb carries into the next round and RE-ENGAGES on
+	# _reactivate — but it pushes no movement during the break.
+	var drive_dir: int = new_dir if _active else 0
+	if drive_dir != _dir:
+		_apply_dir(drive_dir)
 	# AIM (Mobile-MP B2): the lateral push IS the firing angle - move + aim together.
 	# The full deflection (dx in [-1, 1]) maps across the aim cone, quantized to a
 	# sector that rides the synced input as KEY_AIM (small pushes round to 0 = straight).
-	InputCommand.touch_aim_sector = clampi(roundi(dx * InputCommand.AIM_SECTORS), \
-			-InputCommand.AIM_SECTORS, InputCommand.AIM_SECTORS)
+	InputCommand.touch_aim_sector = (clampi(roundi(dx * InputCommand.AIM_SECTORS), \
+			-InputCommand.AIM_SECTORS, InputCommand.AIM_SECTORS)) if _active else 0
 	_draw.queue_redraw()
 
 
