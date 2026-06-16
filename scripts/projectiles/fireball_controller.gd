@@ -59,6 +59,12 @@ var shatters_ice: bool = false
 ## so a genuine side-wall ricochet still pulses AT the wall face.
 var emits_wall_pulse: bool = true
 
+## VISUAL ELEMENT (Sprint 23 batch 2): Elements.FIRE/SPARK/ICE — drives the impact COLOUR (the hit
+## burst, the struck-wizard sprite flash via apply_damage, and the launch muzzle flash). Set at spawn
+## from the spell's element ("elem" payload), immutable thereafter. PURE PRESENTATION — never sim. A
+## frost wave is forced to ICE in _spawn_impact_burst regardless of authoring (it deals 0 damage).
+var element: int = 0
+
 var _movement: ProjectileMovementComponent
 var _hit_detection: HitDetectionComponent
 
@@ -181,7 +187,7 @@ func _on_hit(body: Node) -> void:
 	# state) guarantees this fires at most once per ball, and re-fires identically on a
 	# rollback re-sim.
 	if damage > 0 and body.has_method(&"apply_damage"):
-		body.apply_damage(damage)
+		body.apply_damage(damage, element)
 	if slow_ticks > 0 and body.has_method(&"apply_slow"):
 		body.apply_slow(slow_ticks, slow_scale_fp)
 	# Presentation (frost sfx, impact burst) fires only on the LIVE hit, never on a
@@ -208,9 +214,11 @@ func _spawn_impact_burst() -> void:
 			get_velocity_x() / 65536.0 * 0.6,
 			0.15,
 			get_velocity_y() / 65536.0 * 0.6)
-	var color: Color = Color(0.55, 0.8, 1.0, 0.95) if slow_ticks > 0 else Color(1.0, 0.55, 0.2, 0.95)
+	# Per-element spray colour (Sprint 23 batch 2): fire = orange, spark = yellow, ice = blue. A frost
+	# wave is ALWAYS ICE (it may carry no authored element); otherwise use the spell's element.
+	var elem: int = Elements.ICE if slow_ticks > 0 else element
 	BurstFX.spawn(get_parent(), visual.global_position, vel_3d,
-			color, 26, maxf(3.0, vel_3d.length()))
+			Elements.impact_color(elem), 26, maxf(3.0, vel_3d.length()))
 
 
 ## MAX-CHARGE ICE SHATTER (Phase 1): a fully-charged fireball scans its sibling
@@ -458,6 +466,7 @@ func _network_spawn(data: Dictionary) -> void:
 	if data.has("mask"):
 		collision_mask = int(data["mask"])
 	damage = int(data.get("dmg", 1))
+	element = int(data.get("elem", 0))
 	shatters_ice = int(data.get("shat", 0)) == 1
 	slow_ticks = int(data.get("slt", 0))
 	slow_scale_fp = int(data.get("sls", SGFixed.ONE))

@@ -35,6 +35,13 @@ signal healed(amount: int)
 
 var _health: int = 5
 
+# PRESENTATION HINT (Sprint 23 batch 2): the visual element (Elements.FIRE/SPARK/ICE) of the LAST
+# damaging hit, stamped by apply_damage. Drives the element-tinted impact feedback (the struck-wizard
+# spark pop + sprite flash). NOT sim state — it's a derived presentation value set deterministically on
+# every apply_damage call (re-stamped identically on a rollback re-sim), read only by rollback-guarded
+# presentation handlers, so it never needs saving/hashing.
+var _last_hit_element: int = 0
+
 
 func _ready() -> void:
 	_health = max_health
@@ -46,12 +53,21 @@ func get_health() -> int:
 	return _health
 
 
+## The visual element (Elements.FIRE/SPARK/ICE) of the most recent damaging hit — read by the
+## element-tinted impact feedback (the struck-wizard spark pop + sprite flash). Presentation only.
+func get_last_hit_element() -> int:
+	return _last_hit_element
+
+
 ## Applies [param amount] damage (int). knocked_out fires ONCE, on the
 ## transition into 0 — MatchController's round flow owns what happens next.
 ## Deterministic given deterministic callers.
-func apply_damage(amount: int) -> void:
+func apply_damage(amount: int, element: int = 0) -> void:
 	if amount <= 0:
 		return
+	# Stamp the hit's visual element (Elements.FIRE/SPARK/ICE) for the element-tinted impact
+	# feedback BEFORE emitting damaged, so listeners read the right colour for THIS hit.
+	_last_hit_element = element
 	var was_alive: bool = _health > 0
 	_health = maxi(0, _health - amount)
 	damaged.emit(amount)

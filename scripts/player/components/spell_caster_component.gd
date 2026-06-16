@@ -407,6 +407,7 @@ func _spawn_projectile(velocity_multiplier_fp: int = SGFixed.ONE, charge_level: 
 		"vx": _aim_vx_fp(speed_fp), "vy": speed_fp * cast_direction_y, "b": _bounciness_fp,
 		"mask": PhysicsLayers.projectile_mask_for(cast_direction_y),
 		"dmg": spell.damage,
+		"elem": spell.element,
 		"shat": 1 if charge_level >= 3 else 0,
 		"size": SGFixed.from_float(radius_units),
 		"src": str(_body.get_path()),

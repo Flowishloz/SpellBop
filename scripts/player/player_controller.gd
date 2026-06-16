@@ -188,9 +188,9 @@ func _physics_process(_delta: float) -> void:
 
 ## Routes projectile damage to the HealthComponent (the wizard's public
 ## damage API — hit scans never poke component internals directly).
-func apply_damage(amount: int) -> void:
+func apply_damage(amount: int, element: int = 0) -> void:
 	if _health != null:
-		_health.apply_damage(amount)
+		_health.apply_damage(amount, element)
 
 
 ## Routes a heal (the healing-emerald pickup) to the HealthComponent — same

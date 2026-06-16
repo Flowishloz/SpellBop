@@ -53,3 +53,10 @@ extends Resource
 ## Converted once to whole ticks by the caster. While charging, the caster
 ## applies its movement speed penalty and fires its charge VFX signals.
 @export var cast_time: float = 0.5
+
+## VISUAL ELEMENT (Sprint 23 batch 2, Creative Director): drives the impact COLOUR of this spell's
+## hits — Fire = orange, Spark = yellow, Ice = blue (one source of truth in scripts/visual/elements.gd,
+## kept index-aligned with its FIRE/SPARK/ICE enum). PURE PRESENTATION: it rides the projectile's spawn
+## payload as a small int ("elem") and is read ONLY by the hit VFX (burst, sprite flash, muzzle flash),
+## never by sim math. Default Fire (the Base Fireball); the Spark Bolt + frost-wave .tres set Spark / Ice.
+@export_enum("Fire", "Spark", "Ice") var element: int = 0
