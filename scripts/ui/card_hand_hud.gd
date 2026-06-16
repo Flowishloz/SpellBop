@@ -527,10 +527,16 @@ func _settle_all() -> void:
 
 ## Recomputes per-card availability and POPS in any card that just became usable (a springy scale
 ## kick from small). COUNTER (index 2) shows while a spell is on the stack; DEFENSE (index 1) while a
-## hostile ball is incoming; ATTACK (index 0) is always in hand. Presentation only — the cards always
+## hostile ball is incoming; ATTACK (index 0) shows unless it is on cooldown. Presentation only — cards always
 ## WORK (keys 8/9/0 / hold-to-cast); this only gates whether they're shown in the fan.
 func _update_card_availability() -> void:
-	var avail: Array[bool] = [true, false, false]
+	var avail: Array[bool] = [false, false, false]
+	# ATTACK (index 0): in hand UNLESS it is cooling down — a card on cooldown vanishes rather than
+	# dimming (Creative Director: no cooldown visual, don't take up screen space). Shown by default when
+	# the caster isn't resolved yet; the base fireball cast button covers the attack while it cools.
+	var attack_cooling: bool = _caster != null and _caster.has_method(&"cooldown_ticks_remaining") \
+			and int(_caster.call(&"cooldown_ticks_remaining", 1)) > 0
+	avail[0] = not attack_cooling
 	if _stack != null and int(_stack.get(&"state")) == 1:
 		avail[2] = true  # a spell is on the stack — the counter is live
 	# DEFENSE (index 1): pop EARLY — while a staged attack is within defense_predict_seconds of
