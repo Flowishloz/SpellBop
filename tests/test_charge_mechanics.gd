@@ -117,6 +117,23 @@ func _run() -> void:
 	_place(0)
 
 	# ============================================================
+	# TAP-CAST (Sprint 22): a quick TAP (cast released BEFORE the 30-tick charge
+	# minimum) immediately fires a LOW-TIER, uncharged, base-size fireball.
+	# ============================================================
+	print("[TAP-CAST]")
+	for i in 150:
+		_spell._network_process({})         # clear the cooldown
+	_captured = null
+	_spell._network_process({"c": 1})       # press (charge tick 1)
+	_spell._network_process({"c": 1})       # ... still well below the 30-tick minimum
+	_spell._network_process({"c": 1})
+	_check(_spell.charge_level() == 0, "quick tap stays gauge 0 (below the charge minimum)")
+	_spell._network_process({})             # RELEASE before the minimum -> TAP-CAST fires
+	_check(is_instance_valid(_captured) and _captured != null, "quick tap FIRED a fireball (was a drain before)")
+	var rt: int = _circle_radius_fp(_captured) if _captured != null else 0
+	_check(rt == SGFixed.from_float(24.0), "tap-cast fireball is base size 24u (uncharged), got %d" % rt)
+
+	# ============================================================
 	# CARDS COMMIT ON PRESS: an ATTACK stages on the FIRST press tick.
 	# ============================================================
 	print("[CARD STAGES ON PRESS]")

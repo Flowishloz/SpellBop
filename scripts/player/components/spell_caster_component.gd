@@ -237,11 +237,18 @@ func _network_process(input: Dictionary) -> void:
 			_spawn_projectile(multiplier_fp, fired_level)
 			_ticks_until_ready = _cooldown_ticks
 		else:
-			# Released below the minimum: drain, never hard-reset (GRAVEYARD).
-			# No movement penalty while draining.
-			_charge_ticks -= 1
-			if _charge_ticks == 0:
-				cast_charge_canceled.emit()
+			# TAP-CAST (Sprint 22, Creative Director): a quick TAP — the cast input
+			# released BEFORE the charge reached the minimum cast time (the player
+			# tapped instead of holding to charge) — immediately fires a LOW-TIER,
+			# UNCHARGED fireball: no charge boost (1x speed), base size (gauge 1). The
+			# normal cooldown still applies, so taps can't out-pace a charged throw, and
+			# the spell_cast emit tears down the press-tick charge rumble + VFX (the
+			# camera's _on_player_cast_released and CastChargeVFXComponent both stop on
+			# spell_cast). Supersedes the old GRAVEYARD drain — an early release is now an
+			# intentional tap, not a slip to absorb.
+			_charge_ticks = 0
+			_spawn_projectile(SGFixed.ONE, 1)
+			_ticks_until_ready = _cooldown_ticks
 
 	# Phase-boundary presentation hook (drift-spark levels). Derived state —
 	# re-fires harmlessly during rollback re-simulation, like all VFX signals.
