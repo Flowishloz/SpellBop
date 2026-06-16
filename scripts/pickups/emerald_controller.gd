@@ -234,6 +234,11 @@ func _scan_strike(my_pos: SGFixedVector2) -> void:
 				or not child.has_method(&"get_collider_half_extents") \
 				or not child.has_method(&"get_velocity_y"):
 			continue
+		# Only a DAMAGING projectile (fireball / spark bolt + their shards) breaks the emerald — the
+		# Counter's frost wave (0 damage, slow only) now passes harmlessly through it (Creative
+		# Director). Deterministic: `damage` is an immutable int set at spawn, identical on both peers.
+		if not ("damage" in child) or int(child.damage) <= 0:
+			continue
 		var their_pos: SGFixedVector2 = child.get_global_fixed_position()
 		var their_half: SGFixedVector2 = child.get_collider_half_extents()
 		var band_x: int = _pickup_fp + their_half.x
