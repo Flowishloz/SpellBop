@@ -508,6 +508,36 @@ func _defense_woa_fp(card: CardResource) -> int:
 	return clampi(SGFixed.ONE - SGFixed.div(best, range_fp), 0, SGFixed.ONE)
 
 
+## PRESENTATION (Sprint 23 batch 3): true when a HOSTILE projectile is INCOMING toward our wizard,
+## within [param range_units] down-court and roughly in our lane — drives the DEFENSE card popping
+## into the hand only when there's an attack to block. Pure read (never sim/saved), mirroring the
+## defense-WOA scan; the emerald is skipped for free (it exposes no get_velocity_y).
+func has_incoming_threat(range_units: float = 650.0) -> bool:
+	if _body == null:
+		return false
+	var range_fp: int = SGFixed.from_float(maxf(1.0, range_units))
+	var lateral_gate_fp: int = SGFixed.from_float(300.0)
+	var my_pos: SGFixedVector2 = _body.get_global_fixed_position()
+	var container: Node = _resolve_container()
+	if container == null:
+		return false
+	for child in container.get_children():
+		if not child.has_method(&"get_velocity_y") or not child.has_method(&"get_hit_source"):
+			continue
+		if child.get_hit_source() == _body:
+			continue  # our own throw
+		var ball_pos: SGFixedVector2 = child.get_global_fixed_position()
+		var dy: int = my_pos.y - ball_pos.y
+		var vy: int = child.get_velocity_y()
+		if vy == 0 or (vy > 0) != (dy > 0):
+			continue  # not closing on us
+		if absi(my_pos.x - ball_pos.x) > lateral_gate_fp:
+			continue  # not our lane
+		if absi(dy) <= range_fp:
+			return true
+	return false
+
+
 ## The lane half-width (fixed-point) spawns clamp to — the SAME bound the wizard
 ## BODY is clamped to, read from our sibling MovementComponent so scene
 ## overrides win (400 in match_arena, 500 in test_area, 600 default). Only the

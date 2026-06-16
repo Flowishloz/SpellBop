@@ -17,6 +17,11 @@ extends CanvasLayer
 @export var win_color: Color = Color(0.95, 0.85, 0.4)
 @export var lose_color: Color = Color(0.85, 0.3, 0.3)
 
+## ROUND TITLE Y (Sprint 23 batch 3, Creative Director): the ROUND-N call-out sits this high (canvas
+## px, 1920 tall) — raised into the TOP section so it never blocks the opponent. It then FLIES OFF the
+## top as the round begins (the fly-off duration matches MatchController.round_intro_seconds).
+@export var round_title_y: float = 170.0
+
 var _dim: ColorRect
 var _title: Label
 var _score: Label
@@ -33,6 +38,10 @@ var _round_label: Label
 var _round_lightning: _RoundLightning
 var _round_anim_msec: int = 0  # wall-clock start of the round call-out (0 = idle)
 var _round_hold: bool = false  # true = a death VICTORY/DEFEAT verdict that HOLDS
+# Round-intro fly-off (Sprint 23 batch 3): the call-out's on-screen duration (matched to
+# MatchController.round_intro_seconds) and the Y it flies UP from as the round begins.
+var _round_intro_dur: float = 1.0
+var _round_base_y: float = 170.0
 
 # Match-end podium (built once, hidden until victory/defeat).
 var _podium: Control
@@ -95,7 +104,7 @@ func _ready() -> void:
 	_round_label = Label.new()
 	_round_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_round_label.size = Vector2(1080, 130)
-	_round_label.position = Vector2(0, 720)
+	_round_label.position = Vector2(0, round_title_y)
 	_round_label.pivot_offset = Vector2(540, 65)
 	_round_label.add_theme_font_size_override(&"font_size", 104)
 	_round_label.add_theme_color_override(&"font_color", Color(1, 1, 1))
@@ -219,15 +228,29 @@ func _process(_delta: float) -> void:
 ## parked sim / dilation): pop (scale), bolt shoot (t), flash, hold, then fade.
 func _animate_round_call() -> void:
 	var rt: float = float(Time.get_ticks_msec() - _round_anim_msec) / 1000.0
-	# A held death verdict never auto-fades — it stays until the result screen
-	# replaces it (_on_match_ended -> _kill_callout). The round call-out fades.
-	if not _round_hold and rt >= 1.95:
-		_end_round_call()
-		return
+	# Common pop + bolt-shoot (both the round call-out and the held death verdict use it).
 	_round_label.scale = Vector2.ONE * lerpf(1.5, 1.0, ease(clampf(rt / 0.3, 0.0, 1.0), 0.32))
 	_round_lightning.t = clampf(rt / 0.22, 0.0, 1.0)
 	_round_lightning.flash = clampf(1.0 - rt / 0.55, 0.0, 1.0)
-	var a: float = 1.0 if (_round_hold or rt < 1.3) else clampf(1.0 - (rt - 1.3) / 0.6, 0.0, 1.0)
+	# A held death VICTORY/DEFEAT verdict stays put (no fly-off) until the result screen replaces it
+	# (_on_match_ended -> _kill_callout).
+	if _round_hold:
+		_round_label.modulate.a = 1.0
+		_round_lightning.modulate.a = 1.0
+		_round_lightning.queue_redraw()
+		return
+	# ROUND CALL-OUT (Sprint 23 batch 3): pop + hold, then FLY UP off the top of the screen over the
+	# last ~40% of the intro — the round becomes playable as it leaves (MatchController unparks the sim
+	# over the same span). Ends (and the title vanishes) at round_intro_seconds.
+	var d: float = maxf(0.35, _round_intro_dur)
+	if rt >= d:
+		_end_round_call()
+		return
+	var exit_t: float = clampf((rt - d * 0.6) / (d * 0.4), 0.0, 1.0)
+	var eased: float = exit_t * exit_t
+	_round_label.position.y = _round_base_y - 780.0 * eased
+	_round_lightning.position.y = _round_label.position.y - 18.0
+	var a: float = 1.0 - exit_t
 	_round_label.modulate.a = a
 	_round_lightning.modulate.a = a
 	_round_lightning.queue_redraw()
@@ -276,7 +299,14 @@ func _on_round_started(round_number: int) -> void:
 	# lightning (top bolt shoots right, bottom bolt shoots left), then fades.
 	# Reset any death-verdict overrides (position/colour/hold) back to round style.
 	_round_label.text = "ROUND %d" % round_number
-	_round_label.position = Vector2(0, 720)
+	_round_label.position = Vector2(0, round_title_y)
+	_round_base_y = round_title_y
+	# The title's fly-off duration matches the round-intro freeze, so it leaves AS the round begins.
+	_round_intro_dur = 1.0
+	if _mc != null:
+		var intro: Variant = _mc.get(&"round_intro_seconds")
+		if intro != null:
+			_round_intro_dur = maxf(0.35, float(intro))
 	_round_label.add_theme_color_override(&"font_color", Color(1, 1, 1))
 	_round_hold = false
 	_round_lightning.bolt_color = Color(0.55, 0.8, 1.0)

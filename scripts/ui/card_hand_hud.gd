@@ -42,6 +42,18 @@ extends CanvasLayer
 ## Hand-root sway against camera pan (px per meter).
 @export var sway_per_meter: float = 18.0
 
+## CONDITIONAL CARDS (Sprint 23 batch 3, Creative Director): the COUNTER (blue) card only appears
+## when a spell is on the stack, and the DEFENSE (green) card only when an attack is incoming within
+## this range (sim units) — each POPS into the hand on its cue instead of always sitting in the fan.
+@export var defense_threat_range: float = 650.0
+
+## DEFENSE PREDICT (Sprint 23 batch 3 follow-up, Creative Director): pop the DEFENSE card in EARLY —
+## while a staged attack is still on the stack with this many seconds (or fewer) left on the countdown
+## — so there's time to ready a block on mobile (instead of waiting for the spell to resolve + the
+## projectile to physically close in). The incoming-ball scan stays as a fallback for the direct
+## fireball, which never goes on the stack.
+@export var defense_predict_seconds: float = 0.8
+
 const TYPE_COLORS: Array[Color] = [
 	Color(0.85, 0.25, 0.2),   # ATTACK — red
 	Color(0.25, 0.7, 0.4),    # DEFENSE — green
@@ -88,6 +100,9 @@ var _rune_strips: Array[Control] = []   # in-round hieroglyph "names"
 var _counter_slot: int = -1             # slot index of the reactive card
 var _stack: Node = null
 var _states: Array[int] = [CardState.DOCKED, CardState.DOCKED, CardState.DOCKED]
+# Per-card availability (index 0 ATTACK always; 1 DEFENSE on an incoming attack; 2 COUNTER on a
+# spell on the stack). An unavailable card shrinks out of the hand; it POPS back in on its cue.
+var _available: Array[bool] = [true, false, false]
 var _expanded: bool = false
 
 # Per-card spring state (positions are CENTERS; rendering subtracts half).
@@ -140,6 +155,10 @@ func _ready() -> void:
 		if card_res != null and card_res.is_reactive_only:
 			_counter_slot = i
 	_stack = get_node_or_null(^"/root/TheStack")
+	# Conditional cards (DEFENSE/COUNTER) start hidden (shrunk away) until their cue pops them in.
+	for hidden_i in [1, 2]:
+		if hidden_i < _scale.size():
+			_scale[hidden_i] = 0.0
 
 	# NOTE: cards COMMIT ON PRESS now (no channel), so the card caster never emits
 	# these charge signals — the CHARGING swell state is dormant for cards; a
@@ -339,6 +358,9 @@ func _target_for(i: int) -> Array:
 			# the upper half there).
 			return [Vector2(200.0 + float(i) * 340.0, _expanded_row_y), 0.0, 1.0]
 		_:
+			# A conditional card that isn't available shrinks away (scale 0) until its cue pops it in.
+			if not _expanded and not _available[i]:
+				return [_dock_pos(i), _dock_rot(i), 0.0]
 			return [_dock_pos(i), _dock_rot(i), 1.0]
 
 
@@ -365,6 +387,11 @@ func _process(_delta: float) -> void:
 		_root_offset += _root_vel * dt
 		_root_offset = _root_offset.clamp(Vector2(-32, -32), Vector2(32, 32))
 		_root.position = _root_offset
+
+	# CONDITIONAL CARDS (Sprint 23 batch 3): refresh which cards are available this frame; a card
+	# that just became available POPS in. Skipped during the expanded study spread (all show then).
+	if not _expanded:
+		_update_card_availability()
 
 	for i in _cards.size():
 		var target: Array = _target_for(i)
@@ -499,6 +526,37 @@ func _settle_all() -> void:
 		_states[i] = CardState.DOCKED
 
 
+## Recomputes per-card availability and POPS in any card that just became usable (a springy scale
+## kick from small). COUNTER (index 2) shows while a spell is on the stack; DEFENSE (index 1) while a
+## hostile ball is incoming; ATTACK (index 0) is always in hand. Presentation only — the cards always
+## WORK (keys 8/9/0 / hold-to-cast); this only gates whether they're shown in the fan.
+func _update_card_availability() -> void:
+	var avail: Array[bool] = [true, false, false]
+	if _stack != null and int(_stack.get(&"state")) == 1:
+		avail[2] = true  # a spell is on the stack — the counter is live
+	# DEFENSE (index 1): pop EARLY — while a staged attack is within defense_predict_seconds of
+	# resolving (read off the stack countdown, so there's time to tap on mobile) OR a ball is already
+	# physically incoming (the fallback for the direct fireball, which never stages on the stack).
+	var attack_imminent: bool = _stack != null and int(_stack.get(&"state")) == 1 \
+			and _stack.has_method(&"remaining_seconds") \
+			and float(_stack.call(&"remaining_seconds")) <= defense_predict_seconds
+	var ball_incoming: bool = _caster != null and _caster.has_method(&"has_incoming_threat") \
+			and bool(_caster.call(&"has_incoming_threat", defense_threat_range))
+	# Only pop the shield in when it is actually CASTABLE — NOT while it is still cooling down (a
+	# popped-in card you can't use yet is misleading; slot 2 = DEFENSE). Creative Director.
+	var defense_off_cd: bool = _caster != null and _caster.has_method(&"cooldown_ticks_remaining") \
+			and int(_caster.call(&"cooldown_ticks_remaining", 2)) == 0
+	avail[1] = (attack_imminent or ball_incoming) and defense_off_cd
+	for i in 3:
+		if avail[i] and not _available[i] and _states[i] != CardState.EXPANDED:
+			# POP IN at the dock slot, springing the scale up from small (overshoot = pop).
+			_pos[i] = _dock_pos(i)
+			_pos_vel[i] = Vector2.ZERO
+			_scale[i] = 0.25
+			_scale_vel[i] = 7.0
+		_available[i] = avail[i]
+
+
 # --- TOUCH: press-and-hold a card to channel/charge its spell --------
 #
 # Each fanned card is a hold target. Pressing one drives that slot's
@@ -525,6 +583,8 @@ func _card_hit(pos: Vector2) -> int:
 	for i in _cards.size():
 		if not _cards[i].visible:
 			continue
+		if not _expanded and not _available[i]:
+			continue  # hidden conditional card — not tappable until it pops in
 		var center: Vector2 = _pos[i] + _root_offset
 		var scl: float = maxf(0.01, _scale[i])
 		var local: Vector2 = (pos - center).rotated(-_rot[i]) / scl
