@@ -44,6 +44,15 @@ available via `SoundFX.play(&"name", volume_db)`.
 | `slap_on_card.wav` | A card lands ON TOP of another on the stack | `scripts/ui/stack_display_hud.gd` → `_on_staged` (layers over `stage_slap`) | sharper, brighter slap |
 | `shield_shatter.wav` | A barrier-breaker bolt SHATTERS a wall | `scripts/arena/barrier_controller.gd` → `_shatter` | glass crack + ringing shards |
 
+## NAMED HOOKS — NO PLACEHOLDER .wav YET (registered, silent until a file is dropped in)
+> A name in `SoundFX.NAMES` with no matching `audio/sfx/<name>.wav` simply loads nothing and
+> `SoundFX.play()` is a silent no-op — so the trigger can be wired ahead of the asset. Drop the
+> `.wav` in (same filename) and it goes live with no code change. Heard with the regular pass.
+
+| File (to add) | Trigger | Code location | Intended character |
+|---|---|---|---|
+| `knockout.wav` | A wizard is KNOCKED OUT (the lethal hit / death beat) — added with the Sprint 23 batch 2 hard-KO hitstop | `core/match_controller.gd` (the KO path / `_on_knocked_out`) | heavy impact + a downbeat thud; the "kill" punctuation, distinct from `hit_wizard`/`round_lose` |
+
 ## RETRIGGER BEHAVIOR
 A retrigger of the SAME sound crossfades the previous instance out over
 0.12 s (`core/sound_fx.gd` `_last_player` map). Different sounds layer
