@@ -45,8 +45,8 @@ func _run() -> void:
 	var base_fov: float = cam.fov
 	_ck(base_fov > 78.0 and base_fov < 85.0, "default FOV widened ~15%% (%.1f, 71 -> ~81.6)" % base_fov)
 
-	# Open the stack -> slow-mo. The FOV must stay STABLE (the stack zoom was removed entirely).
-	stack.stack_time_scale = 0.1
+	# Open the stack. The FOV must stay STABLE (the stack zoom was removed; Sprint 23 batch 3 also
+	# removed the stack slow-mo, but this test only cares that the FOV doesn't move).
 	stack.open_window(2.0)
 	await _wait(0.6)
 	_ck(absf(cam.fov - base_fov) < 1.0,

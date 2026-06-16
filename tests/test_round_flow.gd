@@ -49,6 +49,7 @@ func _run() -> void:
 	# and drop the slow-mo (the death sequence is verified by its own probe).
 	arena.death_sequence_seconds = 0.1
 	arena.death_time_scale = 1.0
+	arena.round_intro_seconds = 0.0  # no round-intro freeze — assert the driver resumes immediately
 	root.add_child(arena)
 	await process_frame
 

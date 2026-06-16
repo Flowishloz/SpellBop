@@ -116,11 +116,11 @@ func _run() -> void:
 	_check(_stack_opens == 1, "A: staging opened the Stack window (opens=%d)" % _stack_opens)
 	_check(projectiles.get_child_count() == 0, "A: NO projectile during the countdown (the spell waits on the stack)")
 	await process_frame
-	_check(is_equal_approx(Engine.time_scale, 0.1), "A: world at 10%% slow-mo during the countdown (got %.3f)" % Engine.time_scale)
+	_check(is_equal_approx(Engine.time_scale, 1.0), "A: stack window does NOT slow time (slow-mo reserved for shield/damage now) (got %.3f)" % Engine.time_scale)
 
-	# The resolution window (180 ticks = default_window_seconds 3.0 x tick_rate 60) elapses
-	# in ~3.0 real seconds — sim ticks run at full rate even under the 10% slow-mo — so the
-	# bolt releases ~3 s after staging (the 6 s await budget covers it).
+	# The resolution window (180 ticks = default_window_seconds 3.0 x tick_rate 60) elapses in ~3.0 real
+	# seconds at FULL speed (Sprint 23 batch 3: the window no longer dilates) — so the bolt releases
+	# ~3 s after staging (the 6 s await budget covers it).
 	var bolt: Node = await _await_first_child(projectiles, 6000)
 	_check(bolt != null, "A: countdown released the bolt (projectile fired AFTER staging)")
 	if bolt != null:

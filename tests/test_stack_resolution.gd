@@ -60,6 +60,8 @@ func _await_count(container: Node, n: int, timeout_ms: int) -> int:
 func _run() -> void:
 	await process_frame
 	var arena: Node = load("res://scenes/match_arena.tscn").instantiate()
+	arena.round_intro_seconds = 0.0  # no round-intro freeze — stage the spell immediately
+	arena.damage_slow_seconds = 0.0  # no player-damage slow-mo — keep this stack-timing test clean
 	var stack: Node = root.get_node_or_null("TheStack")
 
 	# Silence the real AI; possess the player with the scripted brain.
@@ -135,10 +137,10 @@ func _run() -> void:
 	await _wait(0.3)
 
 	# =================================================================
-	# PART 2 — SLOW-MO HELD until resolution, THEN resume to 1.0.
+	# PART 2 — the stack window NO LONGER slows time (Sprint 23 batch 3, Creative Director: slow-mo is
+	# reserved for shield reflects + player damage). Staging a spell keeps the world at full speed.
 	# =================================================================
-	print("--- PART 2: slow-mo held through resolution, then resume ---")
-	stack.stack_time_scale = 0.1
+	print("--- PART 2: stack window runs at normal speed (no slow-mo) ---")
 	stack.default_window_seconds = 0.8
 	# Slot 1 is still on its 4 s cooldown from PART 1 — clear the player's card
 	# state so the fresh attack actually stages (and opens the window).
@@ -149,19 +151,17 @@ func _run() -> void:
 
 	brain.hold_card_slot = 1
 	brain.hold_card_ticks = 8
-	# Window opens -> world dilates. Sample a moment after it opens.
-	var dilated: bool = await _await_dilated(0.15, 3000)
-	_ck(dilated, "world dilated to slow-mo while the spell sits on the stack (<= 0.15)")
-
-	# Wait out the window + the staggered resolution + the resume ramp.
-	var resumed: bool = false
-	var deadline: int = Time.get_ticks_msec() + 4000
-	while Time.get_ticks_msec() < deadline:
+	await _wait(0.25)  # let the stage land + the window open
+	_ck(stack.state == stack.State.STACK_WINDOW, "the stack window opened on the staged spell")
+	# Across the window, time must stay at FULL speed (the stack slow-mo was removed).
+	var stayed_full_speed: bool = true
+	var watch: int = Time.get_ticks_msec() + 400
+	while Time.get_ticks_msec() < watch:
 		await process_frame
-		if is_equal_approx(Engine.time_scale, 1.0):
-			resumed = true
+		if not is_equal_approx(Engine.time_scale, 1.0):
+			stayed_full_speed = false
 			break
-	_ck(resumed, "normal speed resumed (1.0) after the final spell resolved")
+	_ck(stayed_full_speed, "stack window does NOT slow time — Engine.time_scale stayed 1.0")
 
 	if _fails == 0:
 		print("STACK RESOLUTION TEST: ALL PASS")

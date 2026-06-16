@@ -57,6 +57,13 @@ signal knockout_began(is_match_end: bool, player_won: bool)
 ## Real seconds of the post-round break (expanded-hand study phase).
 @export var post_round_seconds: float = 6.0
 
+## ROUND INTRO (Sprint 23 batch 3, Creative Director): a brief "ready, GO" beat at each round start —
+## the ROUND-N title pops in the top section and FLIES OFF the screen, and the round becomes playable
+## (the wizards unfreeze) only as it leaves. OFFLINE only: the freeze is the local tick-driver park, a
+## no-op in netplay (SyncManager drives the ticks), so an online round stays live under the title.
+## Tests collapse it to 0 (no freeze). The overlay reads this for the title's matching fly-off timing.
+@export var round_intro_seconds: float = 1.0
+
 ## Spawn baselines (sim units) used for the round reset.
 @export var player_spawn_y: float = 880.0
 @export var opponent_spawn_y: float = -880.0
@@ -158,6 +165,13 @@ signal knockout_began(is_match_end: bool, player_won: bool)
 ## beat (the_stack.hitstop's then-hold transition). Longer than a regular hit's freeze; fires only when
 ## the death slow-mo is enabled (death_time_scale < 1.0).
 @export var ko_hitstop_ms: int = 130
+## PLAYER-DAMAGE SLOW-MO (Sprint 23 batch 3, Creative Director): a NON-LETHAL hit eases the hitstop
+## crunch into a real-time slow-mo so the impact + its particles play out in slow motion. _scale = the
+## dilation depth, _seconds = how long it HOLDS in REAL time before ramping back. (A lethal hit uses the
+## death sequence's own slow-mo instead.) Stack-window slow-mo was REMOVED — this + shield reflect +
+## death are the only slow-mo sources now.
+@export_range(0.05, 1.0) var damage_slow_scale: float = 0.35
+@export var damage_slow_seconds: float = 2.0
 
 var match_state: MatchState = MatchState.ROUND_ACTIVE
 
@@ -226,6 +240,10 @@ var _shield_slowmo_active: bool = false
 # Tracks the window's open state so the tape-slow cue plays only on the
 # NORMAL -> WINDOW transition, not on every counter-slap refresh.
 var _window_open_flag: bool = false
+
+# ROUND INTRO (Sprint 23 batch 3): wall-clock deadline (msec) of the current round-intro freeze
+# (0 = none). While set, the local sim is parked; _process unparks it as the title flies off.
+var _round_intro_until_msec: int = 0
 
 # Last fireball charge gauge seen, so the per-gauge trauma pop fires only on the
 # RISING edge (a draining charge re-emits falling levels and must not burst).
@@ -322,6 +340,7 @@ func _ready() -> void:
 
 	_enter_netplay()
 	round_started.emit(round_number)
+	_begin_round_intro()
 	_warm_up_render_pipelines()
 	_build_arena_borders()
 	_aim_arrow = _AIM_ARROW_SCRIPT.new()
@@ -364,11 +383,19 @@ func _warm_up_render_pipelines() -> void:
 		for child in inst.get_children():
 			if child is Node3D:
 				(child as Node3D).position = Vector3(0, -0.9, 6)
+		# Hide any glow LIGHTS on the warm-up instance (Sprint 23 batch 3 follow-up): the meshes warm
+		# their shaders occluded under the floor, but a fireball/spark OmniLight would still cast a glow
+		# ABOVE the floor at centre-court — visible now that the round-intro beat holds a static frame.
+		for light in inst.find_children("*", "Light3D", true, false):
+			(light as Node3D).visible = false
 		parked.append(inst)
 	BurstFX.spawn(self, Vector3(0, -0.9, 6), Vector3.UP, Color(1, 0.55, 0.2, 0.9), 4, 1.0)
 	BurstFX.spawn(self, Vector3(0, -0.9, 6), Vector3.UP, Color(0.45, 0.9, 0.6, 0.9), 4, 1.0)
 	BurstFX.spawn(self, Vector3(0, -0.9, 6), Vector3.UP, Color(0.55, 0.8, 1.0, 0.9), 4, 1.0)
-	BurstFX.spawn_wall_pulse(self, Vector3(0, -0.9, 6), 1)
+	# NOTE: the wall-pulse warm-up was REMOVED (Sprint 23 batch 3 follow-up) — spawn_wall_pulse clamps
+	# Y up to 0.6 (ABOVE the floor), so at centre-court it "popped in" during the static round-intro
+	# beat. It uses a cheap StandardMaterial3D (no heavy shader), so the first real side-wall bounce
+	# compiles it with no perceptible hitch.
 	var timer: SceneTreeTimer = get_tree().create_timer(0.4)
 	timer.timeout.connect(func() -> void:
 		for inst in parked:
@@ -415,6 +442,10 @@ func _process(delta: float) -> void:
 	# so a mispredicted-then-rolled-back KO can never leave the scoreboard / state
 	# drifted (the signal handlers below are rollback-guarded; this passive sync is not).
 	_sync_mirror()
+	# ROUND INTRO (Sprint 23 batch 3): unfreeze the local sim once the round-intro title has flown off.
+	if _round_intro_until_msec > 0 and Time.get_ticks_msec() >= _round_intro_until_msec:
+		_round_intro_until_msec = 0
+		_set_sim_running(true)
 	# Desktop convenience: SPACE restarts a finished match (the on-screen PLAY AGAIN
 	# button is the primary trigger). request_rematch() routes correctly per mode —
 	# offline it resets directly, in netplay it latches a synced play-again request.
@@ -508,10 +539,9 @@ func _on_spell_staged(_card: CardResource) -> void:
 	if _camera != null:
 		_camera.add_trauma(card_cast_trauma)
 	Sfx.play(&"stage_slap")
-	# Tape-slow cue on the actual slow-mo ENGAGE (slaps don't re-warble).
-	if not _window_open_flag:
-		_window_open_flag = true
-		Sfx.play(&"tape_slow")
+	# Sprint 23 batch 3: the stack window no longer slows time, so the "tape slow" cue was dropped (it
+	# implied a slow-mo that no longer happens). _window_open_flag is kept for the resolve/KO bookkeeping.
+	_window_open_flag = true
 
 
 ## The StackResolver resolved the stack on its deterministic tick (all staged spells
@@ -594,8 +624,8 @@ func _on_capture_started(intensity: float, barrier: Node) -> void:
 	# owns the clock (the wave + rumble + slam still play through those).
 	if _in_death_sequence:
 		return
-	if _stack != null and _stack.state == _stack.State.STACK_WINDOW:
-		return
+	# Sprint 23 batch 3: the stack window no longer dilates, so a shield catch DURING a window now slows
+	# time too (the old "skip during a stack window" guard was removed).
 	var time_scale: float = lerpf(shield_capture_time_scale_mild, shield_capture_time_scale, _capture_intensity)
 	if _stack != null and time_scale < 0.999:
 		_stack.hold_dilation(time_scale)
@@ -631,9 +661,17 @@ func _on_wizard_damaged(amount: int, health: Node, trauma: float, hit_was_player
 	# / placed by the hit. Guarded against rollback re-sims so a corrected tick doesn't re-freeze or
 	# spam particles. Presentation only — determinism untouched.
 	if SyncManager == null or not SyncManager.is_in_rollback():
-		if _stack != null and _stack.has_method(&"hitstop"):
+		# PLAYER-DAMAGE SLOW-MO (Sprint 23 batch 3): the hitstop crunch eases into a damage_slow_seconds
+		# real-time slow-mo so the hit + its particles play out slow. SKIPPED on a LETHAL hit — the death
+		# sequence owns the clock there (its own KO hitstop + death slow-mo + cam).
+		var lethal: bool = health != null and health.has_method(&"get_health") and int(health.get_health()) <= 0
+		if not lethal and _stack != null and _stack.has_method(&"hitstop"):
 			var t: float = clampf(float(amount) / maxf(1.0, hitstop_ref_damage), 0.0, 1.0)
-			_stack.hitstop(int(lerpf(float(hitstop_min_ms), float(hitstop_max_ms), t)))
+			var ms: int = int(lerpf(float(hitstop_min_ms), float(hitstop_max_ms), t))
+			if damage_slow_seconds > 0.0:
+				_stack.hitstop(ms, damage_slow_scale, damage_slow_seconds)
+			else:
+				_stack.hitstop(ms)  # 0 s = a brief crunch only, no slow-mo (the off switch)
 		var hit_wizard: Node = _player if hit_was_player else _opponent
 		var rig: Node3D = (hit_wizard.get_node_or_null(^"WizardRig") as Node3D) if hit_wizard != null else null
 		if rig != null:
@@ -795,6 +833,7 @@ func _on_resolver_round_reset(new_round_number: int) -> void:
 	_window_open_flag = false
 	_set_sim_running(true)
 	round_started.emit(new_round_number)
+	_begin_round_intro()
 
 
 ## Begins the slow-mo knockout beat: dilate the world, zoom + track the eliminated
@@ -882,6 +921,17 @@ func _set_sim_running(running: bool) -> void:
 	for wizard in [_player, _opponent]:
 		if wizard != null and "local_tick_driver_enabled" in wizard:
 			wizard.local_tick_driver_enabled = running
+
+
+## ROUND INTRO (Sprint 23 batch 3): park the local sim for round_intro_seconds at a round start so the
+## ROUND-N title plays + flies off before the action begins ("ready, GO"). OFFLINE only — in netplay
+## _set_sim_running is a no-op (SyncManager owns the ticks), so the title just plays over the live
+## round. _process unparks when the deadline elapses. Skipped when round_intro_seconds <= 0 (tests).
+func _begin_round_intro() -> void:
+	if _netplay or round_intro_seconds <= 0.0:
+		return
+	_set_sim_running(false)
+	_round_intro_until_msec = Time.get_ticks_msec() + int(round_intro_seconds * 1000.0)
 
 
 ## NETPLAY ENTRY (Sprint 21): if NetworkManager has a networked match active, hand

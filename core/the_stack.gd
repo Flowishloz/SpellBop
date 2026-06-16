@@ -1,10 +1,14 @@
-## the_stack.gd — "The Stack" time-dilation state machine (autoload: TheStack).
+## the_stack.gd — "The Stack" window state machine + the global slow-motion clock (autoload: TheStack).
 ##
-## THE DEFINING MECHANIC (Manifesto §2): playing a card triggers a time-slow
-## window — the entire physical simulation drops to stack_time_scale (10%)
-## while the cast is telegraphed at the top of the screen and a REAL-TIME
-## timer counts down. When it expires, normal speed resumes. This is the
-## window in which opponents react with an 'instant' or counter-spell.
+## THE STACK WINDOW (Manifesto §2): playing a card opens a telegraph window — the cast is shown at the
+## top of the screen and a REAL-TIME timer counts down; opponents react with an 'instant' or counter
+## during it. Sprint 23 batch 3 (Creative Director): the window NO LONGER slows time — it runs at full
+## speed. Slow-motion is now RESERVED for impact moments: a shield reflect, a player taking damage, and
+## the death beat (see hold_dilation / hitstop's timed-slow transition).
+##
+## THE SLOW-MO CLOCK: this autoload owns Engine.time_scale. hold_dilation() parks a HELD slow-mo (shield
+## reflect, death — released by resume_speed()); hitstop() does a sharp freeze that can EASE INTO a held
+## dilation (the KO) or a TIMED real-seconds slow-mo (a player-damage hit) before ramping back to 1.0.
 ##
 ## HOW THE SLOW-MO WORKS (and why it is rollback-safe):
 ## Engine.time_scale changes how often physics ticks fire in REAL time — it
@@ -42,9 +46,8 @@ signal stack_closed
 
 enum State { NORMAL, STACK_WINDOW }
 
-## Simulation speed inside the window (Manifesto: 10% "bullet time"). The stack
-## resolves at this same dilation: when the window expires MatchController fires
-## ALL staged spells at once, then resume_speed() ramps back to 1.0.
+## VESTIGIAL (Sprint 23 batch 3): the stack window no longer dilates time, so this is no longer applied
+## (kept only so existing scene/test overrides don't error). Slow-mo lives on hold_dilation / hitstop now.
 @export_range(0.01, 1.0) var stack_time_scale: float = 0.1
 
 ## REAL-seconds length of the window when open_window() is called without an
@@ -83,20 +86,25 @@ var _hitstop_until_msec: int = 0
 # EASES INTO that held slow-mo when it expires (the death beat) instead of snapping back to full speed
 # — the crunch, THEN the slow-mo. 0 = a plain hit hitstop that snaps to 1.0.
 var _after_freeze_scale: float = 0.0
+# How many real seconds to HOLD the post-freeze slow-mo before ramping back (a player-damage hit). 0 =
+# the freeze eases into a HELD dilation instead (the KO death beat). Set alongside _after_freeze_scale.
+var _after_freeze_seconds: float = 0.0
+# TIMED SLOW-MO (Sprint 23 batch 3, player-damage beat): wall-clock deadline (msec) + the held scale of
+# a real-seconds slow-mo that auto-resumes when it elapses (0 = none). Distinct from hold_dilation's
+# indefinitely-HELD slow-mo (shield / death, released explicitly).
+var _slowmo_until_msec: int = 0
+var _slowmo_scale: float = 1.0
 
 
-## Opens the time-slow window (or refreshes the deadline if already open).
-## Called by arena orchestration (MatchController) whenever any caster fires.
+## Opens the stack TELEGRAPH window (or refreshes the deadline if already open). Sprint 23 batch 3: the
+## window NO LONGER slows time — it is pure state + a real-time countdown now (slow-mo is reserved for
+## impacts). Called by arena orchestration (MatchController) whenever a card is staged.
 func open_window(duration_s: float = -1.0) -> void:
 	var seconds: float = duration_s if duration_s > 0.0 else default_window_seconds
 	_deadline_msec = Time.get_ticks_msec() + int(seconds * 1000.0)
 	_window_total_s = seconds
-	_resuming = false  # a fresh window overrides any in-flight resume ramp
 	if state == State.NORMAL:
 		state = State.STACK_WINDOW
-		Engine.time_scale = stack_time_scale
-	_hitstop_until_msec = 0  # the stack window supersedes any in-flight hitstop crunch
-	_after_freeze_scale = 0.0
 	stack_opened.emit(seconds)
 
 
@@ -121,7 +129,9 @@ func close_window() -> void:
 	if state != State.STACK_WINDOW:
 		return
 	state = State.NORMAL
-	resume_speed()
+	# Sprint 23 batch 3: the window held no dilation, so there is nothing to resume — closing must NOT
+	# touch Engine.time_scale (a shield / player-damage slow-mo can be running through a stack window
+	# and must survive the window closing).
 	stack_closed.emit()
 
 
@@ -140,11 +150,17 @@ func resume_speed() -> void:
 ## as the stack resolution, so _process leaves Engine.time_scale untouched until
 ## the resume.
 func hold_dilation(scale: float) -> void:
-	state = State.NORMAL
+	# Sprint 23 batch 3 (bugfix): do NOT force the stack window to NORMAL here. The window no longer
+	# dilates, so the held slow-mo (shield reflect / death) is INDEPENDENT of it — a shield catch during
+	# an open stack must leave the staged spells counting down (closing it silently here, without a
+	# stack_closed, orphaned the on-screen pile so it lingered into the next round). The death path
+	# already calls close_window() before this, so the window still closes correctly on a KO.
 	_resolving = true   # held: _process won't touch Engine.time_scale
 	_resuming = false
-	_hitstop_until_msec = 0  # a held dilation (death / stack resolve) supersedes a hitstop crunch
+	_hitstop_until_msec = 0  # a held dilation (death / shield) supersedes a hitstop crunch
 	_after_freeze_scale = 0.0
+	_after_freeze_seconds = 0.0
+	_slowmo_until_msec = 0   # ...and supersedes any in-flight timed (player-damage) slow-mo
 	Engine.time_scale = clampf(scale, 0.01, 1.0)
 
 
@@ -153,13 +169,18 @@ func hold_dilation(scale: float) -> void:
 ## presentation only, never the tick math. SKIPPED while a stack window or a held dilation (death
 ## beat / stack resolve) already owns the clock; otherwise it overrides any resume ramp and snaps
 ## back SHARP (in _process) for the punch. MatchController calls it on hits, scaling the duration.
-## HARD KO (Sprint 23 batch 2): pass [param then_hold_scale] > 0 to have the freeze EASE INTO that held
-## slow-mo when it expires (the death beat) instead of snapping back to 1.0 — the crunch, then the slow-mo.
-func hitstop(duration_ms: int, then_hold_scale: float = 0.0) -> void:
-	if state == State.STACK_WINDOW or _resolving:
+## HARD KO (Sprint 23 batch 2): pass [param then_hold_scale] > 0 to have the freeze EASE INTO a slow-mo
+## when it expires instead of snapping back to 1.0 — the crunch, then the slow-mo. If [param then_seconds]
+## > 0 that follow-on slow-mo is a TIMED real-seconds beat that auto-resumes (a player-damage hit); if 0
+## it is HELD until resume_speed() (the KO death beat). Skipped only while a HELD dilation already owns
+## the clock (the stack window no longer dilates, so a hit DURING a window still crunches).
+func hitstop(duration_ms: int, then_hold_scale: float = 0.0, then_seconds: float = 0.0) -> void:
+	if _resolving:
 		return
 	_hitstop_until_msec = Time.get_ticks_msec() + maxi(1, duration_ms)
 	_after_freeze_scale = clampf(then_hold_scale, 0.0, 1.0)
+	_after_freeze_seconds = maxf(0.0, then_seconds)
+	_slowmo_until_msec = 0
 	_resuming = false
 	Engine.time_scale = hitstop_scale
 
@@ -172,23 +193,39 @@ func remaining_seconds() -> float:
 
 
 func _process(_delta: float) -> void:
-	# HITSTOP: hold the freeze until its wall-clock deadline, then SNAP back to 1.0 (sharp =
-	# punchy). Takes priority — a crunch overrides the gentle resume ramp.
+	# HITSTOP: hold the freeze until its wall-clock deadline, then either SNAP back to 1.0 (a plain
+	# crunch) or EASE INTO the follow-on slow-mo — a HELD death beat or a TIMED player-damage beat.
 	if _hitstop_until_msec > 0:
 		if Time.get_ticks_msec() < _hitstop_until_msec:
 			Engine.time_scale = hitstop_scale
 			return
 		_hitstop_until_msec = 0
-		# HARD KO (Sprint 23 batch 2): a freeze armed with a follow-on hold scale eases into that held
-		# slow-mo (the death beat) instead of snapping to full speed — the crunch, THEN the slow-mo.
 		if _after_freeze_scale > 0.0:
-			var hold_scale: float = _after_freeze_scale
+			var s: float = _after_freeze_scale
+			var secs: float = _after_freeze_seconds
 			_after_freeze_scale = 0.0
-			hold_dilation(hold_scale)
+			_after_freeze_seconds = 0.0
+			if secs > 0.0:
+				# TIMED slow-mo (player-damage beat): hold s for secs REAL seconds, then ramp back.
+				_slowmo_scale = clampf(s, 0.01, 1.0)
+				_slowmo_until_msec = Time.get_ticks_msec() + int(secs * 1000.0)
+				Engine.time_scale = _slowmo_scale
+			else:
+				hold_dilation(s)   # HELD slow-mo (the KO death beat — released by resume_speed)
 			return
 		Engine.time_scale = 1.0
-	# Fast-but-gradual speed-up after a window closes (wall-clock paced).
-	if _resuming and state == State.NORMAL:
+	# TIMED SLOW-MO (player-damage beat): hold the dilation until its wall-clock deadline (so it lasts
+	# the requested REAL seconds regardless of the dilation), then begin the resume ramp.
+	if _slowmo_until_msec > 0:
+		if Time.get_ticks_msec() < _slowmo_until_msec:
+			Engine.time_scale = _slowmo_scale
+			return
+		_slowmo_until_msec = 0
+		_resuming = true
+		_resume_last_msec = Time.get_ticks_msec()
+	# Fast-but-gradual speed-up back to 1.0 after a slow-mo ends (wall-clock paced). No longer gated on
+	# the stack state — the window holds no dilation now, so the ramp runs whenever one is requested.
+	if _resuming:
 		var now: int = Time.get_ticks_msec()
 		var dt: float = clampf(float(now - _resume_last_msec) / 1000.0, 0.0, 0.05)
 		_resume_last_msec = now

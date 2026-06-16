@@ -6,9 +6,8 @@
 ## spawn -> lifespan expiry. Also verifies the Stack rules:
 ##   - the BASE fireball is NOT a card: casting it must NOT open the Stack
 ##     window or dilate time (Creative Director directive).
-##   - TheStack still dilates on open_window and restores on close_window when
-##     driven directly (Sprint 22 Phase 2: it is presentation-only now — the SIM-side
-##     StackResolver, not a wall-clock timer, decides WHEN the window closes in a match).
+##   - TheStack window opens/closes as pure STATE — Sprint 23 batch 3 removed its time-dilation
+##     (slow-mo is reserved for shield reflects + player damage), so time stays at 1.0 throughout.
 ##
 ## Run: <godot> --headless --path . -s res://tests/test_match_smoke.gd
 extends SceneTree
@@ -108,19 +107,15 @@ func _run() -> void:
 	_check(opp_max_dx > SGFixed.from_float(120.0),
 		"AI moved INDEPENDENTLY — patrolled its court without mirroring the idle player (|dx|=%.0f units)" % (opp_max_dx / 65536.0))
 
-	# TheStack still dilates when driven directly. Sprint 22 Phase 2: it is now
-	# PRESENTATION-ONLY — it no longer auto-expires on the wall clock (the SIM-side
-	# StackResolver owns WHEN the window closes). Closing it explicitly must still ramp
-	# speed back to 1.0.
+	# Sprint 23 batch 3: the stack window NO LONGER slows time (slow-mo is reserved for shield reflects
+	# + player damage). Opening/closing it is pure state — Engine.time_scale stays at 1.0 throughout.
 	stack.open_window(0.4)
 	await process_frame
 	_check(_opened == 1, "direct open_window() opens the Stack")
-	_check(is_equal_approx(Engine.time_scale, 0.1), "direct open dilates to 10%% (got %.3f)" % Engine.time_scale)
+	_check(is_equal_approx(Engine.time_scale, 1.0), "open_window() does NOT slow time (got %.3f)" % Engine.time_scale)
 	stack.close_window()
-	var restore_deadline: int = Time.get_ticks_msec() + 2000
-	while Time.get_ticks_msec() < restore_deadline and not is_equal_approx(Engine.time_scale, 1.0):
-		await process_frame
-	_check(is_equal_approx(Engine.time_scale, 1.0), "close_window() ramped speed back to 1.0")
+	await process_frame
+	_check(is_equal_approx(Engine.time_scale, 1.0), "close_window() leaves speed at 1.0")
 
 	if _failures == 0:
 		print("MATCH SMOKE TEST: ALL PASS")

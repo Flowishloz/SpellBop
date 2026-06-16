@@ -38,6 +38,7 @@ func _frames(n: int) -> void:
 func _run() -> void:
 	await process_frame
 	var arena: Node = load("res://scenes/match_arena.tscn").instantiate()
+	arena.round_intro_seconds = 0.0  # drive touch input immediately (no round-intro freeze)
 	# Pin the opponent's AI card play OFF: cards now stage on PRESS, so an AI
 	# stage would open the slow-mo Stack window mid-test and starve the fireball
 	# charge below its fire threshold. We're testing TOUCH INPUT, not the AI.
@@ -62,8 +63,9 @@ func _run() -> void:
 			cast_btn._draw_center.x > 540.0 and cast_btn._draw_center.y > 1400.0)
 	_ok("joystick zone contains lower-left", joy._zone_contains(Vector2(220, 1500)))
 	_ok("joystick zone excludes lower-right", not joy._zone_contains(Vector2(900, 1500)))
-	# A docked card's own center must resolve to a real slot.
-	var slot_at_center: int = hand._card_hit(hand._pos[2] + hand._root_offset)
+	# A docked card's own center must resolve to a real slot. (Index 0 = the ATTACK card, always in
+	# hand; the DEFENSE/COUNTER cards now stay hidden until their cue, so they aren't hit-testable.)
+	var slot_at_center: int = hand._card_hit(hand._pos[0] + hand._root_offset)
 	_ok("card hit-test resolves a docked card", slot_at_center >= 0)
 
 	print("[FIREBALL CAST BUTTON]")

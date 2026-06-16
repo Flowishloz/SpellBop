@@ -111,6 +111,11 @@ func _ready() -> void:
 	var mc: Node = get_node_or_null(match_controller_path)
 	if mc != null and mc.has_signal(&"stack_winner_decided"):
 		mc.stack_winner_decided.connect(_on_stack_winner)
+	# DEFENSE IN DEPTH (Sprint 23 batch 3 bugfix): a new round must NEVER inherit a stale stack pile —
+	# force-clear on round start, so even a forced window-close that somehow skipped stack_closed can't
+	# leak the cards (timer frozen, cards shaking) into the next round.
+	if mc != null and mc.has_signal(&"round_started"):
+		mc.round_started.connect(_on_round_started)
 
 
 func _on_staged(card: CardResource, from_player: bool) -> void:
@@ -167,6 +172,18 @@ func _on_stack_closed() -> void:
 		entry["leaving"] = true
 		entry["target_pos"] = (entry["pos"] as Vector2) + Vector2(0, -700)
 		entry["vel"] = (entry["vel"] as Vector2) + Vector2(0, -900)
+
+
+## A new round starts with an EMPTY stack — instantly clear any lingering pile (defense in depth; see
+## the round_started wire in _ready). Frees the faces immediately rather than the fly-away animation.
+func _on_round_started(_round_number: int) -> void:
+	_countdown.visible = false
+	_last_tick_second = -1
+	for entry in _entries:
+		var face: Control = entry["face"]
+		if is_instance_valid(face):
+			face.queue_free()
+	_entries.clear()
 
 
 ## STACK WINNER (Phase 3): flash a bold banner naming the winner (the last
