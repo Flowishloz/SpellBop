@@ -9,7 +9,7 @@
 ##     size) to its right, angled, with a few cards poking out untidily.
 ##   - Firefly particles drifting through the scene.
 ##   - Buttons: STORY MODE + ONLINE MATCH at the bottom, with DECKS /
-##     INVENTORY / SHOP placeholders beneath; settings gear top-right.
+##     COSMETICS / SHOP placeholders beneath; settings gear top-right.
 extends Node3D
 
 const MATCH_SCENE := "res://scenes/match_arena.tscn"

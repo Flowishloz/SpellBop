@@ -77,6 +77,11 @@ extends Node
 @export var run_pose_speed: float = 0.6
 ## True if the art is drawn FACING RIGHT (flip_h then mirrors it when moving left). Flip if not.
 @export var face_art_default_right: bool = true
+## MENU / PODIUM facing override (PRESENTATION ONLY). When non-empty (&"front" / &"back") it FORCES
+## the facing and SKIPS the caster/bridge computation below. A diorama/wardrobe rig has NEITHER a
+## sibling caster (cast_direction_y) NOR a VisualBridge (view_flip_z), so it would otherwise default
+## to BACK — set this to &"front" on a podium rig. Empty "" = the normal match-driven facing.
+@export var facing_override: StringName = &""
 
 var _rig: Node3D
 var _sprite: Node3D
@@ -170,6 +175,8 @@ func _ready() -> void:
 	_body_half_x_fp = SGFixed.from_float(maxf(0.0, body_half_width))
 	_close_margin_fp = SGFixed.from_float(maxf(0.0, close_call_margin))
 	_skin_folder = skin.texture_folder_override if skin != null else ""
+	if facing_override != &"":
+		_facing = facing_override  # menu/podium rig with no caster/bridge: force the facing
 	_apply_skin()
 	_apply_pose(&"idle")
 
@@ -280,8 +287,11 @@ func _process(delta: float) -> void:
 	# from the camera (BACK) on the near side, TOWARD it (FRONT) on the far side. cast_direction_y
 	# is the down-court sign; view_flip_z is the online perspective mirror (so each peer sees its
 	# OWN wizard's back + the foe's front). flip_h (below) still mirrors L/R on top.
-	var flip_z: bool = _bridge != null and _bridge.view_flip_z
-	_facing = &"front" if (_cast_dir * (-1 if flip_z else 1)) > 0 else &"back"
+	if facing_override != &"":
+		_facing = facing_override  # menu/podium override (presentation only) — skip caster/bridge read
+	else:
+		var flip_z: bool = _bridge != null and _bridge.view_flip_z
+		_facing = &"front" if (_cast_dir * (-1 if flip_z else 1)) > 0 else &"back"
 	if _sprite != null:
 		if dir != 0:
 			_sprite.set(&"flip_h", (dir < 0) if face_art_default_right else (dir > 0))
@@ -442,6 +452,17 @@ func set_skin(new_skin: SkinPalette) -> void:
 	skin = new_skin
 	_skin_folder = new_skin.texture_folder_override if new_skin != null else ""
 	_apply_skin()
+	_cur_tex = null
+	_uploaded_tex = null
+
+
+## Force this rig's facing (menu / wardrobe podium). &"front" / &"back" overrides the caster/bridge
+## read; &"" restores the normal match-driven facing. Clears the texture cache so the next frame
+## re-fetches for the new facing. PRESENTATION ONLY — never touches sim state.
+func set_facing(facing: StringName) -> void:
+	facing_override = facing
+	if facing != &"":
+		_facing = facing
 	_cur_tex = null
 	_uploaded_tex = null
 

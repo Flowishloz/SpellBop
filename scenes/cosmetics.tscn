@@ -1,0 +1,10 @@
+; The 3D Cosmetics / skin-selection screen. The root is a Node3D world (rendered straight to the
+; window) and cosmetics.gd builds the whole diorama + the CanvasLayer UI overlay in code (the
+; home_screen pattern; graveyard rule = no hand-authored rotated transforms). Reached from the
+; main-menu COSMETICS button (menu_flow.gd); BACK returns to home_screen.tscn.
+[gd_scene load_steps=2 format=3]
+
+[ext_resource type="Script" path="res://scripts/ui/cosmetics.gd" id="1_cos"]
+
+[node name="Cosmetics" type="Node3D"]
+script = ExtResource("1_cos")

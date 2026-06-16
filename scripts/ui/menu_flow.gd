@@ -168,11 +168,16 @@ func _panel_main() -> Control:
 	story.modulate = Color(0.65, 0.65, 0.72)
 	var quick := _button(p, "QUICK MATCH", Vector2(90, 1320), Vector2(900, 130), 52)
 	quick.pressed.connect(func() -> void: _click(); _send("quick_match"))
-	var labels := ["DECKS", "INVENTORY", "SHOP"]
+	var labels := ["DECKS", "COSMETICS", "SHOP"]
 	for i in 3:
 		var ph := _button(p, labels[i], Vector2(90 + 313.0 * float(i), 1470), Vector2(287, 92), 28)
-		ph.disabled = true
-		ph.modulate = Color(0.6, 0.6, 0.68)
+		if labels[i] == "COSMETICS":
+			# ENABLED: opens the 3D Cosmetics / skin-selection scene. It is a whole separate scene
+			# (a 3D diorama, not a menu sub-panel), so a plain change_scene — not a StateChart state.
+			ph.pressed.connect(func() -> void: _click(); get_tree().change_scene_to_file("res://scenes/cosmetics.tscn"))
+		else:
+			ph.disabled = true
+			ph.modulate = Color(0.6, 0.6, 0.68)
 	return p
 
 

@@ -1,0 +1,35 @@
+; Visual-only wizard rig for the Cosmetics podium — a TRIM of player.tscn carrying ONLY the
+; presentation pieces (WizardRig/Sprite3D + palette_swap material + WizardAnimator). It deliberately
+; omits the SGCharacterBody2D / PlayerController / casters / movement / health so it never reads input,
+; runs physics, or touches the sim in a menu. The animator's facing_override = &"front" forces the
+; podium to show the FRONT pose (no caster/bridge here to compute facing). Skin = neon (the shader
+; proof); base_skin = default_blue (the reference palette the art is matched against).
+[gd_scene load_steps=7 format=3]
+
+[ext_resource type="Script" path="res://scripts/visual/wizard_animator_component.gd" id="1_anim"]
+[ext_resource type="Shader" path="res://assets_final/palette_swap.gdshader" id="2_pal"]
+[ext_resource type="Texture2D" path="res://assets_final/sprites/wizards/idle_front.png" id="3_idle"]
+[ext_resource type="Resource" path="res://assets_final/skins/neon.tres" id="4_neon"]
+[ext_resource type="Resource" path="res://assets_final/skins/default_blue.tres" id="5_blue"]
+
+[sub_resource type="ShaderMaterial" id="ShaderMaterial_palette"]
+shader = ExtResource("2_pal")
+shader_parameter/pose_tex = ExtResource("3_idle")
+
+[node name="WizardDisplay" type="Node3D"]
+
+[node name="WizardRig" type="Node3D" parent="."]
+
+[node name="Sprite3D" type="Sprite3D" parent="WizardRig"]
+transform = Transform3D(1, 0, 0, 0, 1, 0, 0, 0, 1, 0, 1.05, 0)
+pixel_size = 0.0164
+billboard = 2
+texture_filter = 0
+texture = ExtResource("3_idle")
+material_override = SubResource("ShaderMaterial_palette")
+
+[node name="WizardAnimator" type="Node" parent="."]
+script = ExtResource("1_anim")
+skin = ExtResource("4_neon")
+base_skin = ExtResource("5_blue")
+facing_override = &"front"
