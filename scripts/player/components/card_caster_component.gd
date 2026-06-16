@@ -508,15 +508,15 @@ func _defense_woa_fp(card: CardResource) -> int:
 	return clampi(SGFixed.ONE - SGFixed.div(best, range_fp), 0, SGFixed.ONE)
 
 
-## PRESENTATION (Sprint 23 batch 3): true when a HOSTILE projectile is INCOMING toward our wizard,
-## within [param range_units] down-court and roughly in our lane — drives the DEFENSE card popping
-## into the hand only when there's an attack to block. Pure read (never sim/saved), mirroring the
-## defense-WOA scan; the emerald is skipped for free (it exposes no get_velocity_y).
-func has_incoming_threat(range_units: float = 650.0) -> bool:
+## PRESENTATION (Sprint 23 batch 3, revised — Creative Director): true when ANY hostile projectile is
+## moving TOWARD our wizard's baseline, regardless of lane or distance — drives the DEFENSE card popping
+## into the hand whenever there's an attack on the way to block. The old version also gated on a 650-unit
+## range AND a 300-unit lane band, so a ball that flew off-angle dropped out of "threat" and only
+## re-popped on its wall-bounce, leaving no time to ready a block. Now it is purely DIRECTIONAL: is it
+## coming at me. Pure read (never sim/saved); the emerald is skipped for free (it exposes no get_velocity_y).
+func has_incoming_threat() -> bool:
 	if _body == null:
 		return false
-	var range_fp: int = SGFixed.from_float(maxf(1.0, range_units))
-	var lateral_gate_fp: int = SGFixed.from_float(300.0)
 	var my_pos: SGFixedVector2 = _body.get_global_fixed_position()
 	var container: Node = _resolve_container()
 	if container == null:
@@ -530,11 +530,8 @@ func has_incoming_threat(range_units: float = 650.0) -> bool:
 		var dy: int = my_pos.y - ball_pos.y
 		var vy: int = child.get_velocity_y()
 		if vy == 0 or (vy > 0) != (dy > 0):
-			continue  # not closing on us
-		if absi(my_pos.x - ball_pos.x) > lateral_gate_fp:
-			continue  # not our lane
-		if absi(dy) <= range_fp:
-			return true
+			continue  # moving away / already past us — not coming toward our baseline
+		return true  # a hostile ball is heading our way (any lane, any distance)
 	return false
 
 

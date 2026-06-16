@@ -43,16 +43,15 @@ extends CanvasLayer
 @export var sway_per_meter: float = 18.0
 
 ## CONDITIONAL CARDS (Sprint 23 batch 3, Creative Director): the COUNTER (blue) card only appears
-## when a spell is on the stack, and the DEFENSE (green) card only when an attack is incoming within
-## this range (sim units) — each POPS into the hand on its cue instead of always sitting in the fan.
-@export var defense_threat_range: float = 650.0
+## when a spell is on the stack, and the DEFENSE (green) card only when a hostile ball is heading our
+## way (any lane / distance) — each POPS into the hand on its cue instead of always sitting in the fan.
 
 ## DEFENSE PREDICT (Sprint 23 batch 3 follow-up, Creative Director): pop the DEFENSE card in EARLY —
 ## while a staged attack is still on the stack with this many seconds (or fewer) left on the countdown
 ## — so there's time to ready a block on mobile (instead of waiting for the spell to resolve + the
 ## projectile to physically close in). The incoming-ball scan stays as a fallback for the direct
 ## fireball, which never goes on the stack.
-@export var defense_predict_seconds: float = 0.8
+@export var defense_predict_seconds: float = 0.2
 
 const TYPE_COLORS: Array[Color] = [
 	Color(0.85, 0.25, 0.2),   # ATTACK — red
@@ -541,7 +540,7 @@ func _update_card_availability() -> void:
 			and _stack.has_method(&"remaining_seconds") \
 			and float(_stack.call(&"remaining_seconds")) <= defense_predict_seconds
 	var ball_incoming: bool = _caster != null and _caster.has_method(&"has_incoming_threat") \
-			and bool(_caster.call(&"has_incoming_threat", defense_threat_range))
+			and bool(_caster.call(&"has_incoming_threat"))
 	# Only pop the shield in when it is actually CASTABLE — NOT while it is still cooling down (a
 	# popped-in card you can't use yet is misleading; slot 2 = DEFENSE). Creative Director.
 	var defense_off_cd: bool = _caster != null and _caster.has_method(&"cooldown_ticks_remaining") \
