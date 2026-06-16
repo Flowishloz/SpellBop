@@ -23,10 +23,13 @@ extends CanvasLayer
 @export var match_controller_path: NodePath = NodePath("..")
 
 ## Stack anchor (canvas px) for the FIRST card; later slaps offset from it.
-@export var stack_center: Vector2 = Vector2(540, 330)
+## SPRINT 22 (Creative Director): moved to the RIGHT side (was centred at x=540) so the
+## stack no longer covers the opponent after the camera reposition.
+@export var stack_center: Vector2 = Vector2(820, 300)
 
-## Card face size at the stack (big and readable).
-@export var card_size: Vector2 = Vector2(330, 440)
+## Card face size at the stack (big and readable). SPRINT 22: shrunk 20% (was 330x440)
+## to clear central screen space.
+@export var card_size: Vector2 = Vector2(264, 352)
 
 ## Slap spring: very stiff + underdamped = fast travel, smack, tiny settle.
 @export var slap_stiffness: float = 900.0
@@ -121,13 +124,13 @@ func _on_staged(card: CardResource, from_player: bool) -> void:
 	var index: int = _entries.size()
 	# Slapped on the pile: each response lands lower-right of the spell it
 	# answers, tilted the other way — like cards smacked on a table.
-	var target: Vector2 = stack_center + Vector2(34.0 * index, 40.0 * index)
+	var target: Vector2 = stack_center + Vector2(27.0 * index, 32.0 * index)
 	# Player slaps fly in from the HAND side (mirrored in left-handed mode).
 	var settings: Node = get_node_or_null(^"/root/GameSettings")
 	var hand_x: float = 980.0
 	if settings != null and settings.left_handed:
 		hand_x = 100.0
-	var start: Vector2 = Vector2(hand_x, 1500) if from_player else Vector2(540, -400)
+	var start: Vector2 = Vector2(hand_x, 1500) if from_player else Vector2(stack_center.x, -400)
 	_entries.append({
 		"face": face,
 		"pos": start,

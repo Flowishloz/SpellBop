@@ -164,13 +164,17 @@ func _add_planet(pos: Vector3, radius: float, albedo: Color, emit: Color, with_r
 	ring_mat.emission_enabled = true
 	ring_mat.emission = Color(0.9, 0.5, 0.95)
 	var torus := TorusMesh.new()
-	torus.inner_radius = radius * 1.25
-	torus.outer_radius = radius * 1.75
+	# Slender Saturn band: keep the ring centred at ~1.5x the planet radius (the approved
+	# placement) but make the tube THIN (Sprint 22 CD: it was way too thick at a 0.5r-wide tube).
+	torus.inner_radius = radius * 1.4
+	torus.outer_radius = radius * 1.6
 	torus.material = ring_mat
 	var ring := MeshInstance3D.new()
 	ring.mesh = torus
 	ring.position = pos
-	ring.rotation = Vector3(deg_to_rad(76.0), 0.0, deg_to_rad(20.0))
+	# Saturn-like: a near-flat ring seen as a gentle ellipse with a slight diagonal
+	# tilt (was deg(76) — a near-vertical hoop that circled the planet on the wrong axis).
+	ring.rotation = Vector3(deg_to_rad(20.0), 0.0, deg_to_rad(18.0))
 	add_child(ring)
 
 
