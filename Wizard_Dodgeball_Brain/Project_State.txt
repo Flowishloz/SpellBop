@@ -1,5 +1,5 @@
 PROJECT STATE — WIZARD DODGEBALL
-Last sync: 2026-06-16 | SPRINT 22 (2026-06-16, commits 8a4e288 / d12fdc4 / 57cfaf8 / b771b90) shipped — a 9-change CD polish batch covering all FOUR focus areas (camera tweaks / multiplayer bugs / UI + scaling / gameplay tweaks): camera stack-zoom REMOVED (FOV locked in-stack) + in-round pitch up 8% (-26 -> -23.92) + shoulder lean +10% + NEW fireball CHARGE ZOOM (FOV tightens / dips / looks up while charging, snaps back on release); stack display moved RIGHT + shrunk 20%; main-menu Saturn ring re-flattened + thinned; fireball TAP-CAST (a sub-minimum release now fires a low-tier uncharged fireball instead of draining — SIM, int-only, rollback-deterministic); and TWO netplay round-flow fixes (rematch desync — client was stuck on the victory overlay because round_started was swallowed mid-rollback; P2 movement freeze — a joystick pointer held through the round break drove nothing until re-pressed). 20/20 suites + LAN smoke (normal + -Rounds) byte-identical; the two netplay fixes + the charge framing are PENDING the CD's on-device APK confirmation. | DESKTOP NETPLAY FEATURE-COMPLETE + PLAYTESTED; MOBILE-MP A/B/B2 DONE; CD A/B/B2 APK playtest done — 4 fixes shipped; the round-2 netplay DESYNC (aimed-projectile path) is now FIXED (commit d3a53a4) AND VALIDATED ON-DEVICE by the CD (real two-device Android MP, no crashes), so item C is the SOLE remaining mobile-MP task and is now UNBLOCKED. CD SPRINT-TWEAK BATCH (commit 086c11f, 4 polish fixes — client-side barrier mirror [5th client-perspective retarget], redundant menu button removed, aim arrow shortened, stuck-spark prompt despawn) DONE + verified (20/20 suites + LAN smoke incl. -Rounds byte-identical into round 2). CD CAMERA TWEAK (commits 677cb88 -> 4aeb197 -> 99d0233) DONE + verified — camera spawns neutral-centred (X 1.45->0, yaw 8->0), lowered 15% (Y 5.6->4.76), and tilted down (pitch -23.3->-26, FINAL; the interim -36 read too steep) to cut the sky band, landing the front arena edge on the cast-button top (~80.8% down-frame) with ~34% sky headroom; the adaptive shoulder lean was then RESTORED subtler (commit 99d0233 — symmetric, ~half the old throw, neutral at centre — NO LONGER inert); FINAL Camera3D (0, 4.76, 12.6) fov 71 yaw 0 pitch -26; presentation-only, determinism unaffected (test_camera_zoom / test_match_smoke / test_determinism pass). Spawn-rollback roadmap done (fireball + cards + round flow + emerald), online Play Again synced (commit 4579f67), client charge-rumble retargeted (commit 44e67b0). MOBILE MULTIPLAYER ENABLEMENT: A — delta_rollback cross-compiled for android arm64 + export fix (commit 151427d); B — netplay touch-movement input fix (commit 1d5973b); B2 — joystick-direction aiming + ground aim arrow (commits c65421b + 27b3908) — ALL DONE + verified. CD A/B/B2 APK PLAYTEST (2026-06-15): 4 fixes — 2x finer aim + slimmer/forward aim arrow + on-screen menu button (commit eaa90f9), card-presentation rollback guards (commit f6fa64b, resolves the cosmetic carried debt), a -Rounds netplay smoke repro (commit 22a7572), bounce/shatter VFX rollback guards / node-spam fix (commit 0f24d23). ROUND-2 DESYNC FIXED (commit d3a53a4): the FREEZE was a rollback DESYNC (Fatal state mismatch -> peer torn down -> ping-timer error spam -> freeze) and the ROOT CAUSE was NOT the aim/spawn/bounce sim (all deterministic) but the render-pipeline WARM-UP — _warm_up_render_pipelines() add_child()s barrier.tscn (SG body, collision_layer WALLS at sim centre) whose wall-clock 0.4s lifetime, stretched by the staged-card slow-mo, made an aimed fireball bounce off a mid-court ghost wall NON-deterministically under rollback; FIX = make every warm-up body collision-inert (layer/mask 0 + sync_to_physics_engine()). Same commit fixed a latent smoke FALSE-FAIL: _smoke_fingerprint() sorted projectiles by StringName (pointer-ordered, non-deterministic across processes) -> String(a.name). VERIFIED 4.6.3-stable: 20/20 suites pass, -Rounds smoke byte-identical into ROUND 2 on both peers (0 Fatal state mismatch), normal smoke byte-identical. Memory: netplay-aimed-projectile-desync-freeze.md (updated). C = real-online Nakama (Docker 127.0.0.1:7350) + real-latency / on-device validation (re-test the APK off the FIXED branch); needs the CD's Docker/devices env. See the NEXT PHASE sections in HANDOFF.md + below. On branch feature/spawn-rollback-cards.
+Last sync: 2026-06-16 | SPRINT 23 (2026-06-16, commits 8fd91b4 game-feel mechanisms / beb93ec variable shield + impact) shipped — the FIRST batch of the CD's "make every action EXPLOSIVE / responsive visuals" phase (impact on a wizard + the launch): (1) VARIABLE SHIELD REFLECT — barrier_controller.gd computes ONE deterministic reflect INTENSITY (0..ONE, fixed-point) at capture, a blend of the WOA (block timing) + the incoming ball speed (vs capture_ref_speed 35 u/tick, split by capture_speed_weight 0.5); it drives the SIM hold length (capture_hold_min/max_ticks 8..36, REPLACING the old maxi(min_capture_ticks=24,_hold_ticks); new saved key "ct") and emits capture_started(intensity), and match_controller.gd scales the WHOLE shield beat by it — wave SIZE (0.03..0.055) + SPEED (0.32..0.7 s), slow-mo DEPTH (0.62..0.4), rumble (0.6..1.0), release SLAM (0.5..0.9); the HOLD is the ONLY sim change (bit-identical). (2) DISPLACEMENT WAVE NOW ALWAYS FIRES — root cause: the wave rode the rollback-SUPPRESSED spell_cast signal (a barrier on a rolled-back tick was never wired) + _on_capture_started bailed early in a stack/death beat; FIX: wire capture presentation on SPAWN via the Projectiles child_entered_tree (every spawn incl. rollback re-spawns, idempotent), and the wave (a shader pass) always fires now — only the time-dilation stays gated. (3) HITSTOP — the_stack.hitstop(ms): a sharp wall-clock impact FREEZE (hitstop_scale 0.04), rollback-safe, skipped/cancelled when a stack window or held dilation owns the clock; match_controller fires it on a wizard hit, scaled by damage (45..110 ms). (4) FOV RELEASE-PUNCH — camera_rig.gd: firing overshoots the FOV WIDER than base (fov_punch_max 0.12, decay 6/s, scaled by release charge), local-player-only. (5) IMPACT BURST — a spark BurstFX pop at the struck wizard on every hit. (6) camera over-the-shoulder lean +10% again (shoulder_yaw 4.4->4.84, shoulder_offset_x 0.77->0.847). 20/20 suites + LAN smoke (normal + -Rounds) byte-identical; the shield HOLD is the sole sim change (deterministic), all else presentation; FEEL CD-validated in the editor, APK re-exported; all new shield/hitstop/FOV values EXPORTED for live tuning. | SPRINT 22 (2026-06-16, commits 8a4e288 / d12fdc4 / 57cfaf8 / b771b90) shipped — a 9-change CD polish batch covering all FOUR focus areas (camera tweaks / multiplayer bugs / UI + scaling / gameplay tweaks): camera stack-zoom REMOVED (FOV locked in-stack) + in-round pitch up 8% (-26 -> -23.92) + shoulder lean +10% + NEW fireball CHARGE ZOOM (FOV tightens / dips / looks up while charging, snaps back on release); stack display moved RIGHT + shrunk 20%; main-menu Saturn ring re-flattened + thinned; fireball TAP-CAST (a sub-minimum release now fires a low-tier uncharged fireball instead of draining — SIM, int-only, rollback-deterministic); and TWO netplay round-flow fixes (rematch desync — client was stuck on the victory overlay because round_started was swallowed mid-rollback; P2 movement freeze — a joystick pointer held through the round break drove nothing until re-pressed). 20/20 suites + LAN smoke (normal + -Rounds) byte-identical; the two netplay fixes + the charge framing are PENDING the CD's on-device APK confirmation. | DESKTOP NETPLAY FEATURE-COMPLETE + PLAYTESTED; MOBILE-MP A/B/B2 DONE; CD A/B/B2 APK playtest done — 4 fixes shipped; the round-2 netplay DESYNC (aimed-projectile path) is now FIXED (commit d3a53a4) AND VALIDATED ON-DEVICE by the CD (real two-device Android MP, no crashes), so item C is the SOLE remaining mobile-MP task and is now UNBLOCKED. CD SPRINT-TWEAK BATCH (commit 086c11f, 4 polish fixes — client-side barrier mirror [5th client-perspective retarget], redundant menu button removed, aim arrow shortened, stuck-spark prompt despawn) DONE + verified (20/20 suites + LAN smoke incl. -Rounds byte-identical into round 2). CD CAMERA TWEAK (commits 677cb88 -> 4aeb197 -> 99d0233) DONE + verified — camera spawns neutral-centred (X 1.45->0, yaw 8->0), lowered 15% (Y 5.6->4.76), and tilted down (pitch -23.3->-26, FINAL; the interim -36 read too steep) to cut the sky band, landing the front arena edge on the cast-button top (~80.8% down-frame) with ~34% sky headroom; the adaptive shoulder lean was then RESTORED subtler (commit 99d0233 — symmetric, ~half the old throw, neutral at centre — NO LONGER inert); FINAL Camera3D (0, 4.76, 12.6) fov 71 yaw 0 pitch -26; presentation-only, determinism unaffected (test_camera_zoom / test_match_smoke / test_determinism pass). Spawn-rollback roadmap done (fireball + cards + round flow + emerald), online Play Again synced (commit 4579f67), client charge-rumble retargeted (commit 44e67b0). MOBILE MULTIPLAYER ENABLEMENT: A — delta_rollback cross-compiled for android arm64 + export fix (commit 151427d); B — netplay touch-movement input fix (commit 1d5973b); B2 — joystick-direction aiming + ground aim arrow (commits c65421b + 27b3908) — ALL DONE + verified. CD A/B/B2 APK PLAYTEST (2026-06-15): 4 fixes — 2x finer aim + slimmer/forward aim arrow + on-screen menu button (commit eaa90f9), card-presentation rollback guards (commit f6fa64b, resolves the cosmetic carried debt), a -Rounds netplay smoke repro (commit 22a7572), bounce/shatter VFX rollback guards / node-spam fix (commit 0f24d23). ROUND-2 DESYNC FIXED (commit d3a53a4): the FREEZE was a rollback DESYNC (Fatal state mismatch -> peer torn down -> ping-timer error spam -> freeze) and the ROOT CAUSE was NOT the aim/spawn/bounce sim (all deterministic) but the render-pipeline WARM-UP — _warm_up_render_pipelines() add_child()s barrier.tscn (SG body, collision_layer WALLS at sim centre) whose wall-clock 0.4s lifetime, stretched by the staged-card slow-mo, made an aimed fireball bounce off a mid-court ghost wall NON-deterministically under rollback; FIX = make every warm-up body collision-inert (layer/mask 0 + sync_to_physics_engine()). Same commit fixed a latent smoke FALSE-FAIL: _smoke_fingerprint() sorted projectiles by StringName (pointer-ordered, non-deterministic across processes) -> String(a.name). VERIFIED 4.6.3-stable: 20/20 suites pass, -Rounds smoke byte-identical into ROUND 2 on both peers (0 Fatal state mismatch), normal smoke byte-identical. Memory: netplay-aimed-projectile-desync-freeze.md (updated). C = real-online Nakama (Docker 127.0.0.1:7350) + real-latency / on-device validation (re-test the APK off the FIXED branch); needs the CD's Docker/devices env. See the NEXT PHASE sections in HANDOFF.md + below. On branch feature/spawn-rollback-cards.
 
 ===========================================================
 COMPLETED SYSTEMS
@@ -2577,6 +2577,66 @@ yaw_degrees 0, pitch_degrees -23.92 (Sprint 22 raised it 8% from -26). camera_ri
 shoulder_offset_x 0.77, shoulder_yaw_degrees 4.4 (Sprint 22 +10%). FOV groups: "FOV Return" (stack_zoom_speed 5.0,
 eases FOV back to base post-death-cam — NO in-stack zoom anymore) + the new "Charge Zoom" (charge_zoom_scale 0.85,
 charge_dip_y 0.6, charge_look_up_degrees 4.5, charge_zoom_in_speed 7, charge_zoom_out_speed 16).
+[Sprint 23 bumped the shoulder dials +10% again: shoulder_offset_x 0.847, shoulder_yaw_degrees 4.84.]
+
+-----------------------------------------------------------
+[2026-06-16] SPRINT 23 — "MAKE EVERY ACTION EXPLOSIVE" BATCH 1, 6 CHANGES (commits 8fd91b4 game-feel mechanisms /
+beb93ec variable shield + impact)
+-----------------------------------------------------------
+The Creative Director's new phase — "enhancing gameplay & responsive visuals / make every action EXPLOSIVE" (the
+priorities: IMPACT on a wizard + the LAUNCH) — opens with six changes on branch feature/spawn-rollback-cards.
+ONE is a SIM change (the shield HOLD, deterministic); the other five are presentation.
+
+VARIABLE SHIELD REFLECT — WOA + SPEED (the headline; commit beb93ec):
+1. barrier_controller.gd now computes ONE deterministic reflect INTENSITY (0..ONE, fixed-point) at capture — a
+   blend of the WOA (_woa_fp, block timing: a tighter / last-moment block reads higher) and the incoming ball
+   speed (_captured_speed_fp normalised vs capture_ref_speed 35 sim-units/tick, the two split by
+   capture_speed_weight 0.5). It drives the SIM hold length (capture_hold_min_ticks 8 .. capture_hold_max_ticks 36
+   ticks — REPLACED the old maxi(min_capture_ticks=24, _hold_ticks); saved as new state key "ct") and is emitted
+   on capture_started(intensity). match_controller.gd then scales the WHOLE presentation beat by that one
+   intensity: displacement-wave SIZE (shield_ripple_strength_min 0.03 .. _max 0.055) + SPEED
+   (shield_ripple_seconds_min 0.32 .. _max 0.7, via a new "seconds" param on _trigger_ripple + _ripple_seconds),
+   slow-mo DEPTH (shield_capture_time_scale_mild 0.62 .. the deep shield_capture_time_scale 0.4), RUMBLE
+   (shield_rumble_min_scale 0.6 .. 1.0), and the release SLAM (capture_release_trauma_min 0.5 ..
+   capture_release_trauma 0.9). Low intensity (slow ball / loose timing) = a small + fast wave + short pause +
+   light; high (fast / last-moment block) = the big dramatic one. THE HOLD IS THE ONLY SIM CHANGE (intensity
+   derived from the deterministic WOA + captured speed) — bit-identical, LAN-smoke verified.
+
+2. DISPLACEMENT WAVE NOW ALWAYS FIRES (CD: "sometimes they don't happen"). ROOT CAUSE: (a) the wave's wiring rode
+   the caster's spell_cast signal, which is ROLLBACK-SUPPRESSED (card_caster_component._emit_spell_cast), so a
+   barrier deployed on a rolled-back tick was never wired -> no wave (the same suppressed-presentation class as the
+   Sprint 22 rematch round_started); (b) _on_capture_started returned EARLY (no wave at all) during a stack window
+   / death beat. FIX: (a) wire each barrier's capture presentation on SPAWN via the Projectiles container's
+   child_entered_tree -> _on_projectile_entered (fires for EVERY spawn incl. rollback re-spawns; idempotent via
+   _set_conn), and removed the connection from _on_spell_cast; (b) _on_capture_started ALWAYS fires the wave now
+   (it is just a shader pass) — only the time-DILATION stays gated on death/stack. Low floors raised so a weak
+   block still reads.
+
+GAME-FEEL MECHANISMS — IMPACT + LAUNCH (commit 8fd91b4):
+3. HITSTOP. the_stack.gd gained hitstop(duration_ms): a sharp, brief presentation FREEZE on impact (the "crunch",
+   hitstop_scale 0.04) — WALL-CLOCK timed, ROLLBACK-SAFE (Engine.time_scale re-paces presentation only, never tick
+   math). Skipped while a stack window or a held dilation (_resolving: death / stack resolve) owns the clock;
+   open_window + hold_dilation CANCEL any active hitstop so it yields cleanly to the stack + death slow-mo; snaps
+   back SHARP to 1.0 in _process. match_controller._on_wizard_damaged triggers it on a wizard taking a hit,
+   duration scaled by damage (hitstop_min_ms 45 .. hitstop_max_ms 110, hitstop_ref_damage 3.0), rollback-guarded.
+   Fires for BOTH wizards' hits (a shared impact beat).
+4. FOV RELEASE-PUNCH. camera_rig.gd: on FIRING a fireball the FOV overshoots WIDER than base (a punch-out PAST
+   default, fov_punch_max 0.12, fov_punch_decay 6/s, scaled by the charge at release — a tap still punches),
+   layered on top of the charge-zoom snapping back. fov_punch() is called by
+   match_controller._on_player_cast_released (LOCAL player only, retargeted to the client's own wizard like the
+   rumble).
+5. IMPACT BURST. match_controller._on_wizard_damaged: a spark BurstFX pop at the struck wizard on every hit (was
+   only the red flicker + camera shake), rollback-guarded.
+6. CAMERA OVER-THE-SHOULDER LEAN +10% AGAIN. camera_rig.gd shoulder_yaw_degrees 4.4 -> 4.84, shoulder_offset_x
+   0.77 -> 0.847.
+
+VERIFIED (Godot 4.6.3-stable): all 20/20 headless suites pass; LAN net-smoke byte-identical on BOTH peers — normal
+AND -Rounds (drove to round 2 under forced rollbacks). The shield HOLD is the ONLY sim change (deterministic from
+the WOA + captured speed); everything else is presentation. The shield/impact/charge FEEL is CD-validated in the
+editor (desktop single-player); the APK was re-exported for on-device. All the new shield/hitstop/FOV values are
+EXPORTED for live tuning. CANDIDATE NEXT (the CD's menu — NOT yet chosen): sprite squash/stretch pop on hit, a
+launch kick (camera shove + burst on fire), a hard KO hitstop, per-element impact colours, an SFX pass (current
+hit/cast sounds are placeholders).
 
 -----------------------------------------------------------
 NEXT PHASE — MOBILE MULTIPLAYER ENABLEMENT
@@ -2615,15 +2675,23 @@ collision-inert; see the [2026-06-15] ROUND-2 NETPLAY DESYNC FIXED entry above).
 remaining mobile-MP task and is now the TOP-PRIORITY work — the validation gate before shipping mobile MP (needs
 the CD's Docker/devices env).
 
-ACTIVE DIRECTION (2026-06-16) — polish / iteration phase (distinct from item C): with netplay SHIPPED +
-on-device-validated (real two-device Android MP, no crashes), the CD named a polish/iteration pass across FOUR
-focus areas -> (1) camera tweaks, (2) multiplayer bugs, (3) UI + scaling, and (4) gameplay tweaks. SPRINT 22
-(2026-06-16, commits 8a4e288 / d12fdc4 / 57cfaf8 / b771b90 — see the [2026-06-16] SPRINT 22 section above)
-ADDRESSED all four in a 9-change batch (camera: stack-zoom removed / pitch +8% / shoulder lean +10% / NEW
-fireball charge zoom; UI: stack display moved RIGHT + shrunk 20%, menu Saturn ring re-flattened + thinned;
-gameplay: fireball TAP-CAST; multiplayer: rematch-desync + P2-movement-freeze fixes). 20/20 suites + LAN smoke
-(normal + -Rounds) byte-identical; the two netplay fixes + the charge framing are PENDING the CD's on-device APK
-confirmation. This polish loop remains the active forward direction (more CD tweak batches expected). It is
+ACTIVE DIRECTION (2026-06-16) — "make every action EXPLOSIVE" / responsive-visuals phase (distinct from item C):
+with netplay SHIPPED + on-device-validated (real two-device Android MP, no crashes), the CD first ran a
+polish/iteration pass across FOUR focus areas -> (1) camera tweaks, (2) multiplayer bugs, (3) UI + scaling, and
+(4) gameplay tweaks, which SPRINT 22 (2026-06-16, commits 8a4e288 / d12fdc4 / 57cfaf8 / b771b90 — see the
+[2026-06-16] SPRINT 22 section above) ADDRESSED in a 9-change batch (camera: stack-zoom removed / pitch +8% /
+shoulder lean +10% / NEW fireball charge zoom; UI: stack display moved RIGHT + shrunk 20%, menu Saturn ring
+re-flattened + thinned; gameplay: fireball TAP-CAST; multiplayer: rematch-desync + P2-movement-freeze fixes).
+THE CD HAS SINCE NAMED THE NEXT, CURRENT PHASE: "enhancing gameplay & responsive visuals / make every action
+EXPLOSIVE" — the priorities are IMPACT on a wizard + the LAUNCH. SPRINT 23 (2026-06-16, commits 8fd91b4 / beb93ec
+— see the [2026-06-16] SPRINT 23 section above) OPENED it: hitstop (impact freeze), the FOV release-punch on fire,
+an impact spark burst on every hit, and the VARIABLE + ALWAYS-FIRE shield wave (one deterministic reflect
+intensity from WOA + captured speed scales the whole shield beat — hold/wave/slow-mo/rumble/slam — and the wave
+fires on EVERY block; the hold is the only sim change). 20/20 suites + LAN smoke (normal + -Rounds) byte-identical;
+the FEEL is CD-validated in the editor, APK re-exported. CANDIDATE NEXT (the CD's menu — NOT yet chosen): sprite
+squash/stretch pop on hit, a launch kick (camera shove + burst on fire), a hard KO hitstop, per-element impact
+colours, an SFX pass (current hit/cast sounds are placeholders). All the new shield/hitstop/FOV values are EXPORTED
+for live tuning. This EXPLOSIVE loop remains the active forward direction (more CD batches expected). It is
 SEPARATE from item C (the real-online Nakama / real-latency validation GATE — task #87), which remains
 OPEN/PENDING and is still the sole formal mobile-MP shipping gate.
 
@@ -2641,11 +2709,17 @@ d3a53a4 (round-2 netplay DESYNC fix — warm-up barrier made collision-inert + S
 stack-zoom removed + pitch -26 -> -23.92 + shoulder lean +10% + NEW fireball charge zoom), d12fdc4 (Sprint 22 UI:
 stack display moved RIGHT + shrunk 20%, main-menu Saturn ring re-flattened + thinned), 57cfaf8 (Sprint 22 SIM:
 fireball TAP-CAST — sub-minimum release fires a low-tier uncharged fireball, int-only, rollback-deterministic),
-b771b90 (Sprint 22 netplay: rematch-desync + P2-movement-freeze fixes). The four camera/UI/SIM commits are
-presentation-only EXCEPT 57cfaf8 (an int-only sim tap-cast, bit-identical under rollback); test_camera_zoom (now
-asserts FOV STABILITY) / test_determinism / test_match_smoke / test_charge_mechanics (now asserts the tap-cast)
-pass. The two Sprint-22 netplay fixes (b771b90) + the charge framing (8a4e288 #4) are NOT headless-reproducible —
-PENDING the CD's on-device APK confirmation.
+b771b90 (Sprint 22 netplay: rematch-desync + P2-movement-freeze fixes),
+8fd91b4 (Sprint 23 game-feel mechanisms: hitstop + FOV release-punch + impact burst + shoulder lean +10% again),
+beb93ec (Sprint 23 variable shield + impact: one deterministic reflect intensity from WOA + captured speed scales
+the whole shield beat, and the displacement wave always fires). The four Sprint-22 camera/UI/SIM commits are
+presentation-only EXCEPT 57cfaf8 (an int-only sim tap-cast, bit-identical under rollback); the two Sprint-23
+commits are presentation-only EXCEPT the shield HOLD length in beb93ec (a deterministic int change from the WOA +
+captured speed, bit-identical under rollback). test_camera_zoom (now asserts FOV STABILITY) / test_determinism /
+test_match_smoke / test_charge_mechanics (now asserts the tap-cast) pass; all 20/20 suites + LAN smoke (normal +
+-Rounds) byte-identical through Sprint 23. The two Sprint-22 netplay fixes (b771b90) + the charge framing
+(8a4e288 #4) are NOT headless-reproducible — PENDING the CD's on-device APK confirmation; the Sprint-23 shield /
+impact / launch FEEL is CD-validated in the editor (desktop single-player), APK re-exported for on-device.
 SpellBop.apk RE-EXPORTED for android arm64 (commit 151427d). The round-2 netplay DESYNC (aimed-projectile path)
 surfaced in the CD A/B/B2 APK playtest is now FIXED (commit d3a53a4 — the render-pipeline warm-up barrier joining
 the rollback sim; see the [2026-06-15] ROUND-2 NETPLAY DESYNC FIXED entry above + the ✅ RESOLVED section in

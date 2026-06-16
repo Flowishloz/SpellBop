@@ -34,6 +34,16 @@ A 0..1 quality score for instant casts; it can scale ANY card attribute.
   left/right "random" sign is a parity hash of the capture position —
   deterministic on every peer. Your own throws just bounce (walls cut both
   ways — don't fire through your own bulwark).
+  - *Sprint 23 (variable shield):* the capture HOLD is now a deterministic
+    **reflect-intensity** blend of the WOA **and** the incoming ball SPEED
+    (`barrier_controller.gd` — `_woa_fp` + `_captured_speed_fp` vs
+    `capture_ref_speed`, split by `capture_speed_weight`), driving a tick-based
+    hold (`capture_hold_min_ticks`..`capture_hold_max_ticks`, saved key `"ct"`)
+    instead of `woa x woa_max_hold_seconds`; the same intensity (emitted on
+    `capture_started`) scales the whole presentation beat (displacement-wave
+    size/speed, slow-mo depth, rumble, release slam). The displacement wave now
+    fires on **every** block (wired on spawn, rollback-safe). The reflect
+    speed/ricochet model above is unchanged.
 - **Counter WOA** = `1 - window_fraction_remaining` (TheStack) — countering
   just before the enemy spell releases scores ~1. The baseline frost wave
   maps WOA → slow strength (`slow_scale_weak` → `slow_scale_strong`).
