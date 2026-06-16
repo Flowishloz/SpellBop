@@ -1,5 +1,5 @@
 PROJECT STATE — WIZARD DODGEBALL
-Last sync: 2026-06-15 | DESKTOP NETPLAY FEATURE-COMPLETE + PLAYTESTED; MOBILE-MP A/B/B2 DONE; CD A/B/B2 APK playtest done — 4 fixes shipped; the round-2 netplay DESYNC (aimed-projectile path) is now FIXED (commit d3a53a4) AND VALIDATED ON-DEVICE by the CD (real two-device Android MP, no crashes), so item C is the SOLE remaining mobile-MP task and is now UNBLOCKED. CD SPRINT-TWEAK BATCH (commit 086c11f, 4 polish fixes — client-side barrier mirror [5th client-perspective retarget], redundant menu button removed, aim arrow shortened, stuck-spark prompt despawn) DONE + verified (20/20 suites + LAN smoke incl. -Rounds byte-identical into round 2). CD CAMERA TWEAK (commits 677cb88 -> 4aeb197 -> 99d0233) DONE + verified — camera spawns neutral-centred (X 1.45->0, yaw 8->0), lowered 15% (Y 5.6->4.76), and tilted down (pitch -23.3->-26, FINAL; the interim -36 read too steep) to cut the sky band, landing the front arena edge on the cast-button top (~80.8% down-frame) with ~34% sky headroom; the adaptive shoulder lean was then RESTORED subtler (commit 99d0233 — symmetric, ~half the old throw, neutral at centre — NO LONGER inert); FINAL Camera3D (0, 4.76, 12.6) fov 71 yaw 0 pitch -26; presentation-only, determinism unaffected (test_camera_zoom / test_match_smoke / test_determinism pass). Spawn-rollback roadmap done (fireball + cards + round flow + emerald), online Play Again synced (commit 4579f67), client charge-rumble retargeted (commit 44e67b0). MOBILE MULTIPLAYER ENABLEMENT: A — delta_rollback cross-compiled for android arm64 + export fix (commit 151427d); B — netplay touch-movement input fix (commit 1d5973b); B2 — joystick-direction aiming + ground aim arrow (commits c65421b + 27b3908) — ALL DONE + verified. CD A/B/B2 APK PLAYTEST (2026-06-15): 4 fixes — 2x finer aim + slimmer/forward aim arrow + on-screen menu button (commit eaa90f9), card-presentation rollback guards (commit f6fa64b, resolves the cosmetic carried debt), a -Rounds netplay smoke repro (commit 22a7572), bounce/shatter VFX rollback guards / node-spam fix (commit 0f24d23). ROUND-2 DESYNC FIXED (commit d3a53a4): the FREEZE was a rollback DESYNC (Fatal state mismatch -> peer torn down -> ping-timer error spam -> freeze) and the ROOT CAUSE was NOT the aim/spawn/bounce sim (all deterministic) but the render-pipeline WARM-UP — _warm_up_render_pipelines() add_child()s barrier.tscn (SG body, collision_layer WALLS at sim centre) whose wall-clock 0.4s lifetime, stretched by the staged-card slow-mo, made an aimed fireball bounce off a mid-court ghost wall NON-deterministically under rollback; FIX = make every warm-up body collision-inert (layer/mask 0 + sync_to_physics_engine()). Same commit fixed a latent smoke FALSE-FAIL: _smoke_fingerprint() sorted projectiles by StringName (pointer-ordered, non-deterministic across processes) -> String(a.name). VERIFIED 4.6.3-stable: 20/20 suites pass, -Rounds smoke byte-identical into ROUND 2 on both peers (0 Fatal state mismatch), normal smoke byte-identical. Memory: netplay-aimed-projectile-desync-freeze.md (updated). C = real-online Nakama (Docker 127.0.0.1:7350) + real-latency / on-device validation (re-test the APK off the FIXED branch); needs the CD's Docker/devices env. See the NEXT PHASE sections in HANDOFF.md + below. On branch feature/spawn-rollback-cards.
+Last sync: 2026-06-16 | SPRINT 22 (2026-06-16, commits 8a4e288 / d12fdc4 / 57cfaf8 / b771b90) shipped — a 9-change CD polish batch covering all FOUR focus areas (camera tweaks / multiplayer bugs / UI + scaling / gameplay tweaks): camera stack-zoom REMOVED (FOV locked in-stack) + in-round pitch up 8% (-26 -> -23.92) + shoulder lean +10% + NEW fireball CHARGE ZOOM (FOV tightens / dips / looks up while charging, snaps back on release); stack display moved RIGHT + shrunk 20%; main-menu Saturn ring re-flattened + thinned; fireball TAP-CAST (a sub-minimum release now fires a low-tier uncharged fireball instead of draining — SIM, int-only, rollback-deterministic); and TWO netplay round-flow fixes (rematch desync — client was stuck on the victory overlay because round_started was swallowed mid-rollback; P2 movement freeze — a joystick pointer held through the round break drove nothing until re-pressed). 20/20 suites + LAN smoke (normal + -Rounds) byte-identical; the two netplay fixes + the charge framing are PENDING the CD's on-device APK confirmation. | DESKTOP NETPLAY FEATURE-COMPLETE + PLAYTESTED; MOBILE-MP A/B/B2 DONE; CD A/B/B2 APK playtest done — 4 fixes shipped; the round-2 netplay DESYNC (aimed-projectile path) is now FIXED (commit d3a53a4) AND VALIDATED ON-DEVICE by the CD (real two-device Android MP, no crashes), so item C is the SOLE remaining mobile-MP task and is now UNBLOCKED. CD SPRINT-TWEAK BATCH (commit 086c11f, 4 polish fixes — client-side barrier mirror [5th client-perspective retarget], redundant menu button removed, aim arrow shortened, stuck-spark prompt despawn) DONE + verified (20/20 suites + LAN smoke incl. -Rounds byte-identical into round 2). CD CAMERA TWEAK (commits 677cb88 -> 4aeb197 -> 99d0233) DONE + verified — camera spawns neutral-centred (X 1.45->0, yaw 8->0), lowered 15% (Y 5.6->4.76), and tilted down (pitch -23.3->-26, FINAL; the interim -36 read too steep) to cut the sky band, landing the front arena edge on the cast-button top (~80.8% down-frame) with ~34% sky headroom; the adaptive shoulder lean was then RESTORED subtler (commit 99d0233 — symmetric, ~half the old throw, neutral at centre — NO LONGER inert); FINAL Camera3D (0, 4.76, 12.6) fov 71 yaw 0 pitch -26; presentation-only, determinism unaffected (test_camera_zoom / test_match_smoke / test_determinism pass). Spawn-rollback roadmap done (fireball + cards + round flow + emerald), online Play Again synced (commit 4579f67), client charge-rumble retargeted (commit 44e67b0). MOBILE MULTIPLAYER ENABLEMENT: A — delta_rollback cross-compiled for android arm64 + export fix (commit 151427d); B — netplay touch-movement input fix (commit 1d5973b); B2 — joystick-direction aiming + ground aim arrow (commits c65421b + 27b3908) — ALL DONE + verified. CD A/B/B2 APK PLAYTEST (2026-06-15): 4 fixes — 2x finer aim + slimmer/forward aim arrow + on-screen menu button (commit eaa90f9), card-presentation rollback guards (commit f6fa64b, resolves the cosmetic carried debt), a -Rounds netplay smoke repro (commit 22a7572), bounce/shatter VFX rollback guards / node-spam fix (commit 0f24d23). ROUND-2 DESYNC FIXED (commit d3a53a4): the FREEZE was a rollback DESYNC (Fatal state mismatch -> peer torn down -> ping-timer error spam -> freeze) and the ROOT CAUSE was NOT the aim/spawn/bounce sim (all deterministic) but the render-pipeline WARM-UP — _warm_up_render_pipelines() add_child()s barrier.tscn (SG body, collision_layer WALLS at sim centre) whose wall-clock 0.4s lifetime, stretched by the staged-card slow-mo, made an aimed fireball bounce off a mid-court ghost wall NON-deterministically under rollback; FIX = make every warm-up body collision-inert (layer/mask 0 + sync_to_physics_engine()). Same commit fixed a latent smoke FALSE-FAIL: _smoke_fingerprint() sorted projectiles by StringName (pointer-ordered, non-deterministic across processes) -> String(a.name). VERIFIED 4.6.3-stable: 20/20 suites pass, -Rounds smoke byte-identical into ROUND 2 on both peers (0 Fatal state mismatch), normal smoke byte-identical. Memory: netplay-aimed-projectile-desync-freeze.md (updated). C = real-online Nakama (Docker 127.0.0.1:7350) + real-latency / on-device validation (re-test the APK off the FIXED branch); needs the CD's Docker/devices env. See the NEXT PHASE sections in HANDOFF.md + below. On branch feature/spawn-rollback-cards.
 
 ===========================================================
 COMPLETED SYSTEMS
@@ -2477,7 +2477,9 @@ asked for ONE more CAMERA tweak (then two follow-ups), now DONE + verified on br
 All in scenes/match_arena.tscn's Camera3D (the PunchOutCameraRig, scripts/visual/camera_rig.gd). Presentation-only
 — the camera never touches the sim; identity basis kept (Transform3D graveyard rule).
 FINAL match_arena.tscn Camera3D (identity basis): position (0, 4.76, 12.6), fov 71, yaw_degrees 0, pitch_degrees
--26. Four sub-changes:
+-26. [SUPERSEDED — Sprint 22 (commit 8a4e288) tilted the in-round pitch UP 8% to -23.92, bumped the shoulder
+dials +10% (shoulder_offset_x 0.77 / shoulder_yaw_degrees 4.4), REMOVED the in-stack FOV zoom, and ADDED a
+fireball Charge Zoom; see the [2026-06-16] SPRINT 22 section below for the current values.] Four sub-changes:
 
 1. NEUTRAL CENTRED SPAWN (was over the player's RIGHT shoulder at round start): camera X 1.45 -> 0 and
    yaw_degrees 8 -> 0, so it spawns centred looking straight down-court (the signed-off spawn framing);
@@ -2496,7 +2498,8 @@ FINAL match_arena.tscn Camera3D (identity basis): position (0, 4.76, 12.6), fov 
    headroom to ~34% (the wizard rests centred). Screenshot-aligned.
 4. RESTORED ADAPTIVE SHOULDER LEAN (subtler, commit 99d0233): the over-the-shoulder glide is back in
    camera_rig.gd, reworked SYMMETRIC + about HALF the old throw. Dials: pullback_factor 1.15 (scales Y+Z),
-   base_fov_scale 1.15; lean shoulder_offset_x 0.7 m, shoulder_yaw_degrees 4.0 (vs the old +/-1.45 m / +/-8 deg
+   base_fov_scale 1.15; lean shoulder_offset_x 0.7 m [Sprint 22 -> 0.77], shoulder_yaw_degrees 4.0 [Sprint 22 ->
+   4.4] (vs the old +/-1.45 m / +/-8 deg
    over-the-shoulder hold), with hysteresis (shoulder_swap_threshold 1.15 m engage, new shoulder_return_threshold
    0.45 m release, shoulder_glide_speed 1.5), held in a new _shoulder (-1/0/+1) state. Symmetric, so handedness no
    longer biases it — the old _side / _default_base_x / _default_yaw are now VESTIGIAL. Screenshot-tune with
@@ -2505,6 +2508,75 @@ FINAL match_arena.tscn Camera3D (identity basis): position (0, 4.76, 12.6), fov 
 VERIFIED (Godot 4.6.3-stable): test_camera_zoom / test_match_smoke / test_determinism pass (FOV logic untouched
 — only X / Y / yaw / pitch + the shoulder dials changed); screenshot_probe confirmed the framing + a clean scene
 load. Determinism unaffected (camera is presentation-only).
+
+-----------------------------------------------------------
+[2026-06-16] SPRINT 22 — CD POLISH BATCH, 9 CHANGES (commits 8a4e288 Camera/FOV / d12fdc4 UI+art /
+57cfaf8 Fireball tap-cast SIM / b771b90 Netplay fixes)
+-----------------------------------------------------------
+The Creative Director's four Sprint-22 focus areas — (1) camera tweaks, (2) multiplayer bugs, (3) UI + scaling,
+(4) gameplay tweaks — addressed in a 9-change batch on branch feature/spawn-rollback-cards. Seven are
+presentation-only; one is SIM (rollback-deterministic, int-only); two are netplay round-flow fixes.
+
+CAMERA / FOV (commit 8a4e288):
+1. CAMERA STACK-ZOOM REMOVED. The FOV no longer zooms during the Stack slow-mo; it stays LOCKED at base so the
+   time-dilation reads WITHOUT a lens push. In camera_rig.gd the old "Dynamic Stack Zoom" export group is renamed
+   "FOV Return" (only stack_zoom_speed 5.0 kept — it now just EASES the FOV back to base after the death cam,
+   never zooms in-stack). tests/test_camera_zoom.gd rewritten to assert FOV STABILITY (was asserting the zoom).
+2. IN-ROUND CAMERA TILTED UP 8% for more sky: scenes/match_arena.tscn Camera3D pitch_degrees -26 -> -23.92.
+3. ADAPTIVE SHOULDER LEAN +10%: camera_rig.gd shoulder_yaw_degrees 4.0 -> 4.4, shoulder_offset_x 0.7 -> 0.77.
+4. NEW FIREBALL CHARGE ZOOM (camera_rig.gd new "Charge Zoom" export group). While the LOCAL wizard charges a
+   fireball the camera tightens its FOV (full charge = base x charge_zoom_scale 0.85 = 15% zoom-in), DIPS down
+   (charge_dip_y 0.6 m) and looks UP slightly (charge_look_up_degrees 4.5 deg) — a subtle "in the action"
+   3rd-person lean — then SNAPS back out on release (charge_zoom_in_speed 7/s building, charge_zoom_out_speed
+   16/s release). One eased _charge_amt (0..1) drives FOV + dip + look-up in lockstep, tracking the CONTINUOUS
+   charge_fraction() (smooth, NOT the discrete 1/2/3 gauge). Wired via MatchController._wire_local_charge_feedback
+   -> _camera.set_charge_source(local SpellCasterComponent), retargeted to the client's OWN wizard on the client
+   (same client-perspective retarget pattern as the charge rumble — handled PROACTIVELY / correctly this time, so
+   it is the 6th member of that recurring class but NOT a miss). Presentation-only; determinism untouched.
+
+UI / ART (commit d12fdc4):
+5. STACK UI MOVED + SHRUNK: stack_display_hud.gd stack_center (540,330) -> (820,300) (RIGHT side) and card_size
+   (330,440) -> (264,352) (20% smaller), so the resolving stack no longer covers the opponent after the camera
+   reposition (changes 2-4 above lift the opponent into the old stack footprint).
+6. MAIN-MENU SATURN RING: home_screen.gd _add_planet ring rotation deg(76,0,20) -> deg(20,0,18) (a near-flat
+   Saturn ellipse instead of a near-vertical hoop) and the torus thinned inner/outer 1.25r/1.75r -> 1.4r/1.6r
+   (tube 0.5r -> 0.2r) per the CD ("was way too thick").
+
+FIREBALL TAP-CAST — SIM (commit 57cfaf8, rollback-deterministic):
+7. spell_caster_component.gd _network_process: a cast RELEASED BELOW the _cast_ticks minimum (30 ticks / 0.5 s)
+   now IMMEDIATELY fires a LOW-TIER, uncharged, base-size fireball (gauge 1, velocity = SGFixed.ONE) instead of
+   the old GRAVEYARD drain. Same cooldown gate; the spell_cast emit tears down the press-tick charge rumble + VFX.
+   tests/test_charge_mechanics.gd gained a tap-cast assertion. Int-only, in the sim tick -> bit-identical under
+   rollback.
+
+NETPLAY FIXES (commit b771b90 — both presentation/round-flow, sim untouched):
+8. REMATCH DESYNC fixed. match_controller.gd _on_resolver_round_reset: the is_in_rollback() guard now ALLOWS the
+   round-1 (rematch) reset to PRESENT during rollback (... and new_round_number != 1). Root cause: on the CLIENT
+   the match reset runs ONLY inside the rollback that applies the host's synced KEY_REMATCH (the client
+   mispredicted "no rematch"), so the guard swallowed round_started and the client was STUCK on the Play Again /
+   victory overlay FOREVER (movement + touch HUD also gated off via round_started). The rematch is authoritative
+   (both peers agreed via synced input), so presenting it mid-rollback is correct. Round 2/3 resets still skip
+   rollback re-sims.
+9. P2 MOVEMENT FREEZE fixed. move_joystick_hud.gd: _set_inactive() no longer _end()s (which FORGOT a held
+   pointer); it now releases only the driven move actions but KEEPS following the held finger/mouse, and a new
+   _reactivate() (fired on round_started) resumes the stick from the held pointer's current deflection. Root
+   cause: a pointer held through the round break drove NOTHING the next round until the player re-pressed — and
+   casting incidentally unstuck it on desktop (by forcing a release + a new click), which is the CD's reported
+   "casting unlocks movement" symptom. _drag() now only drives movement/aim while _active.
+
+THEME: changes 8 + 9 share a root cause — round-flow presentation signals (round_started / overlay / HUD) being
+DROPPED on the client when a transition lands during a rollback.
+
+VERIFIED (Godot 4.6.3-stable): all 20/20 headless suites pass; LAN net-smoke byte-identical on BOTH peers —
+normal AND -Rounds (drove to round 2 under forced rollbacks, round-flow state matched). The two NETPLAY fixes
+(#8, #9) and the charge framing (#4) are NOT headless-reproducible -> PENDING the Creative Director's on-device
+confirmation of a freshly re-exported APK.
+
+FINAL match_arena.tscn Camera3D (identity basis, AFTER Sprint 22): position (0, 4.76, 12.6), fov 71,
+yaw_degrees 0, pitch_degrees -23.92 (Sprint 22 raised it 8% from -26). camera_rig.gd shoulder dials:
+shoulder_offset_x 0.77, shoulder_yaw_degrees 4.4 (Sprint 22 +10%). FOV groups: "FOV Return" (stack_zoom_speed 5.0,
+eases FOV back to base post-death-cam — NO in-stack zoom anymore) + the new "Charge Zoom" (charge_zoom_scale 0.85,
+charge_dip_y 0.6, charge_look_up_degrees 4.5, charge_zoom_in_speed 7, charge_zoom_out_speed 16).
 
 -----------------------------------------------------------
 NEXT PHASE — MOBILE MULTIPLAYER ENABLEMENT
@@ -2543,12 +2615,17 @@ collision-inert; see the [2026-06-15] ROUND-2 NETPLAY DESYNC FIXED entry above).
 remaining mobile-MP task and is now the TOP-PRIORITY work — the validation gate before shipping mobile MP (needs
 the CD's Docker/devices env).
 
-ACTIVE DIRECTION (2026-06-15) — polish / iteration phase (distinct from item C): with netplay now SHIPPED +
-on-device-validated (real two-device Android MP, no crashes), the CD named the upcoming work areas for the next
-session(s) as a polish/iteration pass across FOUR focus areas -> (1) camera tweaks, (2) multiplayer bugs,
-(3) UI + scaling, and (4) gameplay tweaks. This is the active forward direction. It is SEPARATE from item C
-(the real-online Nakama / real-latency validation GATE), which remains OPEN/PENDING and is still the sole formal
-mobile-MP shipping gate.
+ACTIVE DIRECTION (2026-06-16) — polish / iteration phase (distinct from item C): with netplay SHIPPED +
+on-device-validated (real two-device Android MP, no crashes), the CD named a polish/iteration pass across FOUR
+focus areas -> (1) camera tweaks, (2) multiplayer bugs, (3) UI + scaling, and (4) gameplay tweaks. SPRINT 22
+(2026-06-16, commits 8a4e288 / d12fdc4 / 57cfaf8 / b771b90 — see the [2026-06-16] SPRINT 22 section above)
+ADDRESSED all four in a 9-change batch (camera: stack-zoom removed / pitch +8% / shoulder lean +10% / NEW
+fireball charge zoom; UI: stack display moved RIGHT + shrunk 20%, menu Saturn ring re-flattened + thinned;
+gameplay: fireball TAP-CAST; multiplayer: rematch-desync + P2-movement-freeze fixes). 20/20 suites + LAN smoke
+(normal + -Rounds) byte-identical; the two netplay fixes + the charge framing are PENDING the CD's on-device APK
+confirmation. This polish loop remains the active forward direction (more CD tweak batches expected). It is
+SEPARATE from item C (the real-online Nakama / real-latency validation GATE — task #87), which remains
+OPEN/PENDING and is still the sole formal mobile-MP shipping gate.
 
 Commits since the Sub-phase 3 doc sync (d54f807), oldest->newest: 4579f67 (online Play Again — deterministic
 synced rematch), 9f1cdb8 (healing-emerald spawn-rollback — deterministic cadence + enable online),
@@ -2560,8 +2637,15 @@ playtest fix #1: card-presentation rollback guards — stack-display glitch), 22
 for the round-2 freeze), 0f24d23 (guard fireball bounce + shatter VFX during rollback — node-spam fix),
 d3a53a4 (round-2 netplay DESYNC fix — warm-up barrier made collision-inert + StringName-sort smoke false-FAIL),
 677cb88 (camera: neutral-centred spawn + lower 15% + tilt down), 4aeb197 (camera: ease pitch -36 -> -26),
-99d0233 (camera: restore the adaptive shoulder lean, subtler + neutral at centre). All three camera commits are
-presentation-only (the camera never touches the sim); test_camera_zoom / test_determinism / test_match_smoke pass.
+99d0233 (camera: restore the adaptive shoulder lean, subtler + neutral at centre), 8a4e288 (Sprint 22 camera/FOV:
+stack-zoom removed + pitch -26 -> -23.92 + shoulder lean +10% + NEW fireball charge zoom), d12fdc4 (Sprint 22 UI:
+stack display moved RIGHT + shrunk 20%, main-menu Saturn ring re-flattened + thinned), 57cfaf8 (Sprint 22 SIM:
+fireball TAP-CAST — sub-minimum release fires a low-tier uncharged fireball, int-only, rollback-deterministic),
+b771b90 (Sprint 22 netplay: rematch-desync + P2-movement-freeze fixes). The four camera/UI/SIM commits are
+presentation-only EXCEPT 57cfaf8 (an int-only sim tap-cast, bit-identical under rollback); test_camera_zoom (now
+asserts FOV STABILITY) / test_determinism / test_match_smoke / test_charge_mechanics (now asserts the tap-cast)
+pass. The two Sprint-22 netplay fixes (b771b90) + the charge framing (8a4e288 #4) are NOT headless-reproducible —
+PENDING the CD's on-device APK confirmation.
 SpellBop.apk RE-EXPORTED for android arm64 (commit 151427d). The round-2 netplay DESYNC (aimed-projectile path)
 surfaced in the CD A/B/B2 APK playtest is now FIXED (commit d3a53a4 — the render-pipeline warm-up barrier joining
 the rollback sim; see the [2026-06-15] ROUND-2 NETPLAY DESYNC FIXED entry above + the ✅ RESOLVED section in
