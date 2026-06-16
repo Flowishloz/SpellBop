@@ -177,9 +177,16 @@ scripts/visual/
 ├─ skin_palette.gd .................. SkinPalette Resource (id, display_name, colors, price,
 │                                      texture_folder_override)
 ├─ wizard_pose_library.gd .......... runtime loader: get_pose(pose, facing, folder) (§2.3)
-└─ wizard_pose_manifest.gd .......... the manifest Resource schema
+├─ wizard_pose_manifest.gd .......... the manifest Resource schema
+└─ skin_catalog.gd ................. SkinCatalog: export-safe skin registry (load-by-path list +
+│                                      owned/price/currency placeholder metadata) — the cosmetics
+│                                      carousel/locker enumerate skins through this (shipped 4665f56)
 addons/wizard_pipeline/plugin.gd .... @tool EditorPlugin: auto-watch + manifest gen (§2.3)
 scenes/player.tscn .................. Sprite3D (palette_swap material_override) + WizardAnimator
+scenes/cosmetics.tscn ............... wardrobe/shop scene (CanvasLayer UI over a Node3D diorama);
+│                                      cosmetics_wizard.tscn = a visual-only player.tscn trim on the
+│                                      podium, facing_override=&"front" (the set_skin/SkinCatalog
+│                                      consumer; shipped 4665f56)
 tests/
 ├─ gen_wizard_placeholders.gd ....... regenerates the placeholder art + 3 skins + manifest
 ├─ probe_billboard_override.gd ...... proves material_override drops the native billboard
@@ -239,10 +246,14 @@ _facing = &"front" if (_cast_dir * (-1 if flip_z else 1)) > 0 else &"back"
 - Grounding geometry: player spawns sim-Y +880 → world-Z +8.8 (near); opponent −880 → −8.8 (far);
   camera at Z +12.6 behind the player.
 
-> **Menu / podium gotcha (NOT yet solved):** a wizard in a menu diorama has **no caster and no
-> VisualBridge** → `_cast_dir` defaults −1, `_bridge` is null → facing computes to **back**. If
-> you need a front-facing wizard outside a match (e.g. the wardrobe podium), add a
-> `facing_override` export (or a `set_facing(&"front")`) — it does not exist today.
+> **Menu / podium gotcha (SOLVED — `facing_override`):** a wizard in a menu diorama has **no
+> caster and no VisualBridge** → `_cast_dir` defaults −1, `_bridge` is null → the match-driven
+> facing above computes to **back**. For a front-facing wizard outside a match (e.g. the wardrobe
+> podium) use the **`facing_override` export** (+ the `set_facing(StringName)` setter) on
+> `wizard_animator_component.gd` — shipped in commit `4665f56`. It is **presentation-only**: the
+> default `&""` preserves the exact match-driven facing (so a real match stays byte-identical), and
+> a non-empty value (`&"front"` / `&"back"`) forces that facing instead. The cosmetics podium rig
+> `cosmetics_wizard.tscn` sets `facing_override = &"front"`.
 
 ### Skins & texture
 - `_apply_skin()` uploads `src_colors = base_skin.colors` (the reference) and `dst_colors =
@@ -410,6 +421,8 @@ Godot binary: `C:\Users\laure\Downloads\Godot_v4.6.3-stable_win64.exe\Godot_v4.6
 | `default_red.tres` | colour-swap | robe slots remapped to crimson |
 | `cyber_wizard.tres` | **premium (geometry)** | `texture_folder_override = res://assets_final/skins/cyber_wizard/` (wide hat) + teal recolour, `price = 500`. The CD calls this the **"neon wizard."** |
 
-**Related Brain docs:** the build history + the wardrobe/cosmetics next-phase handoff are in
-`HANDOFF.md` and `Project_State.txt`. The billboard gotcha is also captured in the team memory
+**Related Brain docs:** the build history is in `HANDOFF.md` and `Project_State.txt` — the
+wardrobe/cosmetics scene SHIPPED in commit `4665f56` (`scenes/cosmetics.tscn` + `cosmetics.gd`,
+the `facing_override` podium hook, and `SkinCatalog`), with persistence + equip→match still
+deferred there. The billboard gotcha is also captured in the team memory
 `sprite3d-material-override-billboard`.
