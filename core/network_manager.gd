@@ -268,16 +268,19 @@ func cancel_lobby() -> void:
 
 
 func leave_match() -> void:
-	if SyncManager != null and SyncManager.started:
-		SyncManager.stop()
-	if SyncManager != null:
-		SyncManager.clear_peers()
-	_reset_net_state()
+	_reset_net_state()  # also stops SyncManager + clears peers
 	emit_signal(&"returned_to_menu")
 	get_tree().change_scene_to_file(MENU_SCENE)
 
 
 func _reset_net_state() -> void:
+	# A rollback session may be live (mid-match disconnect, leave, or a cancelled
+	# setup). Stop it and drop the peer so the NEXT match starts from a clean
+	# SyncManager — otherwise a stale peer lingers and add_peer can assert.
+	if SyncManager != null:
+		if SyncManager.started:
+			SyncManager.stop()
+		SyncManager.clear_peers()
 	if _lobby != null:
 		if _lobby.has_method(&"close"):
 			_lobby.close()

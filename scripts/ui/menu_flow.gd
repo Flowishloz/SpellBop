@@ -35,6 +35,7 @@ var _status: Label
 var _lan_list: VBoxContainer
 var _friend_list: VBoxContainer
 var _friend_input: LineEdit
+var _server_input: LineEdit
 var _my_id_label: Label
 var _invite_box: VBoxContainer
 
@@ -224,8 +225,18 @@ func _panel_searching() -> Control:
 
 func _panel_connecting() -> Control:
 	var p := _panel()
-	_title(p, "CONNECTING…", 1180)
-	_label(p, "Reaching the Nakama server\n(127.0.0.1:7350)…", Vector2(120, 1300), 34).size = Vector2(840, 160)
+	_title(p, "CONNECT", 1040)
+	_label(p, "Server address — paste your host's IP\n(leave as-is for the local dev server):", Vector2(120, 1130), 30).size = Vector2(840, 96)
+	_server_input = LineEdit.new()
+	_server_input.position = Vector2(120, 1240)
+	_server_input.size = Vector2(840, 80)
+	_server_input.placeholder_text = "1.2.3.4   or   https://my.host[:7350]"
+	var gs := get_node_or_null(^"/root/GameSettings")
+	if gs != null and gs.has_method(&"nakama_address_text"):
+		_server_input.text = gs.nakama_address_text()
+	p.add_child(_server_input)
+	var connect_btn := _button(p, "CONNECT", Vector2(120, 1360), Vector2(840, 120), 46)
+	connect_btn.pressed.connect(_on_connect_pressed)
 	_back(p, func() -> void: _click(); _send("back"))
 	return p
 
@@ -288,13 +299,25 @@ func _on_state_entered(st: Node) -> void:
 			if _nm != null: _nm.lan_host("Spell Bop host")
 		"Searching":
 			if _nm != null: _nm.lan_search()
-		"Connecting":
-			if _nm != null: _nm.nakama_connect()
+		# Connecting no longer auto-connects: the panel shows the server-address field
+		# and the CONNECT button (_on_connect_pressed) saves it + calls nakama_connect.
 
 
 func _on_state_exited(st: Node) -> void:
 	if _panels.has(st):
 		_panels[st].visible = false
+
+
+## CONNECT pressed on the Connecting panel: persist the pasted server address, then
+## reach it. "Paste my host's IP" -> set GameSettings -> NetworkManager.nakama_connect.
+func _on_connect_pressed() -> void:
+	_click()
+	var gs := get_node_or_null(^"/root/GameSettings")
+	if gs != null and is_instance_valid(_server_input):
+		var parsed: Dictionary = gs.parse_nakama_address(_server_input.text)
+		gs.set_nakama_server(parsed["host"], parsed["port"], parsed["scheme"])
+	if _nm != null:
+		_nm.nakama_connect()
 
 
 # =====================================================================

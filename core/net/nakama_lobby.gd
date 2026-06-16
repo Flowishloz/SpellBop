@@ -32,6 +32,8 @@ var _socket = null                             ## NakamaSocket
 var _session = null                            ## NakamaSession
 var _bridge: NakamaMultiplayerBridge = null
 var _invite_friend_id := ""                    ## pending: DM the match id here on create
+var _watchdog: SceneTreeTimer = null           ## bounds the connect / match-setup phase (no infinite hang)
+var _closing := false                          ## true during intentional teardown (suppress closed->fail)
 
 
 # =====================================================================
@@ -40,23 +42,38 @@ var _invite_friend_id := ""                    ## pending: DM the match id here 
 func connect_and_auth() -> void:
 	var nk := get_node_or_null(^"/root/Nakama")
 	if nk == null:
-		emit_signal(&"failed", "Nakama autoload missing")
+		_emit_fail("Nakama autoload missing")
 		return
-	_client = nk.create_client(SERVER_KEY, HOST, PORT, SCHEME)
+	# Server address comes from GameSettings ("paste my host's IP"); the constants
+	# are the local-dev fallback if the settings autoload is somehow absent.
+	var host := HOST
+	var port := PORT
+	var scheme := SCHEME
+	var gs := get_node_or_null(^"/root/GameSettings")
+	if gs != null:
+		host = gs.nakama_host
+		port = gs.nakama_port
+		scheme = gs.nakama_scheme
+	_closing = false
+	# Bound the whole connect/auth phase so a stalled socket (real latency / NAT /
+	# a wrong address) can't hang the menu forever — the watchdog fails it cleanly.
+	_arm_watchdog(15.0)
+	_client = nk.create_client(SERVER_KEY, host, port, scheme)
 	var device_id := _device_id()
-	emit_signal(&"status", "Authenticating (device %s)…" % device_id.substr(0, 12))
+	emit_signal(&"status", "Authenticating to %s:%d (device %s)…" % [host, port, device_id.substr(0, 12)])
 	_session = await _client.authenticate_device_async(device_id, null, true)
 	if _session == null or (_session.has_method(&"is_exception") and _session.is_exception()):
-		emit_signal(&"failed", "Nakama auth failed (is the Docker server up on :7350?)")
+		_emit_fail("Couldn't reach the server at %s:%d — check the address and that it's running." % [host, port])
 		return
 	_socket = nk.create_socket_from(_client)
 	_socket.received_channel_message.connect(_on_channel_message)
 	_socket.received_notification.connect(_on_notification)
-	_socket.closed.connect(func() -> void: emit_signal(&"status", "Nakama socket closed"))
+	_socket.closed.connect(_on_socket_closed)
 	var res = await _socket.connect_async(_session)
 	if res != null and res is NakamaAsyncResult and res.is_exception():
-		emit_signal(&"failed", "Nakama socket connect failed")
+		_emit_fail("Connected to %s:%d but the realtime socket failed." % [host, port])
 		return
+	_disarm_watchdog()
 	emit_signal(&"connected", _session.user_id)
 	emit_signal(&"status", "Online as %s" % _session.user_id.substr(0, 8))
 	refresh_friends()
@@ -110,19 +127,21 @@ func accept_friend(user_id: String) -> void:
 # =====================================================================
 func host_and_invite(friend_user_id: String) -> void:
 	if _socket == null:
-		emit_signal(&"failed", "Not connected to Nakama")
+		_emit_fail("Not connected to the server")
 		return
 	_invite_friend_id = friend_user_id
 	_make_bridge()
+	_arm_watchdog(12.0)
 	emit_signal(&"status", "Creating private match…")
 	_bridge.create_match()
 
 
 func accept_invite(match_id: String) -> void:
 	if _socket == null:
-		emit_signal(&"failed", "Not connected to Nakama")
+		_emit_fail("Not connected to the server")
 		return
 	_make_bridge()
+	_arm_watchdog(12.0)
 	emit_signal(&"status", "Joining match…")
 	_bridge.join_match(match_id)
 
@@ -131,9 +150,10 @@ func accept_invite(match_id: String) -> void:
 ## first one the host and the second the client (atomic create-or-join by name).
 func join_smoke_match() -> void:
 	if _socket == null:
-		emit_signal(&"failed", "Not connected to Nakama")
+		_emit_fail("Not connected to the server")
 		return
 	_make_bridge()
+	_arm_watchdog(12.0)
 	emit_signal(&"status", "Joining smoke match…")
 	_bridge.join_named_match(SMOKE_MATCH_NAME)
 
@@ -142,10 +162,11 @@ func _make_bridge() -> void:
 	_bridge = NakamaMultiplayerBridge.new(_socket)
 	multiplayer.multiplayer_peer = _bridge.multiplayer_peer
 	_bridge.match_joined.connect(_on_match_joined)
-	_bridge.match_join_error.connect(func(err) -> void: emit_signal(&"failed", "Match error: %s" % str(err)))
+	_bridge.match_join_error.connect(func(err) -> void: _emit_fail("Match error: %s" % str(err)))
 
 
 func _on_match_joined() -> void:
+	_disarm_watchdog()
 	emit_signal(&"status", "Match joined (%s)" % _bridge.match_id.substr(0, 8))
 	# If we created this as a private invite, DM the match id to the friend.
 	if _invite_friend_id != "":
@@ -179,6 +200,45 @@ func _on_notification(_n) -> void:
 
 
 # =====================================================================
+# robustness — fail-loud + watchdog so a real-latency/NAT stall can't hang
+# =====================================================================
+## The socket closed. If WE closed it (teardown), that's expected; otherwise the
+## server/network dropped us — surface it and tear down instead of stranding the UI.
+func _on_socket_closed() -> void:
+	if _closing:
+		emit_signal(&"status", "Disconnected from the server")
+		return
+	_emit_fail("Lost connection to the server")
+
+
+## Centralised failure: always cancel the watchdog so a late success can't fire after.
+func _emit_fail(reason: String) -> void:
+	_disarm_watchdog()
+	emit_signal(&"failed", reason)
+
+
+func _arm_watchdog(seconds: float) -> void:
+	_disarm_watchdog()
+	var tree := get_tree()
+	if tree == null:
+		return
+	_watchdog = tree.create_timer(seconds)
+	_watchdog.timeout.connect(_on_watchdog_timeout)
+
+
+func _disarm_watchdog() -> void:
+	if _watchdog != null:
+		if _watchdog.timeout.is_connected(_on_watchdog_timeout):
+			_watchdog.timeout.disconnect(_on_watchdog_timeout)
+		_watchdog = null
+
+
+func _on_watchdog_timeout() -> void:
+	_watchdog = null
+	emit_signal(&"failed", "Timed out reaching the server / opponent — check the address and your connection.")
+
+
+# =====================================================================
 # lifecycle
 # =====================================================================
 func on_peer_locked() -> void:
@@ -186,6 +246,8 @@ func on_peer_locked() -> void:
 
 
 func close() -> void:
+	_closing = true
+	_disarm_watchdog()
 	if _bridge != null:
 		if _bridge.has_method(&"leave"):
 			_bridge.leave()
