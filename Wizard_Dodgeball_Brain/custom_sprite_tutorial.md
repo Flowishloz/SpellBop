@@ -425,4 +425,9 @@ Godot binary: `C:\Users\laure\Downloads\Godot_v4.6.3-stable_win64.exe\Godot_v4.6
 wardrobe/cosmetics scene SHIPPED in commit `4665f56` (`scenes/cosmetics.tscn` + `cosmetics.gd`,
 the `facing_override` podium hook, and `SkinCatalog`), with persistence + equip→match still
 deferred there. The billboard gotcha is also captured in the team memory
-`sprite3d-material-override-billboard`.
+`sprite3d-material-override-billboard`. **UI / menu styling** (the cosmetics screen's UI overlay,
+and every menu the wardrobe sits beside) follows its own permanent anchor —
+`Wizard_Dodgeball_Brain/ui_design_system.md` (the "Gen X Soft Club" theme, `Y2KButton`, the frosted
+panel; the title wizard there reflects the equipped skin via `SkinCatalog.palette_for(id)`, shipped
+`02b385d`). That is for the **2D UI chrome**; THIS doc owns the **3D character sprite pipeline** —
+keep the two concerns separate.
