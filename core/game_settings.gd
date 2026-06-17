@@ -32,6 +32,12 @@ signal nakama_server_changed(host: String, port: int, scheme: String)
 var equipped_skin: StringName = &"default_blue"
 signal equipped_skin_changed(id: StringName)
 
+## DEBUG OPPONENT SKIN (the Cosmetics "Equip skin for opponent" toggle) — an optional skin id forced
+## onto the AI OPPONENT wizard in OFFLINE matches ONLY. Empty = no override (the opponent keeps its
+## scene-default red). PRESENTATION ONLY; ignored in netplay (the opponent is a real remote peer there).
+var opponent_skin: StringName = &""
+signal opponent_skin_changed(id: StringName)
+
 
 func _ready() -> void:
 	_load_online()
@@ -122,6 +128,7 @@ func _load_cosmetics() -> void:
 	if cfg.load(_CONFIG_PATH) != OK:
 		return  # no saved settings yet — keep the default skin
 	equipped_skin = StringName(cfg.get_value("cosmetics", "equipped_skin", String(equipped_skin)))
+	opponent_skin = StringName(cfg.get_value("cosmetics", "opponent_skin", String(opponent_skin)))
 
 
 ## Persist the EQUIPPED skin id (the cosmetics EQUIP button). Survives restarts; drives the menu wizard.
@@ -134,3 +141,16 @@ func set_equipped_skin(id: StringName) -> void:
 	cfg.set_value("cosmetics", "equipped_skin", String(id))
 	cfg.save(_CONFIG_PATH)
 	equipped_skin_changed.emit(id)
+
+
+## Persist the DEBUG opponent skin id (the Cosmetics "Equip skin for opponent" toggle). Drives the AI
+## opponent's wizard in OFFLINE matches only (see MatchController._apply_equipped_skin). &"" clears it.
+func set_opponent_skin(id: StringName) -> void:
+	if opponent_skin == id:
+		return
+	opponent_skin = id
+	var cfg := ConfigFile.new()
+	cfg.load(_CONFIG_PATH)  # preserve the other sections
+	cfg.set_value("cosmetics", "opponent_skin", String(id))
+	cfg.save(_CONFIG_PATH)
+	opponent_skin_changed.emit(id)

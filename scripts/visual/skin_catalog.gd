@@ -13,6 +13,14 @@
 class_name SkinCatalog
 extends Object
 
+## DEV MASTER-UNLOCK (development convenience). The shop BACKEND — real purchasing, earned coins, the
+## Nakama inventory RPCs — does NOT exist yet, so while this is TRUE every skin reads as owned and is
+## equippable: new sprites can be previewed on the podium AND equipped onto the title wizard with no
+## paywall. The per-entry `owned` / `price` / `currency` data below is the (untouched) paywall
+## FRAMEWORK — flip this to FALSE the day real ownership lands and the catalog gates exactly as
+## designed, with no other code change. ALWAYS read ownership through is_owned(), never the raw field.
+const DEV_UNLOCK_ALL := true
+
 ## Ordered skin list. `path` loads the SkinPalette; the rest is shop-placeholder metadata.
 ## currency: &"coins" (soft) / &"gems" (premium — the Chaos-Emerald currency) / &"" (free/owned).
 const ENTRIES: Array = [
@@ -20,6 +28,7 @@ const ENTRIES: Array = [
 	{"id": &"default_red",  "path": "res://assets_final/skins/default_red.tres",  "owned": true,  "price": 0,   "currency": &""},
 	{"id": &"neon",         "path": "res://assets_final/skins/neon.tres",         "owned": false, "price": 350, "currency": &"coins"},
 	{"id": &"cyber_wizard", "path": "res://assets_final/skins/cyber_wizard.tres", "owned": false, "price": 500, "currency": &"gems"},
+	{"id": &"space_wizard", "path": "res://assets_final/skins/space_wizard.tres", "owned": false, "price": 400, "currency": &"coins"},
 ]
 
 
@@ -39,6 +48,16 @@ static func entry_for(id: StringName) -> Dictionary:
 		if e["id"] == id:
 			return e
 	return {}
+
+
+## Whether the player OWNS (can equip) a skin — the SINGLE ownership gate every screen must call.
+## Honours the DEV_UNLOCK_ALL master switch first (dev: everything equippable); otherwise falls back
+## to the entry's catalog `owned` flag (unknown ids default to owned, matching the prior UI default).
+## When real purchasing lands, swap the fallback for the inventory lookup — call sites stay unchanged.
+static func is_owned(id: StringName) -> bool:
+	if DEV_UNLOCK_ALL:
+		return true
+	return bool(entry_for(id).get("owned", true))
 
 
 ## Catalog index of a skin id (-1 if absent) — lets the carousel sync to the podium's current skin.

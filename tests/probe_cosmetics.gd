@@ -1,5 +1,5 @@
 ## probe_cosmetics.gd — HEADLESS smoke for the Cosmetics scene + the podium rig.
-## Verifies: (1) SkinCatalog enumerates the 4 skins export-safe (load-by-path); (2) the podium trim
+## Verifies: (1) SkinCatalog enumerates the 5 skins export-safe (load-by-path); (2) the podium trim
 ## resolves facing=FRONT (the new facing_override) with the NEON skin uploaded (color_count=8);
 ## (3) the whole Cosmetics scene builds its diorama + UI overlay in _ready without error.
 ## Run: <godot> --headless --path . -s res://tests/probe_cosmetics.gd

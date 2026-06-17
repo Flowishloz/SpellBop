@@ -36,6 +36,8 @@ var _coins_label: Label
 var _gems_label: Label
 var _purchase_btn: Button
 var _equip_btn: Button
+var _opp_toggle: Button               # DEBUG toggle: "Equip skin for opponent" (offline-only effect)
+var _equip_for_opponent: bool = false # when true, EQUIP targets the AI opponent (offline) not the player
 var _locker: Panel
 var _locker_open: bool = false
 
@@ -399,6 +401,15 @@ func _build_ui() -> void:
 	locker_btn.pressed.connect(func() -> void: _toggle_locker())
 	root.add_child(locker_btn)
 
+	# DEBUG (bottom-left): a small toggle that retargets the EQUIP button at the AI OPPONENT instead of
+	# the player. The opponent skin only takes effect in OFFLINE matches (ignored online — there the
+	# opponent is a real peer). toggle_mode shows the active state via the theme's pressed stylebox.
+	_opp_toggle = _btn("Equip skin for opponent", Vector2(40, 1798), Vector2(404, 76), 23)
+	_opp_toggle.show_cursor = false
+	_opp_toggle.toggle_mode = true
+	_opp_toggle.toggled.connect(_on_opp_toggle)
+	root.add_child(_opp_toggle)
+
 	# The slide-in Locker (built last so it overlays everything; starts offscreen).
 	_build_locker(root)
 
@@ -477,7 +488,7 @@ func _make_locker_tile(skin: SkinPalette, entry: Dictionary) -> Control:
 	nm.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	tile.add_child(nm)
 
-	var owned: bool = bool(entry.get("owned", true))
+	var owned: bool = SkinCatalog.is_owned(skin.id)
 	var status_text := "OWNED"
 	var status_col := Color(0.5, 1.0, 0.6)
 	if not owned:
@@ -485,6 +496,9 @@ func _make_locker_tile(skin: SkinPalette, entry: Dictionary) -> Control:
 		var cur: StringName = entry.get("currency", &"coins")
 		status_text = "LOCKED  ·  %s %s" % [_comma(price), "GEMS" if cur == &"gems" else "COINS"]
 		status_col = Color(0.55, 1.0, 0.7) if cur == &"gems" else Color(1.0, 0.85, 0.45)
+	elif not bool(entry.get("owned", true)):
+		status_text = "OWNED  ·  DEV"   # a paywall skin, equippable only because of the DEV master-unlock
+		status_col = Color(0.62, 0.9, 1.0)
 	var st := _lbl(status_text, Vector2(20, 290), Vector2(420, 46), 28, HORIZONTAL_ALIGNMENT_CENTER)
 	st.modulate = status_col
 	st.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -527,15 +541,27 @@ func _refresh_skin_ui() -> void:
 	var skin: SkinPalette = _skins[_index]
 	var entry := SkinCatalog.entry_for(skin.id)
 	_skin_name.text = String(skin.display_name).to_upper()
-	var owned: bool = bool(entry.get("owned", true))
+	# Ownership goes through SkinCatalog.is_owned() so the DEV_UNLOCK_ALL master switch is honoured —
+	# in dev EVERY skin is equippable. Flip that flag off and the price-gated PURCHASE branch below
+	# (the untouched paywall framework) takes over exactly as before.
+	var owned: bool = SkinCatalog.is_owned(skin.id)
 	if owned:
 		var is_equipped := skin.id == _equipped_id
-		_skin_status.text = "EQUIPPED" if is_equipped else "OWNED"
+		var dev_unlock: bool = not bool(entry.get("owned", true))   # equippable ONLY via the dev switch
+		if is_equipped:
+			_skin_status.text = "EQUIPPED"
+		else:
+			_skin_status.text = "OWNED  ·  DEV" if dev_unlock else "OWNED"
 		_skin_status.modulate = Color(0.5, 1.0, 0.6)
 		_purchase_btn.visible = false
 		_equip_btn.visible = true
-		_equip_btn.text = "EQUIPPED" if is_equipped else "EQUIP"
-		_equip_btn.disabled = is_equipped
+		if _equip_for_opponent:
+			# DEBUG opponent mode: EQUIP always available (re-targets the AI opponent, offline only).
+			_equip_btn.text = "EQUIP OPPONENT"
+			_equip_btn.disabled = false
+		else:
+			_equip_btn.text = "EQUIPPED" if is_equipped else "EQUIP"
+			_equip_btn.disabled = is_equipped
 	else:
 		var price := int(entry.get("price", 0))
 		var cur: StringName = entry.get("currency", &"coins")
@@ -555,14 +581,30 @@ func _on_purchase() -> void:
 
 func _on_equip() -> void:
 	_click()
-	_equipped_id = _skins[_index].id
-	# Persist the choice (GameSettings -> user://) so the MENU / title-screen wizard wears it across
-	# restarts. (It does not yet drive the in-MATCH wizard — that's the remaining equip->match follow-up.)
 	var gs := get_node_or_null(^"/root/GameSettings")
+	var id: StringName = _skins[_index].id
+	if _equip_for_opponent:
+		# DEBUG: set the AI opponent's skin instead — only takes effect in OFFLINE matches.
+		if gs != null and gs.has_method(&"set_opponent_skin"):
+			gs.set_opponent_skin(id)
+		_flash_status("OPPONENT SET  ·  OFFLINE", Color(1.0, 0.66, 0.45))
+		return
+	_equipped_id = id
+	# Persist the choice (GameSettings -> user://) so the MENU / title-screen wizard AND the local
+	# player's in-MATCH wizard (MatchController._apply_equipped_skin) wear it across restarts.
 	if gs != null and gs.has_method(&"set_equipped_skin"):
 		gs.set_equipped_skin(_equipped_id)
 	_refresh_skin_ui()
 	_flash_status("EQUIPPED", Color(0.5, 1.0, 0.6))
+
+
+## DEBUG toggle: flip the EQUIP button between dressing the PLAYER (off) and the AI OPPONENT (on). The
+## opponent skin is only applied in OFFLINE matches (MatchController skips it in netplay).
+func _on_opp_toggle(pressed: bool) -> void:
+	_equip_for_opponent = pressed
+	_click()
+	_opp_toggle.modulate = Color(1.0, 0.66, 0.45) if pressed else Color(1.0, 1.0, 1.0)
+	_refresh_skin_ui()
 
 
 func _flash_status(text: String, col: Color) -> void:

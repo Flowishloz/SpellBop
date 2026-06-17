@@ -339,12 +339,50 @@ func _ready() -> void:
 	_wire_local_charge_feedback(_player, true)
 
 	_enter_netplay()
+	_apply_equipped_skin()
 	round_started.emit(round_number)
 	_begin_round_intro()
 	_warm_up_render_pipelines()
 	_build_arena_borders()
 	_aim_arrow = _AIM_ARROW_SCRIPT.new()
 	add_child(_aim_arrow)
+
+
+## COSMETICS (equip -> match): dress the LOCAL human's wizard in the skin EQUIPPED in the Cosmetics
+## screen (GameSettings.equipped_skin -> SkinCatalog.palette_for -> WizardAnimator.set_skin). The match
+## scene hardcodes the blue/red skins on player.tscn/opponent.tscn; this overrides the local one at
+## match start. PRESENTATION ONLY — set_skin swaps the visual palette/texture on the WizardAnimator (a
+## plain Node, NOT in network_sync), so the deterministic sim is untouched (the sweep stays bit-identical).
+## Offline that's the blue Player; in netplay it's whichever wizard THIS peer owns (host=blue/client=red),
+## so each peer wears its OWN equipped skin (remote peers' skins aren't synced — a future enhancement).
+## No-ops safely when the GameSettings autoload is absent (headless test harnesses may strip it).
+func _apply_equipped_skin() -> void:
+	var gs: Node = get_node_or_null(^"/root/GameSettings")
+	if gs == null:
+		return
+	# Local player's wizard wears the EQUIPPED skin (offline = blue Player; netplay = this peer's wizard).
+	var wiz: Node = _local_wizard()
+	if wiz == null:
+		wiz = _player   # offline / pre-authority: the human drives the blue Player
+	_apply_skin_to(wiz, gs.get(&"equipped_skin"))
+	# DEBUG (OFFLINE ONLY): the Cosmetics "Equip skin for opponent" toggle can force a skin onto the AI
+	# opponent. Skipped in netplay — there the opponent is a real remote peer with its own wizard/skin.
+	if not _netplay:
+		_apply_skin_to(_opponent, gs.get(&"opponent_skin"))
+
+
+## Swap a wizard's visual skin from a (possibly empty/null) skin id. PRESENTATION ONLY — set_skin touches
+## the non-sim WizardAnimator, never saved/rollback state. No-ops on a null wizard, a null/empty id, or an
+## unknown id (SkinCatalog.palette_for returns null → the wizard keeps its scene-default skin).
+func _apply_skin_to(wiz: Node, skin_id: Variant) -> void:
+	if wiz == null or skin_id == null:
+		return
+	var palette: SkinPalette = SkinCatalog.palette_for(skin_id)
+	if palette == null:
+		return
+	var animator: Node = wiz.get_node_or_null(^"WizardAnimator")
+	if animator != null and animator.has_method(&"set_skin"):
+		animator.set_skin(palette)
 
 
 ## LAG-SPIKE FIX (slow-mo exit hitch): the first stack resolution used to

@@ -1,0 +1,11 @@
+[gd_resource type="Resource" script_class="SkinPalette" format=3 uid="uid://cwdacpqcsau8q"]
+
+[ext_resource type="Script" uid="uid://c6745x8vabvfn" path="res://scripts/visual/skin_palette.gd" id="1_spvtf"]
+
+[resource]
+script = ExtResource("1_spvtf")
+id = &"space_wizard"
+display_name = "Space Wizard"
+colors = PackedColorArray(0.098039, 0.109804, 0.156863, 1, 0.184314, 0.27451, 0.313725, 1, 0.658824, 0.560784, 0.345098, 1, 0.898039, 0.827451, 0.545098, 1, 0.913725, 0.964706, 0.811765, 1, 0.321569, 0.427451, 0.431373, 1, 0.768627, 0.913725, 0.8, 1, 0.223529, 0.176471, 0.164706, 1, 0.52549, 0.32549, 0.235294, 1, 0.658824, 0.560784, 0.345098, 1, 0.501961, 0.439216, 0.266667, 1)
+texture_folder_override = "res://assets_final/skins/space_wizard/"
+price = 400
