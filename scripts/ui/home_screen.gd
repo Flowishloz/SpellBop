@@ -13,6 +13,7 @@
 extends Node3D
 
 const MATCH_SCENE := "res://scenes/match_arena.tscn"
+const WIZARD_TRIM := preload("res://scenes/cosmetics_wizard.tscn")
 
 ## Per-letter wobble tuning.
 @export var wobble_height: float = 0.07
@@ -219,13 +220,18 @@ func _build_title() -> void:
 
 
 func _build_diorama() -> void:
-	# Hero wizard (~2 m tall), pulled toward center.
-	var wizard := Sprite3D.new()
-	wizard.texture = load("res://resources/placeholder/wizard_blue.png")
-	wizard.pixel_size = 0.008
-	wizard.texture_filter = BaseMaterial3D.TEXTURE_FILTER_NEAREST
-	wizard.position = Vector3(-0.62, 1.05, 0.0)
+	# Hero wizard — wears the player's EQUIPPED skin (cosmetics -> GameSettings -> here). Reuse the
+	# cosmetics podium trim (Sprite3D + palette_swap material + WizardAnimator, FRONT facing) so the
+	# title wizard looks identical to the wardrobe preview, then upload the saved skin.
+	var wizard := WIZARD_TRIM.instantiate()
+	wizard.position = Vector3(-0.62, 0.0, 0.0)
+	wizard.scale = Vector3(0.92, 0.92, 0.92)
 	add_child(wizard)
+	var anim: Node = wizard.get_node_or_null("WizardAnimator")
+	if anim != null and anim.has_method(&"set_skin"):
+		var skin: SkinPalette = SkinCatalog.palette_for(_equipped_skin_id())
+		if skin != null:
+			anim.set_skin(skin)
 
 	# Low-poly deck LYING FACE-DOWN like cards on a table (Creative Director
 	# fix — it stood upright before): footprint on X/Z, thickness on Y.
@@ -374,3 +380,13 @@ func _make_button(ui: CanvasLayer, label: String, pos: Vector2, btn_size: Vector
 	button.add_theme_font_size_override(&"font_size", font_size)
 	ui.add_child(button)
 	return button
+
+
+## The player's currently-equipped skin id (persisted in GameSettings; default = the identity blue).
+func _equipped_skin_id() -> StringName:
+	var gs := get_node_or_null(^"/root/GameSettings")
+	if gs != null:
+		var v: Variant = gs.get(&"equipped_skin")
+		if v != null:
+			return v
+	return &"default_blue"

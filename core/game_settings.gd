@@ -26,9 +26,16 @@ var nakama_port: int = 7350
 var nakama_scheme: String = "http"
 signal nakama_server_changed(host: String, port: int, scheme: String)
 
+## EQUIPPED COSMETIC SKIN — the skin id the player last EQUIPPED in the Cosmetics screen, persisted to
+## user:// so the title-screen wizard wears it across restarts. PRESENTATION ONLY (no sim / no match
+## wiring yet — this drives the MENU wizard only).
+var equipped_skin: StringName = &"default_blue"
+signal equipped_skin_changed(id: StringName)
+
 
 func _ready() -> void:
 	_load_online()
+	_load_cosmetics()
 
 
 func set_left_handed(value: bool) -> void:
@@ -105,3 +112,25 @@ func nakama_address_text() -> String:
 	if nakama_port != 7350:
 		s += ":" + str(nakama_port)
 	return s
+
+
+# =====================================================================
+# EQUIPPED COSMETIC SKIN persistence (Cosmetics screen → title-screen wizard)
+# =====================================================================
+func _load_cosmetics() -> void:
+	var cfg := ConfigFile.new()
+	if cfg.load(_CONFIG_PATH) != OK:
+		return  # no saved settings yet — keep the default skin
+	equipped_skin = StringName(cfg.get_value("cosmetics", "equipped_skin", String(equipped_skin)))
+
+
+## Persist the EQUIPPED skin id (the cosmetics EQUIP button). Survives restarts; drives the menu wizard.
+func set_equipped_skin(id: StringName) -> void:
+	if equipped_skin == id:
+		return
+	equipped_skin = id
+	var cfg := ConfigFile.new()
+	cfg.load(_CONFIG_PATH)  # preserve the other sections
+	cfg.set_value("cosmetics", "equipped_skin", String(id))
+	cfg.save(_CONFIG_PATH)
+	equipped_skin_changed.emit(id)

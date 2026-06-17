@@ -49,5 +49,14 @@ static func index_of(id: StringName) -> int:
 	return -1
 
 
+## The SkinPalette resource for a skin id (null if unknown / load fails). Lets any screen resolve a
+## saved equipped-skin id back to its palette (e.g. the title-screen wizard).
+static func palette_for(id: StringName) -> SkinPalette:
+	var e := entry_for(id)
+	if e.is_empty():
+		return null
+	return load(e["path"]) as SkinPalette
+
+
 static func size() -> int:
 	return ENTRIES.size()

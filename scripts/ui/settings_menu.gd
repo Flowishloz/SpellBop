@@ -14,7 +14,11 @@ extends CanvasLayer
 ## sets this false on its own SettingsMenu instance).
 @export var show_leave_match: bool = true
 
+const UI_THEME := preload("res://ui/main_theme.tres")
+const FROST_SHADER := preload("res://ui/frosted_panel.gdshader")
+
 var _dim: ColorRect
+var _root: Control
 var _title: Label
 var _left_toggle: CheckButton
 var _leave_button: Button
@@ -29,9 +33,19 @@ func _ready() -> void:
 	process_mode = Node.PROCESS_MODE_ALWAYS
 
 	_dim = ColorRect.new()
-	_dim.color = Color(0.0, 0.0, 0.04, 0.8)
+	_dim.color = Color(0.0, 0.02, 0.06, 0.72)
 	_dim.set_anchors_preset(Control.PRESET_FULL_RECT)
 	add_child(_dim)
+
+	# Themed root — the universal Y2K theme cascades to the controls below (a CanvasLayer is not a
+	# Control, so the theme rides a full-rect root). Toggled wholesale in _set_open.
+	_root = Control.new()
+	_root.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_root.theme = UI_THEME
+	_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(_root)
+	# Frosted-acrylic card behind the controls (the paused scene blurs through it).
+	_root.add_child(_frost(Vector2(220, 496), Vector2(640, 770)))
 
 	_title = Label.new()
 	_title.text = "SETTINGS"
@@ -39,7 +53,8 @@ func _ready() -> void:
 	_title.size = Vector2(1080, 90)
 	_title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_title.add_theme_font_size_override(&"font_size", 64)
-	add_child(_title)
+	_title.theme_type_variation = &"TitleLabel"
+	_root.add_child(_title)
 
 	_left_toggle = CheckButton.new()
 	_left_toggle.text = "Left-handed mode"
@@ -47,26 +62,26 @@ func _ready() -> void:
 	_left_toggle.size = Vector2(420, 80)
 	_left_toggle.add_theme_font_size_override(&"font_size", 34)
 	_left_toggle.toggled.connect(_on_left_handed_toggled)
-	add_child(_left_toggle)
+	_root.add_child(_left_toggle)
 
 	# LEAVE MATCH — only meaningful inside a match scene (the home screen's
 	# settings hides it).
-	_leave_button = Button.new()
+	_leave_button = Y2KButton.new()
 	_leave_button.text = "Leave match"
 	_leave_button.position = Vector2(390, 1020)
 	_leave_button.size = Vector2(300, 86)
 	_leave_button.add_theme_font_size_override(&"font_size", 32)
 	_leave_button.pressed.connect(_on_leave_match)
-	add_child(_leave_button)
+	_root.add_child(_leave_button)
 
 	# RESUME — closes the menu on TOUCH (mobile has no ESC key).
-	_resume_button = Button.new()
+	_resume_button = Y2KButton.new()
 	_resume_button.text = "Resume"
 	_resume_button.position = Vector2(390, 900)
 	_resume_button.size = Vector2(300, 86)
 	_resume_button.add_theme_font_size_override(&"font_size", 32)
 	_resume_button.pressed.connect(_on_resume)
-	add_child(_resume_button)
+	_root.add_child(_resume_button)
 
 	_hint = Label.new()
 	_hint.text = "Tap RESUME (or press ESC)"
@@ -74,8 +89,8 @@ func _ready() -> void:
 	_hint.size = Vector2(1080, 50)
 	_hint.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_hint.add_theme_font_size_override(&"font_size", 28)
-	_hint.add_theme_color_override(&"font_color", Color(0.7, 0.7, 0.8))
-	add_child(_hint)
+	_hint.theme_type_variation = &"MutedLabel"
+	_root.add_child(_hint)
 
 	# TOP-LEFT MENU OPENER — the only way into the menu on TOUCH. Sits just right of
 	# the health bar; visible ONLY while the menu is closed (hidden once it's open).
@@ -104,6 +119,7 @@ func open() -> void:
 func _set_open(open: bool) -> void:
 	_open = open
 	_dim.visible = open
+	_root.visible = open   # hides the frosted card + all controls under it when closed
 	_title.visible = open
 	_left_toggle.visible = open
 	_leave_button.visible = open and show_leave_match
@@ -139,6 +155,19 @@ func _on_resume() -> void:
 func _on_menu_button() -> void:
 	Sfx.play(&"ui_click")
 	_set_open(true)
+
+
+## A frosted-acrylic plate — the paused scene blurs through it (frosted_panel.gdshader).
+func _frost(pos: Vector2, sz: Vector2) -> ColorRect:
+	var r := ColorRect.new()
+	r.position = pos
+	r.size = sz
+	r.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var m := ShaderMaterial.new()
+	m.shader = FROST_SHADER
+	m.set_shader_parameter(&"rect_size", sz)   # drives the rounded-corner SDF mask
+	r.material = m
+	return r
 
 
 ## Top-left menu opener — a DRAWN hamburger (no font-glyph dependency on mobile).

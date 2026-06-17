@@ -26,6 +26,8 @@ const StateChart := preload("res://addons/godot_state_charts/state_chart.gd")
 const CompoundState := preload("res://addons/godot_state_charts/compound_state.gd")
 const AtomicState := preload("res://addons/godot_state_charts/atomic_state.gd")
 const Transition := preload("res://addons/godot_state_charts/transition.gd")
+const UI_THEME := preload("res://ui/main_theme.tres")
+const FROST_SHADER := preload("res://ui/frosted_panel.gdshader")
 
 var _nm: Node                                    ## NetworkManager autoload
 var _chart: Node
@@ -43,6 +45,9 @@ var _invite_box: VBoxContainer
 func _ready() -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	mouse_filter = Control.MOUSE_FILTER_IGNORE
+	theme = UI_THEME   # the universal Y2K theme cascades to every panel / button / label below
+	# No big container plate (CD: light + minimal) — buttons float as light rounded frosted buttons
+	# over the diorama, so the SPELL BOP title art + wizard stay clear above them.
 	_nm = get_node_or_null(^"/root/NetworkManager")
 	_build_chart()
 	_build_panels()
@@ -162,22 +167,20 @@ func _build_panels() -> void:
 
 func _panel_main() -> Control:
 	var p := _panel()
-	var story := _button(p, "STORY MODE", Vector2(90, 1180), Vector2(900, 120), 44)
+	var story := _button(p, "STORY MODE", Vector2(160, 1380), Vector2(760, 96), 38)
 	story.disabled = true
 	story.tooltip_text = "Single-player campaign — coming soon"
-	story.modulate = Color(0.65, 0.65, 0.72)
-	var quick := _button(p, "QUICK MATCH", Vector2(90, 1320), Vector2(900, 130), 52)
+	var quick := _button(p, "QUICK MATCH", Vector2(160, 1488), Vector2(760, 108), 46)
 	quick.pressed.connect(func() -> void: _click(); _send("quick_match"))
 	var labels := ["DECKS", "COSMETICS", "SHOP"]
 	for i in 3:
-		var ph := _button(p, labels[i], Vector2(90 + 313.0 * float(i), 1470), Vector2(287, 92), 28)
+		var ph := _button(p, labels[i], Vector2(160 + 256.0 * float(i), 1620), Vector2(248, 84), 26)
 		if labels[i] == "COSMETICS":
 			# ENABLED: opens the 3D Cosmetics / skin-selection scene. It is a whole separate scene
 			# (a 3D diorama, not a menu sub-panel), so a plain change_scene — not a StateChart state.
 			ph.pressed.connect(func() -> void: _click(); get_tree().change_scene_to_file("res://scenes/cosmetics.tscn"))
 		else:
 			ph.disabled = true
-			ph.modulate = Color(0.6, 0.6, 0.68)
 	return p
 
 
@@ -437,7 +440,7 @@ func _title(p: Control, text: String, y: float) -> Label:
 	l.size = Vector2(960, 80)
 	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	l.add_theme_font_size_override(&"font_size", 64)
-	l.modulate = Color(0.85, 0.92, 1.0)
+	l.theme_type_variation = &"TitleLabel"
 	p.add_child(l)
 	return l
 
@@ -451,14 +454,27 @@ func _label(p: Control, text: String, pos: Vector2, font_size: int) -> Label:
 	return l
 
 
-func _button(p: Control, text: String, pos: Vector2, btn_size: Vector2, font_size: int) -> Button:
-	var b := Button.new()
+func _button(p: Control, text: String, pos: Vector2, btn_size: Vector2, font_size: int) -> Y2KButton:
+	var b := Y2KButton.new()
 	b.text = text
 	b.position = pos
 	b.size = btn_size
 	b.add_theme_font_size_override(&"font_size", font_size)
 	p.add_child(b)
 	return b
+
+
+## A frosted-acrylic plate — the synthwave diorama blurs through it (frosted_panel.gdshader).
+func _frost(pos: Vector2, sz: Vector2) -> ColorRect:
+	var r := ColorRect.new()
+	r.position = pos
+	r.size = sz
+	r.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var m := ShaderMaterial.new()
+	m.shader = FROST_SHADER
+	m.set_shader_parameter(&"rect_size", sz)   # drives the rounded-corner SDF mask
+	r.material = m
+	return r
 
 
 func _back(p: Control, on_press: Callable, text: String = "BACK") -> Button:

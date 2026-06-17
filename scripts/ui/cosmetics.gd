@@ -15,6 +15,8 @@ extends Node3D
 
 const HOME_SCENE := "res://scenes/home_screen.tscn"
 const WIZARD_TRIM := preload("res://scenes/cosmetics_wizard.tscn")
+const UI_THEME := preload("res://ui/main_theme.tres")
+const FROST_SHADER := preload("res://ui/frosted_panel.gdshader")
 
 # Placeholder economy (DISPLAY ONLY this pass — not spent, not saved).
 var _coins: int = 1250
@@ -47,8 +49,10 @@ func _ready() -> void:
 	_build_podium_and_wizard()
 	_build_fireflies()
 	_build_ui()
-	# Start the carousel on whatever the podium trim wears by default (neon — the shader test skin).
-	_index = maxi(0, SkinCatalog.index_of(&"neon"))
+	# Open the carousel on the player's EQUIPPED skin (persisted in GameSettings) so the wardrobe shows
+	# what they're currently wearing on the title screen.
+	_equipped_id = _read_equipped_skin()
+	_index = maxi(0, SkinCatalog.index_of(_equipped_id))
 	_apply_index(false)
 
 
@@ -329,96 +333,120 @@ func _build_ui() -> void:
 	ui.layer = 1
 	add_child(ui)
 
+	# Themed root: the universal Y2K theme (res://ui/main_theme.tres) cascades to EVERY Control below.
+	# (A CanvasLayer is not a Control, so the theme rides a full-rect root instead.) IGNORE filter so
+	# the root itself never eats clicks — its child buttons are still hit-tested independently.
+	var root := Control.new()
+	root.set_anchors_preset(Control.PRESET_FULL_RECT)
+	root.theme = UI_THEME
+	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	ui.add_child(root)
+
+	# ONE slim frosted plate frames just the skin name/status (light + minimal — no big containers;
+	# the back / currency / carousel all float as light rounded buttons over the diorama).
+	root.add_child(_frost(Vector2(190, 250), Vector2(700, 162)))     # skin name / status
+
 	# Top row: BACK (left), currency (right).
 	var back := _btn("‹  BACK", Vector2(40, 44), Vector2(200, 92), 34)
 	back.pressed.connect(func() -> void: _click(); get_tree().change_scene_to_file(HOME_SCENE))
-	ui.add_child(back)
-	_build_currency_display(ui)
+	root.add_child(back)
+	_build_currency_display(root)
 
-	# Title.
+	# Title (theme TitleLabel variation = heavy tracked header font, stark white).
 	var title := _lbl("COSMETICS", Vector2(60, 150), Vector2(960, 90), 64, HORIZONTAL_ALIGNMENT_CENTER)
-	title.modulate = Color(0.9, 0.95, 1.0)
-	ui.add_child(title)
+	title.theme_type_variation = &"TitleLabel"
+	root.add_child(title)
 
 	# Skin name + status — high, just under the title (keeps the wizard hero-shot clear of text).
 	_skin_name = _lbl("", Vector2(140, 262), Vector2(800, 80), 56, HORIZONTAL_ALIGNMENT_CENTER)
-	ui.add_child(_skin_name)
+	_skin_name.theme_type_variation = &"HeaderLabel"
+	root.add_child(_skin_name)
 	_skin_status = _lbl("", Vector2(140, 352), Vector2(800, 54), 36, HORIZONTAL_ALIGNMENT_CENTER)
-	ui.add_child(_skin_status)
+	root.add_child(_skin_status)
 
-	# Same slot: PURCHASE (locked) OR EQUIP (owned) — toggled in _refresh_skin_ui. Above the arrow bar.
-	_purchase_btn = _btn("PURCHASE", Vector2(280, 1360), Vector2(520, 104), 38)
-	_purchase_btn.pressed.connect(_on_purchase)
-	ui.add_child(_purchase_btn)
-	_equip_btn = _btn("EQUIP", Vector2(360, 1360), Vector2(360, 104), 40)
-	_equip_btn.pressed.connect(_on_equip)
-	ui.add_child(_equip_btn)
-
-	# Bottom control bar: big L/R carousel arrows flanking the LOCKER button.
-	var left := _btn("", Vector2(60, 1470), Vector2(200, 230), 10)
+	# Carousel arrows (smaller, icon-only) flank the PURCHASE/EQUIP action; LOCKER sits below. All
+	# float as light rounded frosted buttons — no heavy container plate (arrows suppress the ► cursor
+	# but keep the snap-flash + press-scanline).
+	var left := _btn("", Vector2(60, 1474), Vector2(132, 132), 10)
+	left.show_cursor = false
 	var la := ArrowIcon.new()
 	la.dir = -1
-	la.size = Vector2(200, 230)
+	la.size = Vector2(132, 132)
 	la.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	left.add_child(la)
 	left.pressed.connect(func() -> void: _cycle(-1))
-	ui.add_child(left)
+	root.add_child(left)
 
-	var right := _btn("", Vector2(820, 1470), Vector2(200, 230), 10)
+	var right := _btn("", Vector2(888, 1474), Vector2(132, 132), 10)
+	right.show_cursor = false
 	var ra := ArrowIcon.new()
 	ra.dir = 1
-	ra.size = Vector2(200, 230)
+	ra.size = Vector2(132, 132)
 	ra.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	right.add_child(ra)
 	right.pressed.connect(func() -> void: _cycle(1))
-	ui.add_child(right)
+	root.add_child(right)
 
-	var locker_btn := _btn("LOCKER", Vector2(340, 1530), Vector2(400, 110), 42)
+	# Same slot: PURCHASE (locked) OR EQUIP (owned) — toggled in _refresh_skin_ui — between the arrows.
+	_purchase_btn = _btn("PURCHASE", Vector2(232, 1488), Vector2(616, 104), 36)
+	_purchase_btn.pressed.connect(_on_purchase)
+	root.add_child(_purchase_btn)
+	_equip_btn = _btn("EQUIP", Vector2(330, 1488), Vector2(420, 104), 40)
+	_equip_btn.pressed.connect(_on_equip)
+	root.add_child(_equip_btn)
+
+	var locker_btn := _btn("LOCKER", Vector2(360, 1648), Vector2(360, 96), 40)
 	locker_btn.pressed.connect(func() -> void: _toggle_locker())
-	ui.add_child(locker_btn)
+	root.add_child(locker_btn)
 
 	# The slide-in Locker (built last so it overlays everything; starts offscreen).
-	_build_locker(ui)
+	_build_locker(root)
 
 
-func _build_currency_display(ui: CanvasLayer) -> void:
-	# Gems (the Chaos-Emerald currency) then Coins, top-right.
+func _build_currency_display(parent: Control) -> void:
+	# Gems (the Chaos-Emerald currency) then Coins, top-right. Icons are custom-drawn; the counts keep
+	# their semantic colours (emerald-green gems / gold coins) over the icy theme chrome.
 	var gem := GemIcon.new()
 	gem.position = Vector2(686, 46)
 	gem.size = Vector2(56, 56)
 	gem.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	ui.add_child(gem)
+	parent.add_child(gem)
 	_gems_label = _lbl(_comma(_gems), Vector2(748, 48), Vector2(110, 52), 36, HORIZONTAL_ALIGNMENT_LEFT)
 	_gems_label.modulate = Color(0.5, 1.0, 0.7)
-	ui.add_child(_gems_label)
+	parent.add_child(_gems_label)
 
 	var coin := CoinIcon.new()
 	coin.position = Vector2(866, 46)
 	coin.size = Vector2(56, 56)
 	coin.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	ui.add_child(coin)
+	parent.add_child(coin)
 	_coins_label = _lbl(_comma(_coins), Vector2(928, 48), Vector2(130, 52), 36, HORIZONTAL_ALIGNMENT_LEFT)
 	_coins_label.modulate = Color(1.0, 0.88, 0.45)
-	ui.add_child(_coins_label)
+	parent.add_child(_coins_label)
 
 
-func _build_locker(ui: CanvasLayer) -> void:
+func _build_locker(parent: Control) -> void:
+	# A themed Panel (frosted stylebox = the 1px silver edge) with a real frosted-blur backdrop inset
+	# inside it, so the diorama blurs through the open locker (Rocket-League-garage style).
 	_locker = Panel.new()
 	_locker.position = Vector2(0, 1920)        # offscreen (bottom)
 	_locker.size = Vector2(1080, 1320)
 	_locker.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	var bg := ColorRect.new()
-	bg.color = Color(0.04, 0.04, 0.07, 0.97)
-	bg.size = Vector2(1080, 1320)
-	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var bg := _frost(Vector2(3, 3), Vector2(1074, 1314))   # inset so the panel's silver border peeks
+	var bm := bg.material as ShaderMaterial
+	bm.set_shader_parameter(&"panel_alpha", 0.97)          # near-opaque over the busy diorama
+	bm.set_shader_parameter(&"blur_radius", 3.4)
 	_locker.add_child(bg)
-	_locker.add_child(_lbl("LOCKER", Vector2(60, 40), Vector2(700, 80), 56, HORIZONTAL_ALIGNMENT_LEFT))
-	var close := _btn("X", Vector2(920, 36), Vector2(110, 90), 44)
+	var lk_title := _lbl("LOCKER", Vector2(60, 40), Vector2(700, 80), 56, HORIZONTAL_ALIGNMENT_LEFT)
+	lk_title.theme_type_variation = &"HeaderLabel"
+	_locker.add_child(lk_title)
+	var close := _btn("✕", Vector2(920, 36), Vector2(110, 90), 44)
+	close.show_cursor = false
 	close.pressed.connect(func() -> void: _toggle_locker())
 	_locker.add_child(close)
 	var note := _lbl("All skins (owned + shop). Tap one to preview it on the podium.",
 		Vector2(60, 118), Vector2(960, 40), 26, HORIZONTAL_ALIGNMENT_LEFT)
-	note.modulate = Color(0.7, 0.75, 0.85)
+	note.theme_type_variation = &"MutedLabel"
 	_locker.add_child(note)
 
 	var grid := GridContainer.new()
@@ -429,7 +457,7 @@ func _build_locker(ui: CanvasLayer) -> void:
 	_locker.add_child(grid)
 	for s in _skins:
 		grid.add_child(_make_locker_tile(s, SkinCatalog.entry_for(s.id)))
-	ui.add_child(_locker)
+	parent.add_child(_locker)
 
 
 func _make_locker_tile(skin: SkinPalette, entry: Dictionary) -> Control:
@@ -527,11 +555,14 @@ func _on_purchase() -> void:
 
 func _on_equip() -> void:
 	_click()
-	# Visual placeholder: marks the skin equipped FOR THIS SESSION only. It does not persist or change
-	# the in-match wizard yet (the flagged GameSettings + equipped->match follow-ups).
 	_equipped_id = _skins[_index].id
+	# Persist the choice (GameSettings -> user://) so the MENU / title-screen wizard wears it across
+	# restarts. (It does not yet drive the in-MATCH wizard — that's the remaining equip->match follow-up.)
+	var gs := get_node_or_null(^"/root/GameSettings")
+	if gs != null and gs.has_method(&"set_equipped_skin"):
+		gs.set_equipped_skin(_equipped_id)
 	_refresh_skin_ui()
-	_flash_status("EQUIPPED (preview only)", Color(0.5, 1.0, 0.6))
+	_flash_status("EQUIPPED", Color(0.5, 1.0, 0.6))
 
 
 func _flash_status(text: String, col: Color) -> void:
@@ -556,13 +587,27 @@ func _toggle_locker() -> void:
 # =====================================================================
 # tiny builders + helpers (match the home_screen / menu_flow code style)
 # =====================================================================
-func _btn(text: String, pos: Vector2, sz: Vector2, font_size: int) -> Button:
-	var b := Button.new()
+func _btn(text: String, pos: Vector2, sz: Vector2, font_size: int) -> Y2KButton:
+	var b := Y2KButton.new()
 	b.text = text
 	b.position = pos
 	b.size = sz
 	b.add_theme_font_size_override(&"font_size", font_size)
 	return b
+
+
+## A frosted-acrylic plate — the 3D diorama blurs through it (frosted_panel.gdshader). Sized to sit
+## BEHIND a UI cluster (add it to the parent before the cluster's controls so it stays underneath).
+func _frost(pos: Vector2, sz: Vector2) -> ColorRect:
+	var r := ColorRect.new()
+	r.position = pos
+	r.size = sz
+	r.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var m := ShaderMaterial.new()
+	m.shader = FROST_SHADER
+	m.set_shader_parameter(&"rect_size", sz)   # drives the rounded-corner SDF mask
+	r.material = m
+	return r
 
 
 func _lbl(text: String, pos: Vector2, sz: Vector2, font_size: int, align: int) -> Label:
@@ -592,6 +637,16 @@ func _click() -> void:
 	var sfx := get_node_or_null(^"/root/SoundFX")
 	if sfx != null and sfx.has_method(&"play"):
 		sfx.play(&"ui_click")
+
+
+## The player's currently-equipped skin id (persisted in GameSettings; default = the identity blue).
+func _read_equipped_skin() -> StringName:
+	var gs := get_node_or_null(^"/root/GameSettings")
+	if gs != null:
+		var v: Variant = gs.get(&"equipped_skin")
+		if v != null:
+			return v
+	return &"default_blue"
 
 
 # =====================================================================
