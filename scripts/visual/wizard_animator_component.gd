@@ -454,9 +454,13 @@ func _on_health_changed(current: int, _max_health: int) -> void:
 		_apply_pose(&"idle")
 
 
-func _on_charge_started(_spell: Resource) -> void:
+func _on_charge_started(spell: Resource) -> void:
 	_charging = true
 	_charge_level = 0
+	# Hold the CAST key-pose for the WHOLE charge (Creative Director): only cast_fire.png is drawn
+	# (no charging frame yet), so the wind-up reads as the cast pose held for the exact hold time. If a
+	# dedicated "charging" frame is added later, _select_pose_name prefers it automatically.
+	_cast_pose = _cast_pose_for(spell)
 
 
 func _on_charge_level(level: int) -> void:
@@ -605,7 +609,8 @@ func _select_pose_name(now: int, speed: float) -> StringName:
 	if now < _cast_until_msec:
 		return _cast_pose
 	if _charging:
-		return &"charging"
+		# Hold the CAST pose through the entire charge hold — unless a dedicated "charging" frame exists.
+		return &"charging" if WizardPoseLibrary.has_pose(&"charging") else _cast_pose
 	if speed > run_pose_speed:
 		return &"running"
 	return &"idle"
