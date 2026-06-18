@@ -109,11 +109,25 @@ extends Node
 ## (deterministic cycle — it "saves" its counter sometimes). 2 = every other.
 @export var counter_every_n_windows: int = 2
 
+## DIFFICULTY — REACTIVE-BLOCK GATE: the DEFENSE (slot 2) "last-second block" only
+## fires on ticks where ((tick / 20) % this) == 0, so a LARGER value blocks LESS
+## often (the gate is open a smaller fraction of the time); 1 = always open (blocks
+## every close ball). Set per difficulty tier in _ready. (Was hardcoded to 3 — the
+## Sprint-19 "the AI was too hard" 1/3-open gate; now the Normal tier's value.)
+@export var block_gate_modulo: int = 3
+
+## DIFFICULTY — REACTIVE-BLOCK RANGE: down-court (Y) distance, in sim units, at
+## which an incoming hostile ball is close enough to trigger the last-second block.
+## Larger = blocks from further out (harder). Set per difficulty tier in _ready.
+## (Was hardcoded to 350.0 in the _hostile_ball_incoming call.)
+@export var block_range: float = 350.0
+
 # --- Cached fixed-point values (computed once in _ready()) ---
 var _reaction_fp: int = 0
 var _dodge_fp: int = 0
 var _deadzone_fp: int = 0
 var _patrol_amp_fp: int = 0
+var _block_range_fp: int = 0
 
 # Remaining ticks of the current "button hold". Input-source state, NOT sim
 # state: the brain produces inputs (like a human's fingers); under rollback
@@ -146,12 +160,17 @@ var _stack: Node
 func _ready() -> void:
 	_body = _resolve_body()
 	assert(_body != null, "AIBrainComponent requires an SGCharacterBody2D (set body_path or parent it under one).")
+	# DIFFICULTY: map GameSettings.ai_difficulty -> a tuning preset BEFORE the float
+	# exports are cached to fixed-point below — that one-shot float->int conversion is
+	# the ONLY place floats touch the brain; the per-tick decide() stays pure int.
+	_apply_difficulty_preset()
 	_container = get_node_or_null(projectile_container_path)
 	_target = get_node_or_null(target_body_path) as SGCharacterBody2D
 	_reaction_fp = SGFixed.from_float(maxf(0.0, reaction_distance))
 	_dodge_fp = SGFixed.from_float(maxf(0.0, dodge_radius))
 	_deadzone_fp = SGFixed.from_float(maxf(0.0, track_deadzone))
 	_patrol_amp_fp = SGFixed.from_float(maxf(0.0, patrol_amplitude))
+	_block_range_fp = SGFixed.from_float(maxf(0.0, block_range))
 	# The brain sizes its card "button holds" from the caster's cost math
 	# (reading static tuning, not sim state); it also reads its own health to
 	# decide whether chasing a healing emerald is worthwhile.
@@ -161,6 +180,45 @@ func _ready() -> void:
 		elif child is HealthComponent:
 			_health = child
 	_stack = get_node_or_null(^"/root/TheStack")
+
+
+## DIFFICULTY PRESET (Creative Director — the 3-tier Easy / Normal / Hard selector on the
+## OFFLINE button). Reads GameSettings.ai_difficulty ONCE and rewrites the brain's tunables
+## to that tier's preset. NORMAL (1) leaves every export UNTOUCHED — so it is EXACTLY the
+## shipped tuning, which keeps the headless determinism sweep (whose GameSettings sits at the
+## Normal default) bit-identical. EASY / HARD only ever apply in a live OFFLINE match (the AI
+## is removed in netplay), so they never touch cross-peer sim. Scaling the WHOLE brain —
+## reactions, vision, blocking, counters, offense — gives a meaningful Easy<->Hard spread (the
+## CD's complaint was "the AI doesn't block much").
+func _apply_difficulty_preset() -> void:
+	var gs: Node = get_node_or_null(^"/root/GameSettings")
+	var tier: int = 1
+	if gs != null and "ai_difficulty" in gs:
+		tier = clampi(int(gs.ai_difficulty), 0, 2)
+	match tier:
+		0:  # EASY — slow to notice, narrow vision, rarely blocks, gentle offense.
+			reaction_delay_ticks = 45
+			reaction_distance = 800.0
+			dodge_radius = 120.0
+			block_gate_modulo = 4
+			block_range = 260.0
+			counter_every_n_windows = 3
+			cast_interval_ticks = 270
+			card_interval_ticks = 840
+			hold_variation_ticks = 8
+		2:  # HARD — fast reactions, wide vision, blocks every close ball, aggressive.
+			reaction_delay_ticks = 10
+			reaction_distance = 1300.0
+			dodge_radius = 175.0
+			block_gate_modulo = 1
+			block_range = 460.0
+			counter_every_n_windows = 1
+			cast_interval_ticks = 150
+			card_interval_ticks = 480
+			hold_variation_ticks = 18
+		_:  # NORMAL (1) — leave the shipped @export tuning UNTOUCHED (keeps the
+			# determinism sweep bit-identical; the headless suites run at this tier).
+			pass
 
 
 ## THE INPUT SOURCE. Called by PlayerController._get_local_input() each tick.
@@ -203,10 +261,10 @@ func decide(tick: int) -> Dictionary:
 	# RNG; softened — the AI was too hard). card_interval_ticks <= 0
 	# disables ALL card play (test pin).
 	@warning_ignore("integer_division")
-	var wall_window_open: bool = ((tick / 20) % 3) == 0
+	var wall_window_open: bool = ((tick / 20) % maxi(1, block_gate_modulo)) == 0
 	if card_interval_ticks > 0 and _card_hold_remaining == 0 and wall_window_open \
 			and has_reacted \
-			and _hostile_ball_incoming(my_pos, SGFixed.from_float(350.0)):
+			and _hostile_ball_incoming(my_pos, _block_range_fp):
 		_card_slot = 2
 		_card_hold_remaining = _card_hold_ticks_for(2)
 

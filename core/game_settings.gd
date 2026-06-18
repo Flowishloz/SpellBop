@@ -44,6 +44,14 @@ signal opponent_skin_changed(id: StringName)
 var hover_mode: bool = false
 signal hover_mode_changed(on: bool)
 
+## AI DIFFICULTY (Creative Director) — the OFFLINE opponent's skill tier, chosen on the OFFLINE button's
+## 3-tier selector in the menu: 0 = Easy, 1 = Normal (the default / shipped tuning), 2 = Hard.
+## AIBrainComponent reads this ONCE in _ready and maps it to a tuning preset (the float→int conversion
+## happens there, NOT in the per-tick decision — the determinism rule). OFFLINE matches ONLY (the AI is
+## removed in netplay), so this never touches cross-peer sim. Persisted so the last-chosen tier sticks.
+var ai_difficulty: int = 1
+signal ai_difficulty_changed(tier: int)
+
 
 func _ready() -> void:
 	_load_online()
@@ -136,6 +144,7 @@ func _load_cosmetics() -> void:
 	equipped_skin = StringName(cfg.get_value("cosmetics", "equipped_skin", String(equipped_skin)))
 	opponent_skin = StringName(cfg.get_value("cosmetics", "opponent_skin", String(opponent_skin)))
 	hover_mode = bool(cfg.get_value("cosmetics", "hover_mode", hover_mode))
+	ai_difficulty = clampi(int(cfg.get_value("gameplay", "ai_difficulty", ai_difficulty)), 0, 2)
 
 
 ## Persist the EQUIPPED skin id (the cosmetics EQUIP button). Survives restarts; drives the menu wizard.
@@ -174,3 +183,18 @@ func set_hover_mode(on: bool) -> void:
 	cfg.set_value("cosmetics", "hover_mode", on)
 	cfg.save(_CONFIG_PATH)
 	hover_mode_changed.emit(on)
+
+
+## Persist the AI difficulty tier (0 = Easy / 1 = Normal / 2 = Hard) chosen on the OFFLINE 3-tier
+## selector. The offline opponent's AIBrainComponent reads ai_difficulty in _ready and maps it to a
+## tuning preset. Clamped to the valid range; survives restarts.
+func set_ai_difficulty(tier: int) -> void:
+	var clamped: int = clampi(tier, 0, 2)
+	if ai_difficulty == clamped:
+		return
+	ai_difficulty = clamped
+	var cfg := ConfigFile.new()
+	cfg.load(_CONFIG_PATH)  # preserve the other sections
+	cfg.set_value("gameplay", "ai_difficulty", clamped)
+	cfg.save(_CONFIG_PATH)
+	ai_difficulty_changed.emit(clamped)

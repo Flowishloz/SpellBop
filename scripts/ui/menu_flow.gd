@@ -41,6 +41,14 @@ var _server_input: LineEdit
 var _my_id_label: Label
 var _invite_box: VBoxContainer
 
+# OFFLINE difficulty selector (the 3-tier Easy/Normal/Hard control the OFFLINE button
+# reveals — it replaces the old "dev sandbox" straight-to-launch). Built once in _panel_quick.
+var _quick_modes: Array[Control] = []            ## OFFLINE / LOCAL / ONLINE (hidden while the tray is open)
+var _quick_back: Button                          ## the QuickMatch BACK button (hidden while the tray is open)
+var _difficulty_tray: Control                    ## the hidden difficulty panel
+var _diff_segments: Array[Button] = []           ## the 3 level stops (0=Easy / 1=Normal / 2=Hard)
+var _selected_difficulty: int = 1                ## the highlighted tier (mirrors GameSettings.ai_difficulty)
+
 
 func _ready() -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
@@ -187,14 +195,122 @@ func _panel_main() -> Control:
 func _panel_quick() -> Control:
 	var p := _panel()
 	_title(p, "QUICK MATCH", 1120)
-	var offline := _button(p, "OFFLINE  ·  dev sandbox", Vector2(140, 1240), Vector2(800, 120), 40)
-	offline.pressed.connect(func() -> void: _click(); _nm.start_offline())
+	# The three mode buttons live in a group we hide while the OFFLINE difficulty tray
+	# is open, so the tray takes over that vertical band (no overlap).
+	_quick_modes.clear()
+	# OFFLINE no longer launches straight into the sandbox — it OPENS the 3-tier AI
+	# difficulty selector (Easy / Normal / Hard); picking a tier launches the match.
+	var offline := _button(p, "OFFLINE", Vector2(140, 1240), Vector2(800, 120), 40)
+	offline.pressed.connect(func() -> void: _click(); _open_difficulty())
+	_quick_modes.append(offline)
 	var local := _button(p, "LOCAL  ·  same WiFi", Vector2(140, 1380), Vector2(800, 120), 40)
 	local.pressed.connect(func() -> void: _click(); _send("local"))
+	_quick_modes.append(local)
 	var online := _button(p, "ONLINE  ·  Nakama", Vector2(140, 1520), Vector2(800, 120), 40)
 	online.pressed.connect(func() -> void: _click(); _send("online"))
-	_back(p, func() -> void: _send("back"))
+	_quick_modes.append(online)
+	_quick_back = _back(p, func() -> void: _send("back"))
+	# The OFFLINE difficulty tray — built hidden, revealed by the OFFLINE button.
+	_difficulty_tray = _build_difficulty_tray(p)
 	return p
+
+
+## Builds the hidden OFFLINE difficulty selector: a "slider"-styled control with three
+## FIXED stops (Level 1 / 2 / 3 = Easy / Normal / Hard — the slider is aesthetic, not
+## draggable), a PLAY button that launches the offline match at the chosen tier, and a
+## BACK that collapses the tray. Occupies the same band as the mode buttons (hidden while open).
+func _build_difficulty_tray(parent: Control) -> Control:
+	var tray := _panel()
+	parent.add_child(tray)
+	var head := _label(tray, "SELECT  DIFFICULTY", Vector2(140, 1200), 34)
+	head.size = Vector2(800, 50)
+	head.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	# The slider rail behind the three stops (pure decoration — reads as a 3-notch slider).
+	var rail := ColorRect.new()
+	rail.color = Color(0.55, 0.62, 0.85, 0.32)
+	rail.position = Vector2(150, 1346)
+	rail.size = Vector2(780, 12)
+	rail.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	tray.add_child(rail)
+	# Three FIXED stops along the rail (the big numbers 1/2/3 with the tier name beneath).
+	# Clicking one SELECTS it (lights the "handle"); PLAY launches at the selection.
+	_diff_segments.clear()
+	var names := ["EASY", "NORMAL", "HARD"]
+	var seg_w: float = 232.0
+	var gap: float = 12.0
+	var start_x: float = 540.0 - (seg_w * 3.0 + gap * 2.0) * 0.5   # centred on the 1080-wide canvas
+	for i in 3:
+		var sx: float = start_x + float(i) * (seg_w + gap)
+		var seg := _button(tray, str(i + 1), Vector2(sx, 1290), Vector2(seg_w, 120), 48)
+		seg.pressed.connect(func() -> void: _click(); _select_difficulty(i))
+		_diff_segments.append(seg)
+		var nm := _label(tray, names[i], Vector2(sx, 1422), 24)
+		nm.size = Vector2(seg_w, 32)
+		nm.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	# PLAY — launch the offline match at the selected tier.
+	var play := _button(tray, "PLAY  ▶", Vector2(300, 1490), Vector2(480, 116), 46)
+	play.pressed.connect(_on_play_offline)
+	# BACK — collapse the tray, restore the OFFLINE / LOCAL / ONLINE choice.
+	var back := _button(tray, "‹  BACK", Vector2(90, 1640), Vector2(320, 84), 32)
+	back.pressed.connect(func() -> void: _click(); _close_difficulty())
+	tray.visible = false
+	return tray
+
+
+## OFFLINE pressed → reveal the difficulty tray (default the highlight to the last-chosen
+## tier) and hide the mode buttons so the tray owns the band.
+func _open_difficulty() -> void:
+	if not is_instance_valid(_difficulty_tray):
+		return
+	var gs := get_node_or_null(^"/root/GameSettings")
+	if gs != null and "ai_difficulty" in gs:
+		_selected_difficulty = clampi(int(gs.ai_difficulty), 0, 2)
+	for b in _quick_modes:
+		if is_instance_valid(b):
+			b.visible = false
+	if is_instance_valid(_quick_back):
+		_quick_back.visible = false
+	_difficulty_tray.visible = true
+	_refresh_difficulty_selection()
+
+
+## Collapse the tray, restore the OFFLINE / LOCAL / ONLINE choice. Also called on every
+## QuickMatch (re)entry so a stale-open tray never lingers.
+func _close_difficulty() -> void:
+	if is_instance_valid(_difficulty_tray):
+		_difficulty_tray.visible = false
+	for b in _quick_modes:
+		if is_instance_valid(b):
+			b.visible = true
+	if is_instance_valid(_quick_back):
+		_quick_back.visible = true
+
+
+## A difficulty stop was clicked — move the highlighted "handle" (PLAY launches it).
+func _select_difficulty(tier: int) -> void:
+	_selected_difficulty = clampi(tier, 0, 2)
+	_refresh_difficulty_selection()
+
+
+## Light the selected stop (the slider "handle") and dim the others.
+func _refresh_difficulty_selection() -> void:
+	for i in _diff_segments.size():
+		var seg: Button = _diff_segments[i]
+		if not is_instance_valid(seg):
+			continue
+		seg.modulate = Color(1.0, 0.96, 0.72) if i == _selected_difficulty \
+				else Color(0.66, 0.70, 0.82, 0.7)
+
+
+## PLAY pressed — persist the chosen tier (the offline AIBrainComponent reads it at
+## _ready) and launch the offline match.
+func _on_play_offline() -> void:
+	_click()
+	var gs := get_node_or_null(^"/root/GameSettings")
+	if gs != null and gs.has_method(&"set_ai_difficulty"):
+		gs.set_ai_difficulty(_selected_difficulty)
+	if _nm != null:
+		_nm.start_offline()
 
 
 func _panel_local_choice() -> Control:
@@ -303,6 +419,8 @@ func _on_state_entered(st: Node) -> void:
 			# Landing on the hub (incl. after Back/failure) tears down any
 			# half-open lobby/connection so a fresh choice starts clean.
 			if _nm != null: _nm.cancel_lobby()
+			# Always show the mode list — collapse a difficulty tray left open on a prior visit.
+			_close_difficulty()
 		"Hosting":
 			if _nm != null: _nm.lan_host("Spell Bop host")
 		"Searching":
