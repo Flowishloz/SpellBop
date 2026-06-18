@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://xlrb8kstgxhi"
-path="res://.godot/imported/idle_front.png-061754f127face3e4aed9d2fea6aeb00.ctex"
+uid="uid://dqj0tsqticofg"
+path="res://.godot/imported/cast_fire_back.png-8a1112da226972539e49a6f11107be57.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets_final/skins/space_wizard/idle_front.png"
-dest_files=["res://.godot/imported/idle_front.png-061754f127face3e4aed9d2fea6aeb00.ctex"]
+source_file="res://assets_final/skins/space_wizard/cast_fire_back.png"
+dest_files=["res://.godot/imported/cast_fire_back.png-8a1112da226972539e49a6f11107be57.ctex"]
 
 [params]
 
