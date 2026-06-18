@@ -152,6 +152,11 @@ signal knockout_began(is_match_end: bool, player_won: bool)
 @export var capture_release_trauma_min: float = 0.5
 ## The anticipation rumble is scaled by this at low intensity, up to 1.0 at high intensity.
 @export var shield_rumble_min_scale: float = 0.6
+## SHIELD-REFLECT RALLY (Creative Director): each successive reflect of the same ball grows the shield
+## SHAKE (the anticipation rumble + the release slam) by this factor — so a long rally's exchanges hit
+## harder and harder. Presentation only; pairs with the barrier's reflect_hold_growth + the mover's
+## rally_speed_growth. The reflect count is clamped (~8) so even a long rally stays sane.
+@export var reflect_shake_growth: float = 1.1
 ## Peak UV displacement of the EMERALD screen ripple (unchanged — not part of the variable shield set).
 @export var emerald_ripple_strength: float = 0.04
 ## HITSTOP (Sprint 23, Creative Director): a wizard taking a hit triggers a brief presentation freeze
@@ -232,6 +237,10 @@ var _ripple_seconds: float = 0.7   # per-ripple expansion duration (set by _trig
 # Reflect intensity (0..1) of the CURRENT shield capture (from capture_started) — scales the
 # rumble through the hold and the release slam; see _on_capture_started / _on_capture_released.
 var _capture_intensity: float = 1.0
+# SHIELD-REFLECT RALLY: how many times the ball in the CURRENT shield capture has already been
+# reflected (from capture_started) — grows the shake (rumble + slam) per exchange. Presentation
+# only (never sim/saved).
+var _capture_reflects: int = 0
 var _in_death_sequence: bool = false
 # True while a shield capture-hold is dilating time (so capture_released knows to
 # resume). Guards against resuming when the slow-mo wasn't ours to begin with.
@@ -647,9 +656,12 @@ func _on_projectile_entered(node: Node) -> void:
 ## happen") + drop into the slow-mo anticipation hold. Both scale with the reflect intensity (WOA
 ## blended with incoming speed). The wave fires even during a stack window / death beat (it is just
 ## a shader pass); only the time DILATION is skipped when another system already owns the clock.
-func _on_capture_started(intensity: float, barrier: Node) -> void:
+func _on_capture_started(intensity: float, reflects: int, barrier: Node) -> void:
 	# Reflect intensity (0..1) scales the whole beat (wave + slow-mo + rumble + slam).
 	_capture_intensity = clampf(intensity, 0.0, 1.0)
+	# SHIELD-REFLECT RALLY: each prior reflect of this ball grows the SHAKE (rumble + slam) this
+	# exchange so a rally builds — presentation only (saturates at the camera's max on long rallies).
+	_capture_reflects = maxi(0, reflects)
 	# DISPLACEMENT WAVE — always. SIZE (strength) + SPEED (seconds) scale with intensity: small +
 	# fast at low, large + slow (the dramatic one) at high.
 	if barrier != null:
@@ -675,7 +687,7 @@ func _on_capture_charging(progress: float) -> void:
 		# A harder rumble builds through the hold (0.3 -> 0.9), SCALED by the reflect intensity
 		# (a low-intensity block rumbles less — less anticipation; see _on_capture_started).
 		var build: float = lerpf(0.3, 0.9, clampf(progress, 0.0, 1.0))
-		_camera.set_rumble(build * lerpf(shield_rumble_min_scale, 1.0, _capture_intensity))
+		_camera.set_rumble(build * lerpf(shield_rumble_min_scale, 1.0, _capture_intensity) * _reflect_shake_mult())
 
 
 func _on_capture_released() -> void:
@@ -686,9 +698,18 @@ func _on_capture_released() -> void:
 			_stack.resume_speed()
 	if _camera != null:
 		_camera.set_rumble(0.0)
-		# The release SLAM scales with the reflect intensity (light for a low-intensity block).
-		_camera.add_trauma(lerpf(capture_release_trauma_min, capture_release_trauma, _capture_intensity))
+		# The release SLAM scales with the reflect intensity (light for a low-intensity block) AND grows
+		# per rally reflect (SHIELD-REFLECT RALLY): each successive return hits harder.
+		_camera.add_trauma(lerpf(capture_release_trauma_min, capture_release_trauma, _capture_intensity) * _reflect_shake_mult())
 	Sfx.play(&"shield_release")
+
+
+## SHIELD-REFLECT RALLY: the shake growth for the CURRENT rally exchange — reflect_shake_growth raised
+## to the ball's reflect count (clamped). Presentation only (float); scales the anticipation rumble +
+## release slam so each successive return in a rally hits harder. Saturates at the camera's max shake
+## on long rallies (intended ceiling — a long rally maxes out the screen shake).
+func _reflect_shake_mult() -> float:
+	return pow(maxf(1.0, reflect_shake_growth), float(clampi(_capture_reflects, 0, 8)))
 
 
 func _on_wizard_damaged(amount: int, health: Node, trauma: float, hit_was_player: bool) -> void:

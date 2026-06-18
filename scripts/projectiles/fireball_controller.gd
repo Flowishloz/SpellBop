@@ -147,6 +147,24 @@ func get_velocity_y() -> int:
 	return _movement.get_velocity_y()
 
 
+## SHIELD-REFLECT RALLY — duck-typed surface BarrierController calls at capture/release. The mover
+## owns the sim state (`rc`, saved via _save_state["movement"]) + the escalating speed cap; these
+## just forward. get_reflect_count() scales the hold, rally_speed_mult_fp() scales the released
+## speed, add_reflect() records the reflect. Sparks never reach release (they shatter), so they
+## never increment — matching "it won't happen with sparks".
+func get_reflect_count() -> int:
+	return _movement.get_reflect_count() if _movement != null else 0
+
+
+func rally_speed_mult_fp() -> int:
+	return _movement.rally_speed_mult_fp() if _movement != null else SGFixed.ONE
+
+
+func add_reflect() -> void:
+	if _movement != null:
+		_movement.add_reflect()
+
+
 func _on_expired() -> void:
 	# Idempotent: repeated expired emits before the free lands are harmless.
 	# Rewindable under rollback (SyncManager.despawn), queue_free in single-player.

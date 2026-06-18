@@ -36,8 +36,10 @@ signal barrier_expired
 
 ## A hostile ball stuck to the wall and is charging (anticipation hold). [param intensity]
 ## (0..1 = the WOA blended with the incoming speed) scales the presentation for the whole beat:
-## ripple size/speed, slow-mo depth, rumble, and the release slam (MatchController reads it).
-signal capture_started(intensity: float)
+## ripple size/speed, slow-mo depth, rumble, and the release slam (MatchController reads it). [param
+## reflects] = how many times THIS ball has already been reflected (SHIELD-REFLECT RALLY): MatchController
+## scales the shake up per reflect (reflect_shake_growth) so a rally's shake builds exchange by exchange.
+signal capture_started(intensity: float, reflects: int)
 
 ## Per held tick: progress 0..1 toward release. Camera-shake hook
 ## (MatchController ramps rumble off this — pure presentation).
@@ -61,6 +63,15 @@ signal capture_released
 @export var capture_ref_speed: float = 35.0
 ## Fraction of the intensity that comes from SPEED (the rest from the WOA block-timing). 0.5 = even.
 @export_range(0.0, 1.0) var capture_speed_weight: float = 0.5
+
+## SHIELD-REFLECT RALLY (Creative Director): each successive reflect of the SAME ball in a rally
+## stretches the anticipation hold by reflect_hold_growth (the rumble auto-slows to suit — it is
+## progress-driven, so a longer hold = a slower build) and the released ball accelerates in lockstep
+## (the mover's rally cap, ProjectileMovementComponent.rally_speed_growth). reflect 0 — the FIRST block
+## — is the baseline (no growth), so a single block keeps its current feel; escalation builds from the
+## rally's second exchange on. Bounded by max_rally_reflects (shared ceiling with the mover).
+@export var reflect_hold_growth: float = 1.2
+@export var max_rally_reflects: int = 6
 
 ## Visual rig (a Node3D holding the wall mesh). The barrier positions it from
 ## the sim ONCE at deploy (and per tick when drifting) — barriers have no
@@ -105,6 +116,9 @@ var _visual_root: Node3D
 ## while the hitbox sat correctly — the recurring client-perspective class. Sim untouched.
 var _view_flip_z: bool = false
 
+## SHIELD-REFLECT RALLY: reflect_hold_growth as fixed-point (cached in _ready).
+var _hold_growth_fp: int = SGFixed.ONE
+
 
 func _ready() -> void:
 	# HARDCODED COLLISION LAYERS (graveyard rule: the editor fails to persist
@@ -114,6 +128,7 @@ func _ready() -> void:
 	collision_mask = 0
 	fixed_rotation = 0
 	_visual_root = get_node_or_null(visual_root_path) as Node3D
+	_hold_growth_fp = SGFixed.from_float(maxf(1.0, reflect_hold_growth))
 
 	# Mirror the visual on the CLIENT (same rule as VisualBridgeComponent): the client
 	# presents the court spun front-to-back so ITS wizard is at the near baseline.
@@ -241,26 +256,12 @@ func _try_capture() -> void:
 	var container: Node = get_parent()
 	if container == null:
 		return
-	var my_pos: SGFixedVector2 = get_global_fixed_position()
-	var band_x: int = _half_w_fp + SGFixed.from_float(28.0)
-	var band_y: int = _half_h_fp + SGFixed.from_float(34.0)
 	for child in container.get_children():
 		if child == self or not child.has_method(&"redirect") or not child.has_method(&"get_hit_source"):
 			continue
 		if child.get_hit_source() == _owner_body:
 			continue  # the owner's own throw: plain physics bounce only
-		var ball_pos: SGFixedVector2 = child.get_global_fixed_position()
-		# BALL-SIZE-AWARE BAND: include the BALL's OWN half-extents so this is a true AABB overlap,
-		# not a centre-distance test. The wide frost wave (rect half-width ~200) used to be SKIPPED
-		# when its CENTRE drifted off the barrier (the player slid sideways) even though its body
-		# crossed the wall — the shield-capture missed intermittently on ice. A circle reports its
-		# radius; the rect reports (extents_x, extents_y). Mirrors the wizard hit-detection overlap.
-		var ext: SGFixedVector2 = child.get_collider_half_extents() if child.has_method(&"get_collider_half_extents") else SGFixed.vector2(0, 0)
-		# SPEED-AWARE BAND (WOA consistency fix): a fast ball can bounce off the wall and travel a
-		# full tick-step before this scan runs (tick ORDER depends on container entry order) — widen
-		# the Y band by the ball's per-tick speed so one tick of escape never dodges the capture.
-		var dyn_band_y: int = band_y + ext.y + absi(child.get_velocity_y())
-		if absi(my_pos.x - ball_pos.x) >= band_x + ext.x or absi(my_pos.y - ball_pos.y) >= dyn_band_y:
+		if not _in_capture_band(child):
 			continue
 		# BARRIER BREAKER (Spark Bolt): no capture — the wall SHATTERS and
 		# the bolt splits into two 1-damage shards that continue through.
@@ -277,7 +278,12 @@ func _try_capture() -> void:
 		# variable sim hold here AND the presentation (emitted on capture_started). Fixed-point int.
 		var intensity_fp: int = _reflect_intensity_fp()
 		var span: int = maxi(0, capture_hold_max_ticks - capture_hold_min_ticks)
-		_capture_total = maxi(1, capture_hold_min_ticks + (span * intensity_fp) / SGFixed.ONE)
+		var base_hold: int = maxi(1, capture_hold_min_ticks + (span * intensity_fp) / SGFixed.ONE)
+		# SHIELD-REFLECT RALLY: stretch the hold 1.2x per PRIOR reflect of this ball (reflect 0 = the
+		# baseline first block). The rumble is progress-driven (capture_charging = 1 - remaining/total),
+		# so a longer total auto-SLOWS the anticipation build to fill it — no separate pulse-speed code.
+		var reflects: int = _captured_ball.get_reflect_count() if _captured_ball.has_method(&"get_reflect_count") else 0
+		_capture_total = maxi(1, (base_hold * _rally_pow_fp(_hold_growth_fp, mini(reflects, max_rally_reflects))) >> 16)
 		_capture_remaining = _capture_total
 		_woa_armed = false  # one capture per barrier
 		child.launch(0, 0, SGFixed.ONE)
@@ -288,7 +294,7 @@ func _try_capture() -> void:
 			BurstFX.spawn(get_parent(), _visual_root.global_position + Vector3(0, 0.2, 0),
 					Vector3.UP, Color(0.45, 0.9, 0.6, 0.95), 30, 3.6, 0.07, 80.0)
 		Sfx.play(&"shield_capture")
-		capture_started.emit(float(intensity_fp) / float(SGFixed.ONE))
+		capture_started.emit(float(intensity_fp) / float(SGFixed.ONE), reflects)
 		return
 
 
@@ -302,6 +308,67 @@ func _reflect_intensity_fp() -> int:
 	var spd_part: int = SGFixed.mul(speed_norm_fp, w_fp)
 	var woa_part: int = SGFixed.mul(clampi(_woa_fp, 0, SGFixed.ONE), SGFixed.ONE - w_fp)
 	return clampi(spd_part + woa_part, 0, SGFixed.ONE)
+
+
+## SHIELD-REFLECT RALLY: deterministic fixed-point power base_fp^exp (exp >= 0) for the hold
+## escalation — a small bounded loop (exp <= max_rally_reflects) of SGFixed.mul, identical on peers.
+func _rally_pow_fp(base_fp: int, exp: int) -> int:
+	var result: int = SGFixed.ONE
+	for _i in maxi(0, exp):
+		result = SGFixed.mul(result, base_fp)
+	return result
+
+
+## SHIELD-REFLECT RALLY: a wizard's CardCasterComponent (its shield/card runtime) — direct child path
+## first, then a class scan (deterministic scene-tree order). Used to re-enable the receiver's shield.
+func _find_card_caster(wizard: Node) -> Node:
+	if wizard == null:
+		return null
+	var direct: Node = wizard.get_node_or_null(^"CardCasterComponent")
+	if direct != null:
+		return direct
+	for child in wizard.get_children():
+		if child is CardCasterComponent:
+			return child
+	return null
+
+
+## AABB capture-band test (shared by _try_capture and would_capture): is [param ball] overlapping this
+## wall face, ball-size- AND speed-aware (the BALL's own half-extents + its per-tick Y step widen the
+## band, so a wide frost wave or a fast ball can't slip the scan). Pure fixed-point int — deterministic.
+func _in_capture_band(ball: Node) -> bool:
+	var my_pos: SGFixedVector2 = get_global_fixed_position()
+	var ball_pos: SGFixedVector2 = ball.get_global_fixed_position()
+	var band_x: int = _half_w_fp + SGFixed.from_float(28.0)
+	var band_y: int = _half_h_fp + SGFixed.from_float(34.0)
+	var ext: SGFixedVector2 = ball.get_collider_half_extents() if ball.has_method(&"get_collider_half_extents") else SGFixed.vector2(0, 0)
+	var dyn_band_y: int = band_y + ext.y + (absi(ball.get_velocity_y()) if ball.has_method(&"get_velocity_y") else 0)
+	return absi(my_pos.x - ball_pos.x) < band_x + ext.x and absi(my_pos.y - ball_pos.y) < dyn_band_y
+
+
+## The wizard this barrier defends (its own throws pass through). Read by a ball's hit detection to tell
+## whether THIS barrier protects the wizard the ball is about to strike.
+func get_owner_body() -> Node:
+	return _owner_body
+
+
+## LAST-MOMENT BLOCK FIX: true when this barrier is currently holding [param ball], OR is armed and the
+## ball is within its capture band — i.e. the barrier is intercepting that ball FOR its owner. The ball's
+## hit detection reads this so a ball caught at the last instant doesn't ALSO land its hit on the owner
+## ("I blocked but still took damage"). Barrier-breakers (Spark Bolt) SHATTER instead of being captured,
+## so they are NOT intercepted — they still deal their hit (matches "it won't happen with sparks").
+func would_capture(ball: Node) -> bool:
+	if ball == null or not is_instance_valid(ball):
+		return false
+	if _captured_ball == ball:
+		return true  # already held on the wall
+	if not _woa_armed:
+		return false
+	if "splits_on_barrier" in ball and ball.splits_on_barrier:
+		return false
+	if ball.has_method(&"get_hit_source") and ball.get_hit_source() == _owner_body:
+		return false  # the owner's own throw is never captured
+	return _in_capture_band(ball)
 
 
 ## GLASS SHATTER (a barrier breaker got through): shard burst flattened
@@ -334,7 +401,11 @@ func _tick_capture() -> void:
 	# captured ball's fixed X (bit 16 = the 1-sim-unit bit).
 	var ball_pos: SGFixedVector2 = _captured_ball.get_global_fixed_position()
 	var sign_hash: int = 1 if ((ball_pos.x >> 16) & 1) == 1 else -1
-	var speed_out_fp: int = SGFixed.mul(_captured_speed_fp, _reflect_mult_fp)
+	# SHIELD-REFLECT RALLY: each reflect sends the ball back faster — the mover's rally multiplier
+	# (1.2^reflect_count, bounded) on TOP of the WOA reflect_mult. The mover's matching escalating
+	# speed cap (rally_speed_mult_fp) keeps the higher speed from clipping back to the base ceiling.
+	var rally_mult_fp: int = _captured_ball.rally_speed_mult_fp() if _captured_ball.has_method(&"rally_speed_mult_fp") else SGFixed.ONE
+	var speed_out_fp: int = SGFixed.mul(SGFixed.mul(_captured_speed_fp, _reflect_mult_fp), rally_mult_fp)
 	var vx: int = SGFixed.mul(speed_out_fp, _ricochet_fp) * sign_hash
 	var vy: int = speed_out_fp * _release_dir
 
@@ -361,6 +432,16 @@ func _tick_capture() -> void:
 			_captured_ball.set_homing(original_thrower, SGFixed.from_float(0.4))
 		else:
 			_captured_ball.set_homing(null, 0)  # a reflected ball flies true
+	# SHIELD-REFLECT RALLY: re-enable the RECEIVER's shield so they can re-block and keep the rally
+	# alive (the ball now flies back toward original_thrower). Deterministic — this release is a sim
+	# tick, so both peers re-enable together; sparks shatter and never reach here, as intended.
+	if original_thrower != null and is_instance_valid(original_thrower):
+		var rcaster: Node = _find_card_caster(original_thrower)
+		if rcaster != null and rcaster.has_method(&"make_defense_available"):
+			rcaster.make_defense_available()
+	# Record this reflect on the ball (grows its hold + speed escalation for the NEXT exchange).
+	if _captured_ball.has_method(&"add_reflect"):
+		_captured_ball.add_reflect()
 	_captured_ball.launch(vx, vy, SGFixed.ONE)
 	_captured_ball = null
 	capture_released.emit()

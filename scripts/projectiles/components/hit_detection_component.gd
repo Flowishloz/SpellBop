@@ -105,6 +105,12 @@ func _network_process(_input: Dictionary) -> void:
 		var target_pos: SGFixedVector2 = target.get_global_fixed_position()
 		if absi(my_pos.x - target_pos.x) < _half_w_fp + _radius_x_fp + step_x \
 				and absi(my_pos.y - target_pos.y) < _half_h_fp + _radius_y_fp + step_y:
+			# LAST-MOMENT BLOCK FIX: if a barrier owned by this wizard is capturing / about to capture
+			# THIS ball, the block intercepts the shot — skip WITHOUT latching so the ball stays live to
+			# be reflected (and can then strike the OTHER wizard). Without this, a ball caught at the very
+			# last instant still landed its hit ("I blocked but still took damage"). Deterministic.
+			if _intercepted_by_barrier(target):
+				continue
 			_has_hit = true
 			hit.emit(target)
 			return
@@ -117,6 +123,20 @@ func set_radius_units(units: float) -> void:
 	hit_radius = units
 	_radius_x_fp = SGFixed.from_float(units)
 	_radius_y_fp = SGFixed.from_float(units)
+
+
+## LAST-MOMENT BLOCK FIX: true if a barrier owned by [param target] is capturing / about to capture this
+## ball — the block protects its owner (BarrierController.would_capture). Sibling scan of the projectile
+## container (barriers live alongside projectiles); deterministic scene-tree order, all sim reads.
+func _intercepted_by_barrier(target: Node) -> bool:
+	var container: Node = _body.get_parent()
+	if container == null:
+		return false
+	for sib in container.get_children():
+		if sib.has_method(&"get_owner_body") and sib.has_method(&"would_capture") \
+				and sib.get_owner_body() == target and sib.would_capture(_body):
+			return true
+	return false
 
 
 func _save_state() -> Dictionary:

@@ -151,6 +151,20 @@ func cooldown_ticks_remaining(slot: int) -> int:
 	return _slot_cd[slot - 1]
 
 
+## SHIELD-REFLECT RALLY (Creative Director): a barrier just reflected a ball back at this wizard —
+## clear the DEFENSE slot's cooldown so the player can immediately re-block and keep the rally going
+## (the cast gate is `_slot_cd[slot-1] == 0`). Called deterministically from BarrierController._tick_capture
+## (a sim tick) so both peers re-enable on the SAME tick; the cooldown is saved state ("cd1/2/3"), so a
+## rollback restores it and an idempotent re-clear stays in lockstep. Sparks shatter the wall (never reach
+## release), so this never fires for them — matching "it won't happen with sparks".
+func make_defense_available() -> void:
+	for slot in range(1, 4):
+		var card: CardResource = _card_for_slot(slot)
+		if card != null and card.card_type == CardResource.CardType.DEFENSE:
+			_slot_cd[slot - 1] = 0
+			return
+
+
 # =====================================================================
 # ROLLBACK CONTRACT
 # =====================================================================

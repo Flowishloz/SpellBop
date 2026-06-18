@@ -90,18 +90,32 @@ signal expired
 @export var stationary_speed_threshold: float = 120.0
 @export var stationary_lifespan_seconds: float = 0.6
 
+## SHIELD-REFLECT RALLY (Creative Director): each barrier reflect of THIS ball raises its effective
+## speed cap by rally_speed_growth, so a rallied ball ACCELERATES instead of pinning to the base
+## terminal cap (the reflect grows the ball past the old ceiling). Bounded at max_rally_reflects
+## compounding steps so a long rally can't reach tunnelling speeds. reflect 0 (the first block) is the
+## baseline (mult 1.0); the growth applies from the rally's later exchanges. Pairs with the barrier's
+## reflect_hold_growth + MatchController's reflect_shake_growth — see BarrierController._tick_capture.
+@export var rally_speed_growth: float = 1.2
+@export var max_rally_reflects: int = 6
+
 # --- Cached fixed-point per-tick values (computed once in _ready()) ---
 var _terminal_velocity_fp: int = 0   # speed cap, units/tick (fixed-point)
 var _despawn_distance_fp: int = 0    # court bound, fixed-point sim units
 var _lifespan_ticks: int = 0         # max flight time, whole ticks (0 = off)
 var _stationary_speed_fp: int = 0    # stall speed floor, units/tick (fixed-point)
 var _stationary_lifespan_ticks: int = 0  # ticks below the floor before despawn (0 = off)
+var _rally_growth_fp: int = SGFixed.ONE  # rally_speed_growth as fixed-point (cached in _ready)
 
 # Ticks since launch() — deterministic sim state (saved/loaded for rollback).
 var _age_ticks: int = 0
 # Consecutive ticks the speed has stayed below the stall floor — deterministic sim state
 # (saved/loaded; reset by motion above the floor OR a barrier's keep_alive() during capture).
 var _stationary_ticks: int = 0
+# SHIELD-REFLECT RALLY: how many times a barrier has reflected this ball — deterministic sim state
+# (saved "rc"). Drives the escalating speed cap here AND the barrier's escalating hold. Incremented
+# by BarrierController at release; NEVER reset by launch() (it must persist across the rally).
+var _reflect_count: int = 0
 
 # Authoritative simulation state (fixed-point ints). Velocity is stored here —
 # not read from the body between ticks — so _save_state()/_load_state() fully
@@ -138,6 +152,7 @@ func _cache_fixed_point_values() -> void:
 	# stall floor: units/sec -> units/tick (fixed-point); stall window: seconds -> ticks.
 	_stationary_speed_fp = SGFixed.div(SGFixed.from_float(maxf(0.0, stationary_speed_threshold)), tick_fp)
 	_stationary_lifespan_ticks = 0 if stationary_lifespan_seconds <= 0.0 else maxi(1, ceili(stationary_lifespan_seconds * float(maxi(1, tick_rate))))
+	_rally_growth_fp = SGFixed.from_float(maxf(1.0, rally_speed_growth))
 
 
 ## Arms the projectile. EXACT spawner contract (SpellCasterComponent calls this):
@@ -296,6 +311,29 @@ func get_velocity_y() -> int:
 	return _velocity_y
 
 
+## SHIELD-REFLECT RALLY: this ball's current rally speed multiplier (fixed-point) — rally_speed_growth
+## raised to the reflect count, bounded by max_rally_reflects. The escalating speed cap (_apply_speed_cap)
+## AND the BarrierController's release both multiply by this, so a rallied ball speeds up per reflect.
+## Deterministic: a small bounded loop of SGFixed.mul, identical on every peer.
+func rally_speed_mult_fp() -> int:
+	var n: int = clampi(_reflect_count, 0, maxi(0, max_rally_reflects))
+	var result: int = SGFixed.ONE
+	for _i in n:
+		result = SGFixed.mul(result, _rally_growth_fp)
+	return result
+
+
+## SHIELD-REFLECT RALLY: how many barrier reflects this ball has taken (read by the barrier at capture
+## to scale the hold, and by the cap above). Duck-typed surface BarrierController calls.
+func get_reflect_count() -> int:
+	return _reflect_count
+
+
+## SHIELD-REFLECT RALLY: record one more reflect of this ball — called by BarrierController at release.
+func add_reflect() -> void:
+	_reflect_count += 1
+
+
 ## Snapshot of all mutable simulation state. Ints only (fixed-point), never
 ## floats/objects — required for rollback hashing and serialization.
 func _save_state() -> Dictionary:
@@ -309,6 +347,7 @@ func _save_state() -> Dictionary:
 		"age": _age_ticks,
 		"hb": _homing_blend_fp,
 		"sk": _stationary_ticks,
+		"rc": _reflect_count,
 	}
 
 
@@ -322,6 +361,7 @@ func _load_state(state: Dictionary) -> void:
 	_age_ticks = int(state.get("age", 0))
 	_homing_blend_fp = int(state.get("hb", 0))
 	_stationary_ticks = int(state.get("sk", 0))
+	_reflect_count = int(state.get("rc", 0))
 
 	var pos: SGFixedVector2 = _body.fixed_position
 	pos.x = int(state.get("px", 0))
@@ -343,13 +383,16 @@ func _load_state(state: Dictionary) -> void:
 ## exceeds it, preserving direction. Pure fixed-point: SGFixedVector2.length()
 ## (fixed sqrt of the fixed dot product) and normalized() + scalar imul().
 func _apply_speed_cap() -> void:
+	# SHIELD-REFLECT RALLY: the cap grows with this ball's reflect count so a rallied ball accelerates
+	# past the base ceiling (bounded by max_rally_reflects). A never-reflected ball uses the base cap.
+	var cap: int = SGFixed.mul(_terminal_velocity_fp, rally_speed_mult_fp())
 	var vel: SGFixedVector2 = SGFixed.vector2(_velocity_x, _velocity_y)
 	var speed: int = vel.length()
-	if speed <= _terminal_velocity_fp:
+	if speed <= cap:
 		return
 
 	var capped: SGFixedVector2 = vel.normalized()
-	capped.imul(_terminal_velocity_fp)
+	capped.imul(cap)
 	_velocity_x = capped.x
 	_velocity_y = capped.y
 
