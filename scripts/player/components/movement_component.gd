@@ -219,16 +219,17 @@ func apply_speed_penalty(scale_fp: int) -> void:
 
 ## Lands a TIMED slow (the Counter's frost debuff): for [param duration_ticks]
 ## the body's speed/acceleration are scaled by at most [param scale_fp].
-## Re-application keeps the longer duration and the harsher scale.
+## RE-APPLICATION RESETS the freeze to a fresh full duration AND scale (Creative
+## Director): a reflected ice wall striking an already-frozen wizard restarts the
+## timer "as if frozen for the first time" — it never stacks/extends the remaining
+## time. Deterministic: a single int assignment, identical on every peer.
 func apply_timed_slow(duration_ticks: int, scale_fp: int) -> void:
 	if duration_ticks <= 0:
 		return
-	var was_active: bool = _slow_ticks > 0
-	var clamped: int = clampi(scale_fp, 0, SGFixed.ONE)
-	_slow_ticks = maxi(_slow_ticks, duration_ticks)
-	# Overlapping slows keep the harsher scale; a FRESH slow starts clean
-	# (an expired debuff's scale must not contaminate the next one).
-	_slow_scale_fp = mini(_slow_scale_fp, clamped) if was_active else clamped
+	# RESET (not max/accumulate): the new freeze fully REPLACES the old one — both
+	# its duration and its scale start clean, exactly like a first-time freeze.
+	_slow_ticks = duration_ticks
+	_slow_scale_fp = clampi(scale_fp, 0, SGFixed.ONE)
 	slow_started.emit(_slow_ticks)
 
 
