@@ -41,6 +41,14 @@ var _player: Node = null
 var _opponent: Node = null
 var _winner_boost_fp: int = 65536
 
+# --- Non-sim PRESENTATION pacing for the OFFLINE local tick driver (NOT in _save_state —
+# wall-clock derived). The stack countdown the player sees (TheStack) is REAL-time; this
+# resolver counts PHYSICS TICKS, which fall behind real time whenever a frame hitch makes
+# Godot drop ticks (max_physics_steps_per_frame). Advancing by real elapsed time keeps the
+# resolution locked to the on-screen countdown so it can't "stick at 0, then fire late". ---
+var _real_accum_msec: float = 0.0
+var _last_real_msec: int = 0
+
 
 ## MatchController hands us the stable scene refs in its _ready (NOT sim state).
 func setup(casters: Array, player: Node, opponent: Node, winner_boost_fp: int) -> void:
@@ -66,6 +74,12 @@ func arm(window_ticks: int) -> void:
 	if _resolve_ticks == 0:
 		_resolve_ticks = maxi(1, window_ticks)
 		_window_ticks = _resolve_ticks
+		# Fresh real-time pacing for the new window (offline driver): drop any leftover accumulator
+		# and re-anchor to NOW, so a frame hitch straddling the previous resolve -> this re-arm can't
+		# burst-advance the new window. Keeps the countdown locked to the wall-clock telegraph from
+		# tick one. (Wall-clock writes; harmless in netplay where SyncManager owns the cadence.)
+		_real_accum_msec = 0.0
+		_last_real_msec = Time.get_ticks_msec()
 
 
 ## A caster placed a spell on the stack — record its SIDE so the LAST responder (newest
@@ -142,9 +156,31 @@ func _ordered_casters() -> Array:
 	return first
 
 
-## LOCAL TICK DRIVER — replaced by the rollback SyncManager in netplay.
+## LOCAL TICK DRIVER (single-player) — replaced by the rollback SyncManager in netplay.
+##
+## Advances the countdown by REAL elapsed time, not one tick per physics frame, so the
+## resolution stays locked to the wall-clock telegraph the player sees (TheStack). A physics
+## frame HITCH (shader compile / GC / the editor) makes Godot drop ticks to honour
+## max_physics_steps_per_frame, so a plain one-decrement-per-call driver finishes LATE — the
+## on-screen "0.0" shows, then the spell fires a beat later (the reported bug). Reading
+## Time.get_ticks_msec (real, hitch-immune) and stepping the number of ticks real time called
+## for keeps them aligned. The per-tick sim MATH is untouched (_network_process) so
+## determinism is unaffected; in netplay this driver is off and SyncManager owns the cadence.
 func _physics_process(_delta: float) -> void:
-	if local_tick_driver_enabled:
+	if not local_tick_driver_enabled:
+		return
+	var now: int = Time.get_ticks_msec()
+	var elapsed: int = (now - _last_real_msec) if _last_real_msec != 0 else 0
+	_last_real_msec = now
+	if _resolve_ticks <= 0:
+		_real_accum_msec = 0.0
+		return
+	var period: float = 1000.0 / float(maxi(1, Engine.physics_ticks_per_second))
+	# Cap the catch-up so a long stall (breakpoint / alt-tab) resolves at most the whole
+	# remaining window in one frame, never banking an unbounded backlog.
+	_real_accum_msec = minf(_real_accum_msec + float(elapsed), period * float(maxi(1, _resolve_ticks)))
+	while _real_accum_msec >= period and _resolve_ticks > 0:
+		_real_accum_msec -= period
 		_network_process({})
 
 

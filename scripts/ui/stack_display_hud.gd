@@ -93,6 +93,7 @@ func _ready() -> void:
 
 	_stack = get_node_or_null(^"/root/TheStack")
 	if _stack != null:
+		_stack.stack_opened.connect(_on_stack_opened)
 		_stack.stack_tick.connect(_on_stack_tick)
 		_stack.stack_closed.connect(_on_stack_closed)
 
@@ -150,6 +151,16 @@ func _on_staged(card: CardResource, from_player: bool) -> void:
 		"glow_color": TYPE_COLORS[clampi(card.card_type, 0, 2)] if card != null else Color(1, 1, 1),
 	})
 	_countdown.visible = true
+
+
+## A FRESH window opened — this fires ONLY on the first stage (a counter slap onto an already-open
+## window does NOT re-open it, so the shared clock is preserved). Stamp the countdown to the full
+## duration RIGHT NOW so it never flashes the PREVIOUS stack's stale "0.0" (shaking red at max
+## franticness) for a frame before the first stack_tick arrives — the "timer stuck on zero at the
+## start of a new stack" VISUAL artifact. Pure presentation; the spell-release timing is untouched.
+func _on_stack_opened(duration_s: float) -> void:
+	_countdown.text = "%.1f" % duration_s
+	_last_tick_second = -1
 
 
 func _on_stack_tick(remaining_s: float) -> void:
