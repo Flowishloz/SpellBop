@@ -83,6 +83,32 @@ extends Node
 ## to BACK — set this to &"front" on a podium rig. Empty "" = the normal match-driven facing.
 @export var facing_override: StringName = &""
 
+## HOVER / FLIGHT MODE (OPTIONAL alternate locomotion — a debug toggle via GameSettings.hover_mode, set
+## from the Cosmetics screen). When ON, instead of the on-ground run bob the wizard PERMANENTLY HOVERS:
+## a damped-spring "liftoff" bob re-triggers on every direction CHANGE (start / reverse) for blended
+## S-curves, a gentle idle float keeps it alive at rest, and it BANKS into its travel direction. This is
+## ADDITIVE — none of the on-ground motion above is removed; it runs untouched whenever hover mode is
+## OFF (so some characters can stay grounded). PRESENTATION ONLY: driven off the VISUAL rig.x delta
+## (never sim velocity); writes only rig.y + the palette_swap `lean` shader uniform (the billboard drops
+## node rotation, so the bank has to ride that uniform — see palette_swap.gdshader).
+@export_group("Hover Mode")
+## Base float height (m) the wizard hovers at while idle.
+@export var hover_altitude: float = 0.28
+## Peak of the liftoff bob (m) ABOVE the base altitude on a direction change (~15% of a ~2 m sprite).
+@export var hover_bob_height: float = 0.3
+## Max bank angle (radians) the sprite tilts INTO its travel direction.
+@export var hover_lean_angle: float = 0.35
+## Spring natural frequency — how fast the bob springs back to base altitude (higher = snappier).
+@export var hover_recovery_speed: float = 7.0
+## Spring damping ratio (1 = no overshoot; < 1 = a floaty arc that eases past base and settles).
+@export var hover_damping: float = 0.65
+## How fast the bank eases in / out (exponential-smoothing rate).
+@export var hover_lean_speed: float = 9.0
+## Gentle idle float amplitude (m) + speed, so a still hover still breathes.
+@export var hover_idle_amount: float = 0.05
+@export var hover_idle_speed: float = 1.8
+@export_group("")
+
 var _rig: Node3D
 var _sprite: Node3D
 var _sprite_base_pos: Vector3 = Vector3.ZERO  # the sprite's authored local offset
@@ -128,6 +154,14 @@ var _facing: StringName = &"front"
 var _cast_dir: int = -1                 # this wizard's down-court sign (from a sibling caster)
 var _bridge: VisualBridgeComponent = null
 var _skin_folder: String = ""           # premium-skin override folder ("" = base art)
+
+# --- HOVER / FLIGHT MODE state (presentation only; never saved, never sim) ---
+var _hover_active: bool = false          # mirrors GameSettings.hover_mode (the debug toggle)
+var _hover_y: float = 0.0                # current sprung hover height (m); springs toward hover_altitude
+var _hover_vel: float = 0.0              # vertical spring velocity (m/s)
+var _hover_lean: float = 0.0             # current eased bank angle (rad) -> the shader `lean` uniform
+var _prev_hover_dir: int = 0             # last travel dir incl. 0 (idle) — detects start/reverse/halt
+var _gs: Node = null                     # GameSettings autoload (hover_mode source); null in headless
 
 
 func _ready() -> void:
@@ -177,6 +211,15 @@ func _ready() -> void:
 	_skin_folder = skin.texture_folder_override if skin != null else ""
 	if facing_override != &"":
 		_facing = facing_override  # menu/podium rig with no caster/bridge: force the facing
+	# HOVER MODE: read the debug toggle from GameSettings + track it live (the cosmetics toggle emits it).
+	# Absent in headless harnesses (autoloads may be stripped) -> stays off, on-ground motion unchanged.
+	_gs = get_node_or_null(^"/root/GameSettings")
+	if _gs != null:
+		if _gs.has_signal(&"hover_mode_changed"):
+			_gs.hover_mode_changed.connect(_on_hover_mode_changed)
+		var hv: Variant = _gs.get(&"hover_mode")
+		if hv != null:
+			_hover_active = bool(hv)
 	_apply_skin()
 	_apply_pose(&"idle")
 
@@ -235,6 +278,9 @@ func _process(delta: float) -> void:
 
 	_rig.position.y = bob
 	_rig.rotation.z = _lean
+	# OPTIONAL hover/flight mode (GameSettings.hover_mode): when ON it OVERRIDES rig.y with a sprung hover
+	# height + banks the sprite; when off-and-settled it early-outs so the on-ground bob above stands.
+	_update_hover(delta, dir, now)
 	# HIT POP (Sprint 23 batch 2): a squash/stretch on impact — a decaying cosine on the WALL clock so
 	# it snaps at full speed inside slow-mo / a hitstop freeze. At impact (wave = +1) the rig SQUASHES
 	# (shorter + wider); it springs through a stretch and settles as the cosine decays.
@@ -341,6 +387,12 @@ func _on_knocked_out() -> void:
 	if _dead or _sprite == null:
 		return
 	_dead = true
+	# HOVER: drop the bank so the death fling isn't tilted (the lean uniform would otherwise persist while
+	# _process early-returns through the death state). rig.y is left as-is, so the fling starts from the
+	# wizard's current hover height.
+	_hover_lean = 0.0
+	if _material != null:
+		_material.set_shader_parameter(&"lean", 0.0)
 	_apply_pose(&"hurt")  # hold the hurt key-pose through the death fling (_process early-returns)
 	_death_t = 0.0
 	_death_off = Vector3.ZERO
@@ -391,6 +443,14 @@ func _on_health_changed(current: int, _max_health: int) -> void:
 		_sprite.position = _sprite_base_pos
 		_sprite.scale = Vector3.ONE
 		_sprite.set(&"modulate", Color.WHITE)
+		# HOVER: reset the spring so a hovering wizard re-springs up cleanly next round (the respawn
+		# reposition masks the rig.y reset); clear the bank.
+		_hover_y = 0.0
+		_hover_vel = 0.0
+		_hover_lean = 0.0
+		_prev_hover_dir = 0
+		if _material != null:
+			_material.set_shader_parameter(&"lean", 0.0)
 		_apply_pose(&"idle")
 
 
@@ -417,6 +477,59 @@ func _on_cast_released(_projectile: Node, spell: Resource) -> void:
 	# fires on the forward tick.
 	_cast_pose = _cast_pose_for(spell)
 	_cast_until_msec = Time.get_ticks_msec() + int(pose_hold_seconds * 1000.0)
+
+
+## The Cosmetics "Hover mode" debug toggle flipped — switch this wizard between the on-ground bob and
+## the optional hover/flight motion LIVE (the spring eases the altitude in/out, so there is no snap).
+func _on_hover_mode_changed(on: bool) -> void:
+	_hover_active = on
+
+
+# =====================================================================
+# HOVER / FLIGHT MODE (OPTIONAL) — PRESENTATION ONLY (no sim / no saved state)
+# =====================================================================
+
+## OPTIONAL alternate locomotion (GameSettings.hover_mode). Replaces the on-ground run bob with a
+## permanent hover, driven ENTIRELY off `dir` (the visual rig.x-delta sign — never sim velocity):
+##   • a critically-ish damped SPRING carries rig.y toward hover_altitude — so toggling on/off EASES
+##     the wizard up/down with no snap, and re-triggering blends from the current position;
+##   • a LIFTOFF impulse kicks the spring upward on every direction CHANGE (idle→move or a reverse) →
+##     a bob-up-then-glide S-curve; a dead HALT gets no kick, so it just settles back down on the spot;
+##   • a gentle idle FLOAT keeps a still hover breathing;
+##   • a BANK eases INTO the travel direction, applied via the palette_swap `lean` uniform (the billboard
+##     overwrites node rotation, so a visible tilt cannot come from rig.rotation).
+## Early-outs (leaving rig.y to the on-ground motion) whenever hover is OFF and fully settled — so a
+## grounded wizard pays nothing and behaves exactly as before.
+func _update_hover(delta: float, dir: int, now: int) -> void:
+	if not _hover_active and absf(_hover_y) < 0.0015 and absf(_hover_vel) < 0.0015 and _hover_lean == 0.0:
+		_prev_hover_dir = dir
+		return
+	var hdt: float = minf(delta, 0.05)   # clamp so a lag spike can't blow up the explicit spring step
+	# LIFTOFF re-trigger (active only): a start or a reverse kicks an upward bob that blends from the
+	# current height; a dead halt (dir -> 0) gets no kick, so the spring just sinks back to base.
+	if dir != _prev_hover_dir:
+		if _hover_active and dir != 0:
+			_hover_vel += hover_bob_height * hover_recovery_speed
+		_prev_hover_dir = dir
+	# Damped spring toward the target altitude (hover_altitude when on, 0 when off) — the S-curve engine.
+	var target_alt: float = hover_altitude if _hover_active else 0.0
+	var stiffness: float = hover_recovery_speed * hover_recovery_speed
+	var damping: float = 2.0 * hover_recovery_speed * hover_damping
+	_hover_vel += (stiffness * (target_alt - _hover_y) - damping * _hover_vel) * hdt
+	_hover_y += _hover_vel * hdt
+	# BANK into travel (active) / ease back upright (inactive), exponential-smoothed (frame-rate safe).
+	# NEGATED so the HEAD (sprite top) leads the travel direction and the legs trail — a forward flight
+	# dive, not a reclined lean. (+lean rolls the head back/legs forward; see palette_swap.gdshader.)
+	var lean_target: float = (-hover_lean_angle * float(dir)) if _hover_active else 0.0
+	_hover_lean = lerpf(_hover_lean, lean_target, 1.0 - exp(-hover_lean_speed * delta))
+	if absf(_hover_lean) < 0.0009 and not _hover_active:
+		_hover_lean = 0.0
+	if _material != null:
+		_material.set_shader_parameter(&"lean", _hover_lean)
+	# Gentle idle float (fades in with the altitude), then OVERRIDE the on-ground bob written above.
+	var alt_frac: float = clampf(_hover_y / maxf(hover_altitude, 0.0001), 0.0, 1.0)
+	var idle: float = sin(float(now) / 1000.0 * hover_idle_speed) * hover_idle_amount * alt_frac
+	_rig.position.y = _hover_y + idle
 
 
 # =====================================================================

@@ -38,6 +38,7 @@ var _purchase_btn: Button
 var _equip_btn: Button
 var _opp_toggle: Button               # DEBUG toggle: "Equip skin for opponent" (offline-only effect)
 var _equip_for_opponent: bool = false # when true, EQUIP targets the AI opponent (offline) not the player
+var _hover_toggle: Button             # DEBUG toggle: "Hover mode" (the optional hover/flight animation)
 var _locker: Panel
 var _locker_open: bool = false
 
@@ -410,6 +411,17 @@ func _build_ui() -> void:
 	_opp_toggle.toggled.connect(_on_opp_toggle)
 	root.add_child(_opp_toggle)
 
+	# DEBUG (bottom-right): toggle the OPTIONAL hover/flight animation (GameSettings.hover_mode) so we can
+	# test it live — the podium wizard rises + floats immediately; the full liftoff + bank shows in a
+	# match. PRESENTATION ONLY. Reflects (and persists) the saved state. Mirrors the opponent toggle left.
+	_hover_toggle = _btn("Hover mode", Vector2(636, 1798), Vector2(404, 76), 23)
+	_hover_toggle.show_cursor = false
+	_hover_toggle.toggle_mode = true
+	_hover_toggle.button_pressed = _read_hover_mode()   # set BEFORE connecting so it doesn't re-fire
+	_hover_toggle.modulate = Color(0.55, 0.85, 1.0) if _hover_toggle.button_pressed else Color(1.0, 1.0, 1.0)
+	_hover_toggle.toggled.connect(_on_hover_toggle)
+	root.add_child(_hover_toggle)
+
 	# The slide-in Locker (built last so it overlays everything; starts offscreen).
 	_build_locker(root)
 
@@ -605,6 +617,27 @@ func _on_opp_toggle(pressed: bool) -> void:
 	_click()
 	_opp_toggle.modulate = Color(1.0, 0.66, 0.45) if pressed else Color(1.0, 1.0, 1.0)
 	_refresh_skin_ui()
+
+
+## DEBUG toggle: flip the OPTIONAL hover/flight animation on/off (GameSettings.hover_mode). Every
+## WizardAnimator (the podium rig here + the match wizards) tracks it live via hover_mode_changed, so the
+## podium wizard rises/sinks immediately. PRESENTATION ONLY.
+func _on_hover_toggle(pressed: bool) -> void:
+	_click()
+	_hover_toggle.modulate = Color(0.55, 0.85, 1.0) if pressed else Color(1.0, 1.0, 1.0)
+	var gs := get_node_or_null(^"/root/GameSettings")
+	if gs != null and gs.has_method(&"set_hover_mode"):
+		gs.set_hover_mode(pressed)
+
+
+## The persisted hover-mode debug toggle (default off) — reflected on the toggle button when it is built.
+func _read_hover_mode() -> bool:
+	var gs := get_node_or_null(^"/root/GameSettings")
+	if gs != null:
+		var v: Variant = gs.get(&"hover_mode")
+		if v != null:
+			return bool(v)
+	return false
 
 
 func _flash_status(text: String, col: Color) -> void:

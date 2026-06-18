@@ -38,6 +38,12 @@ signal equipped_skin_changed(id: StringName)
 var opponent_skin: StringName = &""
 signal opponent_skin_changed(id: StringName)
 
+## DEBUG HOVER MODE (the Cosmetics "Hover mode" toggle) — an OPTIONAL alternate wizard locomotion: when
+## true the wizards permanently HOVER / fly (see WizardAnimatorComponent) instead of the on-ground run
+## bob. PRESENTATION ONLY — a visual animation switch we toggle while testing; never touches the sim.
+var hover_mode: bool = false
+signal hover_mode_changed(on: bool)
+
 
 func _ready() -> void:
 	_load_online()
@@ -129,6 +135,7 @@ func _load_cosmetics() -> void:
 		return  # no saved settings yet — keep the default skin
 	equipped_skin = StringName(cfg.get_value("cosmetics", "equipped_skin", String(equipped_skin)))
 	opponent_skin = StringName(cfg.get_value("cosmetics", "opponent_skin", String(opponent_skin)))
+	hover_mode = bool(cfg.get_value("cosmetics", "hover_mode", hover_mode))
 
 
 ## Persist the EQUIPPED skin id (the cosmetics EQUIP button). Survives restarts; drives the menu wizard.
@@ -154,3 +161,16 @@ func set_opponent_skin(id: StringName) -> void:
 	cfg.set_value("cosmetics", "opponent_skin", String(id))
 	cfg.save(_CONFIG_PATH)
 	opponent_skin_changed.emit(id)
+
+
+## Persist the DEBUG hover-mode toggle (the Cosmetics "Hover mode" button). Flips the wizards between the
+## on-ground bob and the optional hover/flight animation (presentation only). Survives restarts.
+func set_hover_mode(on: bool) -> void:
+	if hover_mode == on:
+		return
+	hover_mode = on
+	var cfg := ConfigFile.new()
+	cfg.load(_CONFIG_PATH)  # preserve the other sections
+	cfg.set_value("cosmetics", "hover_mode", on)
+	cfg.save(_CONFIG_PATH)
+	hover_mode_changed.emit(on)

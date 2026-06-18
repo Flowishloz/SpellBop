@@ -26,6 +26,11 @@ uniform int color_count = 0;
 uniform vec3 src_colors[MAX_COLORS];  // sRGB reference palette (base skin)
 uniform vec3 dst_colors[MAX_COLORS];  // sRGB recolour (active skin)
 uniform float match_eps : hint_range(0.0, 0.25) = 0.03;
+// HOVER LEAN (presentation, default 0 = identity): a screen-space bank angle (radians) the
+// WizardAnimator drives in the optional hover/flight mode. The FIXED_Y billboard above OVERWRITES node
+// rotation, so a VISIBLE tilt has to live here (this is the same reason the death flat-spin fakes a
+// rotation via scale.x). 0 leaves the base billboard exactly as it was — on-ground wizards are unchanged.
+uniform float lean = 0.0;
 
 vec3 lin_to_srgb(vec3 c) {
 	c = max(c, vec3(0.0));
@@ -47,6 +52,15 @@ void vertex() {
 		vec4(length(MODEL_MATRIX[0].xyz), 0.0, 0.0, 0.0),
 		vec4(0.0, length(MODEL_MATRIX[1].xyz), 0.0, 0.0),
 		vec4(0.0, 0.0, length(MODEL_MATRIX[2].xyz), 0.0),
+		vec4(0.0, 0.0, 0.0, 1.0));
+	// HOVER LEAN: roll the billboarded sprite in screen space (around its centre) so it banks into its
+	// flight direction. Identity when lean == 0, so the base FIXED_Y billboard is untouched off-hover.
+	float lean_cs = cos(lean);
+	float lean_sn = sin(lean);
+	MODELVIEW_MATRIX = MODELVIEW_MATRIX * mat4(
+		vec4(lean_cs, lean_sn, 0.0, 0.0),
+		vec4(-lean_sn, lean_cs, 0.0, 0.0),
+		vec4(0.0, 0.0, 1.0, 0.0),
 		vec4(0.0, 0.0, 0.0, 1.0));
 	MODELVIEW_NORMAL_MATRIX = mat3(MODELVIEW_MATRIX);
 }
