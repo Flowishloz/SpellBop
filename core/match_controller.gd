@@ -156,7 +156,7 @@ signal knockout_began(is_match_end: bool, player_won: bool)
 ## SHAKE (the anticipation rumble + the release slam) by this factor — so a long rally's exchanges hit
 ## harder and harder. Presentation only; pairs with the barrier's reflect_hold_growth + the mover's
 ## rally_speed_growth. The reflect count is clamped (~8) so even a long rally stays sane.
-@export var reflect_shake_growth: float = 1.1
+@export var reflect_shake_growth: float = 1.25
 ## Peak UV displacement of the EMERALD screen ripple (unchanged — not part of the variable shield set).
 @export var emerald_ripple_strength: float = 0.04
 ## HITSTOP (Sprint 23, Creative Director): a wizard taking a hit triggers a brief presentation freeze

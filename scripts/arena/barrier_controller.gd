@@ -70,7 +70,7 @@ signal capture_released
 ## (the mover's rally cap, ProjectileMovementComponent.rally_speed_growth). reflect 0 — the FIRST block
 ## — is the baseline (no growth), so a single block keeps its current feel; escalation builds from the
 ## rally's second exchange on. Bounded by max_rally_reflects (shared ceiling with the mover).
-@export var reflect_hold_growth: float = 1.2
+@export var reflect_hold_growth: float = 1.35
 @export var max_rally_reflects: int = 6
 
 ## Visual rig (a Node3D holding the wall mesh). The barrier positions it from
