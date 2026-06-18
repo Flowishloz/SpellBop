@@ -254,6 +254,9 @@ func _scan_strike(my_pos: SGFixedVector2) -> void:
 func _grant_heal(projectile: Node) -> void:
 	_claimed = true
 	var thrower: Node = projectile.get_hit_source()
+	# Did the thrower actually EARN a life? A full-health wizard wastes the emerald — no heart pop
+	# then. Read BEFORE the heal (pure query, no sim mutation), used only by the gated cosmetic below.
+	var earned_life: bool = thrower != null and thrower.has_method(&"is_hurt") and thrower.is_hurt()
 	if thrower != null and thrower.has_method(&"apply_heal"):
 		thrower.apply_heal(heal_amount)
 	# PRESENTATION — suppressed during a rollback re-sim so a re-applied strike never
@@ -265,10 +268,14 @@ func _grant_heal(projectile: Node) -> void:
 			var burst_pos: Vector3 = visual.global_position + Vector3(0, hover_height * 0.5, 0)
 			BurstFX.spawn(get_parent(), burst_pos,
 					Vector3.UP, Color(0.35, 1.0, 0.55, 0.95), 36, 3.4, 0.08, 150.0)
-			# A HEART pops up out of the gem and falls — the "you gained a life" cue.
-			HeartPopFX.spawn(get_parent(), visual.global_position + Vector3(0, hover_height, 0))
 			# Notify the arena so it can fire the screen ripple from the point of contact.
 			claimed.emit(burst_pos)
+		# A HEART pops IN then OUT above the WINNING wizard's head — the clear "who earned the
+		# heart" cue. Only on a real gain; tracks the head (rig) as the wizard keeps moving.
+		if earned_life:
+			var rig: Node3D = thrower.get_node_or_null(^"WizardRig") as Node3D
+			if rig != null:
+				HeartPopFX.spawn_above(get_parent(), rig, 2.6)
 		Sfx.play(&"heal")
 	# The struck ball is consumed; both frees route through the rollback-aware path so a
 	# SyncManager-tracked node never dangles its spawn record into the next rollback.

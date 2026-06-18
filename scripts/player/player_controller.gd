@@ -200,6 +200,14 @@ func apply_heal(amount: int) -> void:
 		_health.apply_heal(amount)
 
 
+## True while this wizard is below max health (a healing emerald would actually
+## grant a life). The emerald reads this to fire the "earned the heart" pop cue
+## only on a REAL gain, never on a wasted full-health pickup. Presentation read —
+## pure query, no sim mutation.
+func is_hurt() -> bool:
+	return _health != null and _health.get_health() < _health.max_health
+
+
 ## Routes a timed movement slow (the Counter's frost) to MovementComponent —
 ## same public-API rule as apply_damage.
 func apply_slow(duration_ticks: int, scale_fp: int) -> void:
