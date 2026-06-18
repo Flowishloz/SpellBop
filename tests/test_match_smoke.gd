@@ -32,6 +32,12 @@ func _init() -> void:
 
 func _run() -> void:
 	await process_frame
+	# HERMETIC: pin the AI to Normal so a persisted non-Normal ai_difficulty (user://settings.cfg)
+	# can't make AIBrainComponent._ready's difficulty preset overwrite the AI params this suite pins
+	# (the preset is a no-op at Normal). Determinism suites must never depend on local settings.
+	var gset: Node = root.get_node_or_null("GameSettings")
+	if gset != null and "ai_difficulty" in gset:
+		gset.ai_difficulty = 1
 
 	var stack: Node = root.get_node_or_null("TheStack")
 	_check(stack != null, "TheStack autoload present")
