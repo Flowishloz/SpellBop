@@ -1,0 +1,21 @@
+[gd_resource type="Resource" script_class="CardResource" format=3]
+
+[ext_resource type="Script" uid="uid://d3cbexyjjpqvy" path="res://resources/card_resource.gd" id="1_card"]
+[ext_resource type="PackedScene" path="res://scenes/spark_bolt.tscn" id="2_proj"]
+
+[resource]
+script = ExtResource("1_card")
+faction = 2
+casting_cost = 2
+description = "A slab of conjured stone — slow, but TWICE the size and hard to dodge. Bounces off shields (no shatter). 1 DMG."
+lifetime = 5.0
+homing_strength = 0.0
+barrier_breaker = false
+display_name = "Slow Boulder"
+projectile_scene = ExtResource("2_proj")
+base_speed = 440.0
+damage = 1
+projectile_size = 72.0
+is_card = true
+cast_time = 0.0
+element = 0

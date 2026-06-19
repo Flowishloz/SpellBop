@@ -109,6 +109,8 @@ var _rejected_slot_latch: int = 0
 
 var _body: SGCharacterBody2D
 var _movement: MovementComponent
+# Sibling SpellCasterComponent (the base fireball) — receives the Focus Sigil fireball-haste buff.
+var _spell_caster: SpellCasterComponent = null
 # StackResolver (sim authority for the window) — found lazily via its group so
 # scene-tree _ready order never matters. Holds the deterministic resolution clock
 # that this caster arms when it stages (Sprint 22 Phase 2).
@@ -121,7 +123,8 @@ func _ready() -> void:
 	for child in _body.get_children():
 		if child is MovementComponent:
 			_movement = child
-			break
+		elif child is SpellCasterComponent:
+			_spell_caster = child
 	_cache_fixed_point_values()
 
 
@@ -163,6 +166,17 @@ func make_defense_available() -> void:
 		if card != null and card.card_type == CardResource.CardType.DEFENSE:
 			_slot_cd[slot - 1] = 0
 			return
+
+
+## Whether the equipped DEFENSE card is a BUFF (buff_duration > 0) rather than a shield/wall. The card
+## hand HUD reads this (duck-typed) so a buff defense card shows whenever it is off cooldown — a buff is
+## proactive, not reactive like the shield, so it must not be gated on an incoming ball.
+func is_defense_buff() -> bool:
+	for slot in range(1, 4):
+		var card: CardResource = _card_for_slot(slot)
+		if card != null and card.card_type == CardResource.CardType.DEFENSE:
+			return card.buff_duration > 0.0
+	return false
 
 
 # =====================================================================
@@ -404,6 +418,12 @@ func _aim_sector_now() -> int:
 ## DEFENSE (Category B): INSTANT one-way wall, with the Window of Affect
 ## measured NOW (how close the nearest incoming ball already is).
 func _resolve_defense(card: CardResource) -> void:
+	# BUFF archetype (Content Engine): a DEFENSE card with buff_duration > 0 applies a timed SELF-BUFF to
+	# the caster instead of deploying a barrier. Deterministic sim state on the caster's MovementComponent
+	# (fixed-point, saved/rolled-back) — online-safe by construction, exactly like every other card effect.
+	if card.buff_duration > 0.0:
+		_resolve_buff(card)
+		return
 	if card.barrier_scene == null:
 		push_warning("CardCasterComponent: DEFENSE card '%s' has no barrier_scene — cast fizzles." % card.display_name)
 		_emit_spell_cast(null, card)
@@ -450,6 +470,19 @@ func _resolve_defense(card: CardResource) -> void:
 	var barrier: Node = _sync_manager().spawn("Barrier", _resolve_container(), card.barrier_scene, data)
 
 	_emit_spell_cast(barrier, card)
+
+
+## BUFF (Category B sub-type): apply the card's timed self-buffs to the caster — currently a movement
+## speed boost (Hermes' Boon). Floats convert to fixed-point + whole ticks ONCE here (the caster's tick);
+## the MovementComponent owns the int countdown thereafter. No projectile/barrier — emits a null cast.
+func _resolve_buff(card: CardResource) -> void:
+	var safe_tick_rate: int = maxi(1, tick_rate)
+	var duration_ticks: int = maxi(1, ceili(card.buff_duration * float(safe_tick_rate)))
+	if card.move_speed_buff > 1.0 and _movement != null:
+		_movement.apply_timed_boost(duration_ticks, SGFixed.from_float(card.move_speed_buff))
+	if card.fireball_haste < 1.0 and _spell_caster != null:
+		_spell_caster.apply_timed_haste(duration_ticks, SGFixed.from_float(card.fireball_haste))
+	_emit_spell_cast(null, card)
 
 
 ## COUNTER (Category C): the staged frost wave, released LIFO with the WOA

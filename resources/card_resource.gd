@@ -194,6 +194,21 @@ enum Rarity { COMMON, UNCOMMON, RARE }
 ## Cards drawn instantly on successful execution.
 @export var conditional_draw: int = 0
 
+@export_subgroup("Buff (Defense sub-type)")
+# Content Engine "flexible defense / buffs" archetype: a DEFENSE card with buff_duration > 0 applies a
+# timed SELF-BUFF to the caster INSTEAD of deploying a barrier (no wall). Deterministic — the caster's
+# components own the int countdown (rollback-safe). Fields land per the buff card that uses them.
+
+## Seconds the self-buff lasts. > 0 marks this DEFENSE card as a BUFF (it deploys no wall — pure buff).
+@export var buff_duration: float = 0.0
+
+## MOVEMENT-SPEED multiplier while the buff is active (>= 1.0; 1.0 = none). 1.5 = +50% move speed.
+@export var move_speed_buff: float = 1.0
+
+## BASE-FIREBALL HASTE while the buff is active (<= 1.0; 1.0 = none). The fireball's charge time AND
+## cooldown scale by this — 0.5 = both twice as fast (-50%).
+@export var fireball_haste: float = 1.0
+
 @export_group("Counter (Category C)")
 # Counters are REACTIVE ONLY (set is_reactive_only = true): locked in neutral,
 # unlocked during the Stack window (Cards_Spells.txt §4).

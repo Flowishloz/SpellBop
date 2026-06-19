@@ -65,6 +65,11 @@ func _run() -> void:
 	var gset: Node = root.get_node_or_null("GameSettings")
 	if gset != null and "ai_difficulty" in gset:
 		gset.ai_difficulty = 1
+	# HERMETIC: pin the equipped DECK to the baseline so a persisted custom loadout (user://profile.cfg)
+	# can't make MatchController._apply_loadout swap the caster's cards mid-suite (Content Engine P0/P3).
+	var pprof: Node = root.get_node_or_null("PlayerProfile")
+	if pprof != null and pprof.has_method("use_default_deck"):
+		pprof.use_default_deck()
 
 	var stack: Node = root.get_node_or_null("TheStack")
 	var packed: PackedScene = load("res://scenes/match_arena.tscn")

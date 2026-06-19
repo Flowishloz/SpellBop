@@ -187,6 +187,9 @@ func _panel_main() -> Control:
 			# ENABLED: opens the 3D Cosmetics / skin-selection scene. It is a whole separate scene
 			# (a 3D diorama, not a menu sub-panel), so a plain change_scene — not a StateChart state.
 			ph.pressed.connect(func() -> void: _click(); get_tree().change_scene_to_file("res://scenes/cosmetics.tscn"))
+		elif labels[i] == "DECKS":
+			# ENABLED (Content Engine P4): opens the basic deck builder (a separate themed scene).
+			ph.pressed.connect(func() -> void: _click(); get_tree().change_scene_to_file("res://scenes/decks.tscn"))
 		else:
 			ph.disabled = true
 	return p

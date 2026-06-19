@@ -6,7 +6,7 @@
 [ext_resource type="Script" uid="uid://cckf0f2x0ciy6" path="res://scripts/player/components/visual_bridge_component.gd" id="4_bridge"]
 
 [sub_resource type="SGRectangleShape2D" id="SGRectangleShape2D_wave"]
-extents_x = 13107200
+extents_x = 9830400
 extents_y = 1310720
 
 [sub_resource type="StandardMaterial3D" id="Mat_ice"]
@@ -19,7 +19,7 @@ emission_energy_multiplier = 0.6
 
 [sub_resource type="BoxMesh" id="BoxMesh_wave"]
 material = SubResource("Mat_ice")
-size = Vector3(4, 0.5, 0.35)
+size = Vector3(3, 0.5, 0.35)
 
 [node name="IceWave" type="SGCharacterBody2D"]
 collision_layer = 2
@@ -36,7 +36,7 @@ lifespan_seconds = 3.0
 
 [node name="HitDetectionComponent" type="Node" parent="."]
 script = ExtResource("3_hit")
-hit_extent_x = 200.0
+hit_extent_x = 150.0
 hit_extent_y = 20.0
 
 [node name="VisualBridgeComponent" type="Node" parent="." node_paths=PackedStringArray("visual_root")]

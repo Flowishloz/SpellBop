@@ -551,7 +551,11 @@ func _update_card_availability() -> void:
 	# popped-in card you can't use yet is misleading; slot 2 = DEFENSE). Creative Director.
 	var defense_off_cd: bool = _caster != null and _caster.has_method(&"cooldown_ticks_remaining") \
 			and int(_caster.call(&"cooldown_ticks_remaining", 2)) == 0
-	avail[1] = (attack_imminent or ball_incoming) and defense_off_cd
+	# A BUFF defense card (Content Engine — Hermes' Boon / Focus Sigil) is PROACTIVE, not a reactive
+	# shield, so it shows whenever it is off cooldown (never threat-gated like the wall).
+	var defense_is_buff: bool = _caster != null and _caster.has_method(&"is_defense_buff") \
+			and bool(_caster.call(&"is_defense_buff"))
+	avail[1] = (attack_imminent or ball_incoming or defense_is_buff) and defense_off_cd
 	for i in 3:
 		if avail[i] and not _available[i] and _states[i] != CardState.EXPANDED:
 			# POP IN at the dock slot, springing the scale up from small (overshoot = pop).

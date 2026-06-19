@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="CardResource" format=3]
+
+[ext_resource type="Script" uid="uid://d3cbexyjjpqvy" path="res://resources/card_resource.gd" id="1_card"]
+
+[resource]
+script = ExtResource("1_card")
+card_type = 1
+faction = 0
+casting_cost = 2
+description = "Channel fleet-footed momentum — +50% move speed for 4 s. No wall: pure evasion. 0 DMG."
+display_name = "Hermes' Boon"
+is_card = true
+cast_time = 0.0
+buff_duration = 4.0
+move_speed_buff = 1.5

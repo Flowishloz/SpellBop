@@ -136,6 +136,13 @@ var _max_mult_fp: int = 262144    # max_speed_multiplier, fixed-point (4.0)
 var _ticks_until_ready: int = 0
 var _charge_ticks: int = 0
 
+# FIREBALL HASTE (the Defense BUFF archetype — Focus Sigil): while _haste_ticks > 0 the cooldown is
+# SHORTENED (_hasted_cooldown) and the charge builds FASTER (a bigger per-tick step), both scaled by
+# _haste_scale_fp (< ONE = faster; 0.5 = -50% charge + cooldown). RESET-not-stack on re-cast; the
+# charge THRESHOLD math is untouched (only how fast _charge_ticks climbs). Int sim state ("ht" / "hs").
+var _haste_ticks: int = 0
+var _haste_scale_fp: int = SGFixed.ONE
+
 var _body: SGCharacterBody2D
 # Sibling MovementComponent (optional): receives the casting speed penalty.
 var _movement: MovementComponent
@@ -218,13 +225,19 @@ func _network_process(input: Dictionary) -> void:
 		if _cast_ticks <= 0:
 			# Instant-cast spell: no charge window at all, no boost.
 			_spawn_projectile(SGFixed.ONE)
-			_ticks_until_ready = _cooldown_ticks
+			_ticks_until_ready = _hasted_cooldown()
 		else:
 			if _charge_ticks == 0:
 				cast_charge_started.emit(spell)
 			# Build toward the full-charge mark, then sit there (held at max =
 			# stationary wizard at 4x release power — maximum risk/reward).
-			_charge_ticks = mini(_charge_ticks + 1, _max_charge_ticks)
+			# CHARGE HASTE (Focus Sigil): while hasted, climb toward the marks faster (a bigger per-tick
+			# step = 1/haste, e.g. 2 at 0.5), so the throwable + full-charge marks are reached sooner. The
+			# threshold/level/multiplier math is unchanged — only the climb RATE.
+			var charge_step: int = 1
+			if _haste_ticks > 0:
+				charge_step = maxi(1, SGFixed.div(SGFixed.ONE, _haste_scale_fp) >> 16)
+			_charge_ticks = mini(_charge_ticks + charge_step, _max_charge_ticks)
 			charging = true
 	elif _charge_ticks > 0:
 		if _charge_ticks >= _cast_ticks:
@@ -235,7 +248,7 @@ func _network_process(input: Dictionary) -> void:
 			var fired_level: int = _charge_level()
 			_charge_ticks = 0
 			_spawn_projectile(multiplier_fp, fired_level)
-			_ticks_until_ready = _cooldown_ticks
+			_ticks_until_ready = _hasted_cooldown()
 		else:
 			# TAP-CAST (Sprint 22, Creative Director): a quick TAP — the cast input
 			# released BEFORE the charge reached the minimum cast time (the player
@@ -248,7 +261,7 @@ func _network_process(input: Dictionary) -> void:
 			# intentional tap, not a slip to absorb.
 			_charge_ticks = 0
 			_spawn_projectile(SGFixed.ONE, 1)
-			_ticks_until_ready = _cooldown_ticks
+			_ticks_until_ready = _hasted_cooldown()
 
 	# Phase-boundary presentation hook (drift-spark levels). Derived state —
 	# re-fires harmlessly during rollback re-simulation, like all VFX signals.
@@ -261,6 +274,11 @@ func _network_process(input: Dictionary) -> void:
 	# so an idle caster pushes nothing — see MovementComponent).
 	if charging and _movement != null:
 		_movement.apply_speed_penalty(_movement_scale_fp())
+
+	# FIREBALL HASTE: burn one tick of the buff at the END, so it is active for THIS whole tick's
+	# cooldown/charge math and is saved post-decrement (like the movement slow/boost).
+	if _haste_ticks > 0:
+		_haste_ticks -= 1
 
 
 ## Charge phase for presentation (0 = igniting below minimum cast time,
@@ -323,6 +341,30 @@ func _movement_scale_fp() -> int:
 	return maxi(0, SGFixed.ONE - fraction_fp)
 
 
+## FIREBALL HASTE (Focus Sigil): the cooldown ticks under the active buff — _cooldown_ticks scaled by
+## _haste_scale_fp (0.5 = half), floored at 1. Returns the raw cooldown when no buff is active.
+func _hasted_cooldown() -> int:
+	if _haste_ticks <= 0:
+		return _cooldown_ticks
+	return maxi(1, SGFixed.mul(SGFixed.from_int(_cooldown_ticks), _haste_scale_fp) >> 16)
+
+
+## Lands a TIMED fireball HASTE (the Defense BUFF archetype — Focus Sigil): for [param duration_ticks]
+## the base fireball's cooldown is shortened AND its charge builds faster, both by [param scale_fp]
+## (must be in (0, ONE) — a faster cast; >= ONE no-ops so a buff can never slow the fireball).
+## RE-APPLICATION RESETS to a fresh full duration + scale (like the slow/boost).
+func apply_timed_haste(duration_ticks: int, scale_fp: int) -> void:
+	if duration_ticks <= 0 or scale_fp <= 0 or scale_fp >= SGFixed.ONE:
+		return
+	_haste_ticks = duration_ticks
+	_haste_scale_fp = scale_fp
+
+
+## Remaining haste ticks (0 = no haste). Read-only presentation/HUD accessor.
+func haste_ticks_remaining() -> int:
+	return _haste_ticks
+
+
 ## Snapshot of all mutable simulation state. Ints only — required for rollback
 ## hashing and serialization. (Spawned projectiles are NOT captured here yet —
 ## see the lifecycle NOTE in the header.)
@@ -330,6 +372,8 @@ func _save_state() -> Dictionary:
 	return {
 		"cd": _ticks_until_ready,
 		"ch": _charge_ticks,
+		"ht": _haste_ticks,
+		"hs": _haste_scale_fp,
 	}
 
 
@@ -337,11 +381,15 @@ func _save_state() -> Dictionary:
 func _load_state(state: Dictionary) -> void:
 	_ticks_until_ready = int(state.get("cd", 0))
 	_charge_ticks = int(state.get("ch", 0))
+	_haste_ticks = int(state.get("ht", 0))
+	_haste_scale_fp = int(state.get("hs", SGFixed.ONE))
 
 
 ## Clean slate for a new round (called by PlayerController.reset_for_round).
 func reset_cast_state() -> void:
 	_ticks_until_ready = 0
+	_haste_ticks = 0
+	_haste_scale_fp = SGFixed.ONE
 	if _charge_ticks > 0:
 		_charge_ticks = 0
 		cast_charge_canceled.emit()
@@ -412,11 +460,15 @@ func _spawn_projectile(velocity_multiplier_fp: int = SGFixed.ONE, charge_level: 
 		"size": SGFixed.from_float(radius_units),
 		"src": str(_body.get_path()),
 	}
-	var projectile: Node = SyncManager.spawn("Fireball", _resolve_container(), spell.projectile_scene, data)
+	# SyncManager via /root (NOT the bare global): SpellCasterComponent is now in the EARLY compile graph
+	# (CardCasterComponent references it for the Focus Sigil haste), where the bare `SyncManager` identifier
+	# isn't registered at compile time — the autoload-compile-order trap (memory: syncmanager-autoload-compile-order).
+	var sm: Node = get_node_or_null(^"/root/SyncManager")
+	var projectile: Node = sm.spawn("Fireball", _resolve_container(), spell.projectile_scene, data) if sm != null else null
 
 	# Presentation hook (camera trauma / SFX via MatchController). Suppress on a
 	# rollback re-sim so a corrected tick doesn't re-fire the feedback.
-	if projectile != null and (SyncManager == null or not SyncManager.is_in_rollback()):
+	if projectile != null and (sm == null or not sm.is_in_rollback()):
 		spell_cast.emit(projectile, spell)
 
 

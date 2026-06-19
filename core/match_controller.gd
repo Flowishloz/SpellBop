@@ -349,6 +349,7 @@ func _ready() -> void:
 
 	_enter_netplay()
 	_apply_equipped_skin()
+	_apply_loadout()
 	round_started.emit(round_number)
 	_begin_round_intro()
 	_warm_up_render_pipelines()
@@ -392,6 +393,44 @@ func _apply_skin_to(wiz: Node, skin_id: Variant) -> void:
 	var animator: Node = wiz.get_node_or_null(^"WizardAnimator")
 	if animator != null and animator.has_method(&"set_skin"):
 		animator.set_skin(palette)
+
+
+## DECK (Content Engine P3, basic): load the player's EQUIPPED loadout (PlayerProfile) into the LOCAL
+## wizard's CardCasterComponent at match start, so cards picked in the Decks menu are actually used.
+## OFFLINE ONLY — online decks aren't exchanged at the handshake yet (P6), so netplay keeps the
+## scene-default cards (identical on both peers → bit-identical). META read at match-start setup, NEVER
+## mid-tick; a DEFAULT deck no-ops (is_default_deck), so a fresh profile + the determinism suites leave
+## the caster's scene cards untouched (the sweep stays bit-identical). The cards are read FRESH per cast
+## (never cached in _ready), so swapping the slot resources here takes effect with no re-cache needed.
+func _apply_loadout() -> void:
+	if _netplay:
+		return
+	# HERMETIC: the headless determinism suites build offline matches but must NOT depend on the player's
+	# saved deck (user://profile.cfg) — a persisted buff/custom card would change which cards the suite
+	# casts (e.g. a buff in the DEFENSE slot deploys NO barrier -> "nothing spawned"). Skip the loadout in
+	# headless; the real (windowed) game always applies it. Generalizes the ai_difficulty hermeticity rule.
+	if DisplayServer.get_name() == "headless":
+		return
+	var pp: Node = get_node_or_null(^"/root/PlayerProfile")
+	if pp == null or pp.is_default_deck():
+		return
+	var wiz: Node = _local_wizard()
+	if wiz == null:
+		wiz = _player
+	if wiz == null:
+		return
+	var caster: Node = wiz.get_node_or_null(^"CardCasterComponent")
+	if caster == null:
+		return
+	var atk: CardResource = pp.active_card(0)   # CardResource.CardType.ATTACK
+	var dfn: CardResource = pp.active_card(1)   # DEFENSE
+	var ctr: CardResource = pp.active_card(2)   # COUNTER
+	if atk != null:
+		caster.set(&"card_slot_1", atk)
+	if dfn != null:
+		caster.set(&"card_slot_2", dfn)
+	if ctr != null:
+		caster.set(&"card_slot_3", ctr)
 
 
 ## LAG-SPIKE FIX (slow-mo exit hitch): the first stack resolution used to

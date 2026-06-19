@@ -1,0 +1,15 @@
+[gd_resource type="Resource" script_class="CardResource" format=3]
+
+[ext_resource type="Script" uid="uid://d3cbexyjjpqvy" path="res://resources/card_resource.gd" id="1_card"]
+
+[resource]
+script = ExtResource("1_card")
+card_type = 1
+faction = 1
+casting_cost = 2
+description = "Sharpen your focus — your Base Fireball charges AND recharges twice as fast for 5 s. No wall. 0 DMG."
+display_name = "Focus Sigil"
+is_card = true
+cast_time = 0.0
+buff_duration = 5.0
+fireball_haste = 0.5

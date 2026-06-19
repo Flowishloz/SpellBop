@@ -40,6 +40,12 @@ signal state_updated(fixed_x: int, fixed_y: int)
 signal slow_started(duration_ticks: int)
 signal slow_ended
 
+## TIMED MOVE BOOST (the Defense BUFF archetype — Hermes' Boon): fired when a speed boost lands / wears
+## off. A presentation hook (a speed-trail VFX could latch on); listeners read sim, never write it, and
+## must guard with is_in_rollback() since the apply path re-runs on rollback re-sims (like slow_started).
+signal boost_started(duration_ticks: int)
+signal boost_ended
+
 ## Path to the SGCharacterBody2D this component moves. Leave empty to use the
 ## component's direct parent (the recommended scene shape:
 ## PlayerController (SGCharacterBody2D) -> MovementComponent).
@@ -102,6 +108,13 @@ var _speed_scale_fp: int = SGFixed.ONE
 var _slow_ticks: int = 0
 var _slow_scale_fp: int = SGFixed.ONE
 
+# TIMED MOVE BOOST (the Defense BUFF archetype — Hermes' Boon): the speed-UP mirror of the slow. While
+# _boost_ticks > 0 the effective speed scale is MULTIPLIED by _boost_scale_fp (>= ONE), so the wizard
+# moves FASTER than base (its max-speed clamp rises with it). RESET-not-stack on re-cast, exactly like
+# the timed slow. Int sim state ("bt" / "bs"), composed AFTER the slow so the two products net out.
+var _boost_ticks: int = 0
+var _boost_scale_fp: int = SGFixed.ONE
+
 # AIM STATE (Creative Director: the held movement input at release tilts a
 # projectile's launch angle — hold longer = steeper). Sim state "ad"/"at".
 # While idle the banked aim DECAYS one tick per tick (intent fades). On
@@ -160,6 +173,13 @@ func _network_process(input: Dictionary) -> void:
 		effective_scale_fp = mini(effective_scale_fp, _slow_scale_fp)
 		if _slow_ticks == 0:
 			slow_ended.emit()
+	# TIMED MOVE BOOST (Hermes' Boon): multiply the effective scale by the boost while active, AFTER the
+	# slow so a slowed + boosted wizard nets to the product. Burns one tick (identical on every peer).
+	if _boost_ticks > 0:
+		_boost_ticks -= 1
+		effective_scale_fp = SGFixed.mul(effective_scale_fp, _boost_scale_fp)
+		if _boost_ticks == 0:
+			boost_ended.emit()
 	var max_speed_fp: int = SGFixed.mul(_max_speed_fp, effective_scale_fp)
 	var acceleration_fp: int = SGFixed.mul(_acceleration_fp, effective_scale_fp)
 
@@ -239,6 +259,23 @@ func slow_ticks_remaining() -> int:
 	return _slow_ticks
 
 
+## Lands a TIMED move-speed BOOST (the Defense BUFF archetype — Hermes' Boon): for [param duration_ticks]
+## the body's speed/acceleration are MULTIPLIED by [param scale_fp] (must be > ONE; a value <= ONE no-ops
+## so a buff can never become a hidden slow). RE-APPLICATION RESETS to a fresh full duration + scale (like
+## the slow). Deterministic: a couple of int assignments, identical on every peer.
+func apply_timed_boost(duration_ticks: int, scale_fp: int) -> void:
+	if duration_ticks <= 0 or scale_fp <= SGFixed.ONE:
+		return
+	_boost_ticks = duration_ticks
+	_boost_scale_fp = scale_fp
+	boost_started.emit(_boost_ticks)
+
+
+## Remaining boost ticks (0 = no boost). Read-only presentation/HUD accessor.
+func boost_ticks_remaining() -> int:
+	return _boost_ticks
+
+
 ## Current aim direction (-1/0/+1) and how many ticks it has been held —
 ## casters tilt launch angles from these (read-only sim accessors).
 func get_aim_dir() -> int:
@@ -289,6 +326,8 @@ func halt() -> void:
 	_velocity_x = 0
 	_slow_ticks = 0
 	_slow_scale_fp = SGFixed.ONE
+	_boost_ticks = 0
+	_boost_scale_fp = SGFixed.ONE
 	_aim_dir = 0
 	_aim_ticks = 0
 	_aim_key = 0
@@ -312,6 +351,8 @@ func _save_state() -> Dictionary:
 		"ss": _speed_scale_fp,
 		"slt": _slow_ticks,
 		"sls": _slow_scale_fp,
+		"bt": _boost_ticks,
+		"bs": _boost_scale_fp,
 		"ad": _aim_dir,
 		"at": _aim_ticks,
 	}
@@ -325,6 +366,8 @@ func _load_state(state: Dictionary) -> void:
 	_speed_scale_fp = int(state.get("ss", SGFixed.ONE))
 	_slow_ticks = int(state.get("slt", 0))
 	_slow_scale_fp = int(state.get("sls", SGFixed.ONE))
+	_boost_ticks = int(state.get("bt", 0))
+	_boost_scale_fp = int(state.get("bs", SGFixed.ONE))
 	_aim_dir = int(state.get("ad", 0))
 	_aim_ticks = int(state.get("at", 0))
 
