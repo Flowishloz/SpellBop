@@ -223,12 +223,13 @@ func freeze_movement(ttl: int = 2) -> void:
 		_movement.apply_movement_freeze(ttl)
 
 
-## SHIELD-RALLY CARD LOCK: a capturing BarrierController calls this on BOTH wizards every rally hold tick to
-## lock their deck cards (gates CASTING only, never movement — so the non-blocking wizard keeps dodging).
-## Same public-API routing as freeze_movement; the barrier never pokes the MovementComponent directly.
-func apply_card_lock(ttl: int = 2) -> void:
+## SHIELD-RALLY CAST LOCK: a capturing BarrierController calls this on BOTH wizards every rally hold tick to
+## lock their casting — deck cards AND the base fireball (gates CASTING only, never movement, so the
+## non-blocking wizard keeps dodging). Same public-API routing as freeze_movement; the barrier never pokes
+## the MovementComponent directly.
+func apply_cast_lock(ttl: int = 2) -> void:
 	if _movement != null:
-		_movement.apply_card_lock(ttl)
+		_movement.apply_cast_lock(ttl)
 
 
 ## STACK WINNER REWARD: grant this wizard a one-shot launch-speed multiplier for

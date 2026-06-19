@@ -16,7 +16,13 @@ extends TouchActionButton
 ## The player's SpellCasterComponent (charge-fraction source for the ring).
 @export var caster_path: NodePath = NodePath("../../Player/SpellCasterComponent")
 
+## SHIELD-RALLY CAST LOCK fade: alpha units/sec when a rally locks casting (~7 = ~0.14 s to fully fade out/in).
+@export var cast_lock_fade_speed: float = 7.0
+
 var _caster: Node
+
+# Wall-clock eased alpha (1 = visible, 0 = faded away while a shield-rally cast lock is active).
+var _lock_fade: float = 1.0
 
 
 func _on_ready_extra() -> void:
@@ -34,6 +40,18 @@ func set_caster(caster: Node) -> void:
 	if caster != null and caster.has_method(&"charge_fraction"):
 		_caster = caster
 		queue_redraw()
+
+
+## SHIELD-RALLY CAST LOCK: fade the whole button away while a shield rally hold locks casting — the deck
+## cards pop out at the same instant, and the base fireball is already gated in the sim, so this is the
+## matching UI for "you can't cast right now." Springs back the moment the hold releases. Wall-clock eased
+## (UI, immune to time_scale); presentation only — reads the caster's deterministic lock, never writes it.
+func _process(delta: float) -> void:
+	super._process(delta)  # base: press swell + label + redraw
+	var locked: bool = _caster != null and _caster.has_method(&"is_cast_locked") \
+			and bool(_caster.call(&"is_cast_locked"))
+	_lock_fade = move_toward(_lock_fade, 0.0 if locked else 1.0, delta * maxf(0.1, cast_lock_fade_speed))
+	modulate.a = _lock_fade
 
 
 func _button_action() -> StringName:

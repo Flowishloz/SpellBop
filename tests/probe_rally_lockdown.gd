@@ -1,11 +1,12 @@
 ## probe_rally_lockdown.gd — verifies the SHIELD-RALLY MOMENT (slow-mo gameplay half):
 ##   (1) MOVER SIM SLOW: apply_sim_slow scales a projectile's per-tick MOTION (≈30%), burns its TTL, then
 ##       lapses back to full speed and resets the factor; the slow round-trips through _save_state.
-##   (2) CARD LOCK: apply_card_lock gates CASTING (card caster is_card_locked) but NEVER movement (the
-##       wizard still moves, is NOT frozen), and round-trips through _save_state ("cl").
-##   (3) RALLY GATE: a barrier capture on the FIRST block (reflect 0) leaves strays + hands ALONE; a capture
+##   (2) CAST LOCK: apply_cast_lock gates CASTING — both deck cards (CardCaster) AND the base fireball
+##       (SpellCaster, which refuses to charge) — but NEVER movement (the wizard still moves, is NOT frozen);
+##       round-trips through _save_state ("cl").
+##   (3) RALLY GATE: a barrier capture on the FIRST block (reflect 0) leaves strays + casting ALONE; a capture
 ##       once a RALLY is established (reflect >= rally_min_reflects) crawls every OTHER field projectile and
-##       card-locks BOTH wizards — while leaving the receiver free to move.
+##       cast-locks BOTH wizards — while leaving the receiver free to move.
 ## Run: <godot> --headless --path . -s res://tests/probe_rally_lockdown.gd
 extends SceneTree
 
@@ -32,6 +33,15 @@ func _find_movement(wiz: Node) -> Node:
 func _find_card_caster(wiz: Node) -> Node:
 	for c in wiz.get_children():
 		if c.has_method(&"make_defense_available"):
+			return c
+	return null
+
+
+## Duck-typed (is_charging is unique to the SpellCasterComponent — the base fireball) — same early-compile
+## avoidance as _find_card_caster.
+func _find_spell_caster(wiz: Node) -> Node:
+	for c in wiz.get_children():
+		if c.has_method(&"is_charging"):
 			return c
 	return null
 
@@ -126,16 +136,24 @@ func _run() -> void:
 		return
 
 	# Lock via the wizard's public routing (the path the barrier uses).
-	wiz.apply_card_lock(3)
-	_ck(mv.is_card_locked(), "apply_card_lock arms the lock")
-	_ck(not mv.is_frozen(), "card lock is NOT a movement freeze")
-	_ck(caster.is_card_locked(), "card caster mirrors the movement card lock (HUD read)")
+	wiz.apply_cast_lock(3)
+	_ck(mv.is_cast_locked(), "apply_cast_lock arms the lock")
+	_ck(not mv.is_frozen(), "cast lock is NOT a movement freeze")
+	_ck(caster.is_cast_locked(), "card caster mirrors the movement cast lock (hand pop-out read)")
 
-	# CRUCIAL: a card-locked wizard can STILL MOVE (only the non-blocking receiver gets this lock).
+	# The FIREBALL (SpellCasterComponent) is locked too: it mirrors the lock AND refuses to start a charge
+	# (the cast button fades off this same is_cast_locked()).
+	var spell: Node = _find_spell_caster(wiz)
+	_ck(spell != null and spell.is_cast_locked(), "spell caster (fireball) mirrors the cast lock (button-fade read)")
+	if spell != null:
+		spell._network_process({InputCommand.KEY_CAST: 1})
+		_ck(not spell.is_charging(), "cast-locked: fireball does NOT start a charge (button faded out)")
+
+	# CRUCIAL: a cast-locked wizard can STILL MOVE (only the non-blocking receiver gets this lock).
 	var mx0: int = wiz.get_global_fixed_position().x
 	mv._network_process({InputCommand.KEY_X: 1})
-	_ck(wiz.get_global_fixed_position().x > mx0, "card-locked wizard STILL MOVES (receiver can dodge)")
-	_ck(int(mv._save_state()["cl"]) >= 1, "save_state carries the card lock (cl=%s)" % str(mv._save_state()["cl"]))
+	_ck(wiz.get_global_fixed_position().x > mx0, "cast-locked wizard STILL MOVES (receiver can dodge)")
+	_ck(int(mv._save_state()["cl"]) >= 1, "save_state carries the cast lock (cl=%s)" % str(mv._save_state()["cl"]))
 
 	# Round-trip onto a fresh wizard.
 	var st: Dictionary = mv._save_state()
@@ -144,13 +162,13 @@ func _run() -> void:
 	var mv_b: Node = _find_movement(wiz_b)
 	if mv_b != null:
 		mv_b._load_state(st)
-	_ck(mv_b != null and mv_b.is_card_locked(), "load_state restores the card lock on a fresh wizard")
+	_ck(mv_b != null and mv_b.is_cast_locked(), "load_state restores the cast lock on a fresh wizard")
 	wiz_b.queue_free()
 
 	# Lock lapses when no longer re-pushed (drive a few free ticks).
 	for _i in 5:
 		mv._network_process({})
-	_ck(not mv.is_card_locked(), "card lock lapses once it stops being re-pushed")
+	_ck(not mv.is_cast_locked(), "cast lock lapses once it stops being re-pushed")
 	wiz.queue_free()
 	await process_frame
 
@@ -173,7 +191,7 @@ func _run() -> void:
 	_capture_round(container, owner, receiver, 0)
 	var strayA: Node = _last_stray
 	_ck(strayA != null and int(strayA._save_state()["movement"]["ssk"]) == 0, "FIRST block: stray NOT slowed")
-	_ck(not owner_mv.is_card_locked() and not recv_mv.is_card_locked(), "FIRST block: neither hand locked")
+	_ck(not owner_mv.is_cast_locked() and not recv_mv.is_cast_locked(), "FIRST block: neither hand locked")
 	_clear_round()
 	await process_frame  # let PHASE A's queue_free'd nodes actually leave the container before PHASE B
 
@@ -181,8 +199,8 @@ func _run() -> void:
 	_capture_round(container, owner, receiver, 1)
 	var strayB: Node = _last_stray
 	_ck(strayB != null and int(strayB._save_state()["movement"]["ssk"]) > 0, "RALLY: stray IS slowed")
-	_ck(owner_mv.is_card_locked(), "RALLY: deploying owner's hand locks")
-	_ck(recv_mv.is_card_locked(), "RALLY: receiving player's hand locks too (both)")
+	_ck(owner_mv.is_cast_locked(), "RALLY: deploying owner's hand locks")
+	_ck(recv_mv.is_cast_locked(), "RALLY: receiving player's hand locks too (both)")
 	_ck(not recv_mv.is_frozen(), "RALLY: receiver is card-locked but NOT frozen (can still move)")
 
 	if _fails == 0:

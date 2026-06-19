@@ -561,7 +561,7 @@ func _update_card_availability() -> void:
 	# unavailable cards). The lock is deterministic sim state the caster exposes; this is a presentation read
 	# only. It clears the instant the hold releases, so the hand springs straight back in. (Override here
 	# rather than threading a guard through each line above.)
-	if _caster != null and _caster.has_method(&"is_card_locked") and bool(_caster.call(&"is_card_locked")):
+	if _caster != null and _caster.has_method(&"is_cast_locked") and bool(_caster.call(&"is_cast_locked")):
 		avail = [false, false, false]
 	for i in 3:
 		if avail[i] and not _available[i] and _states[i] != CardState.EXPANDED:

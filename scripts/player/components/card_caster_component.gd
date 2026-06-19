@@ -179,11 +179,12 @@ func is_defense_buff() -> bool:
 	return false
 
 
-## SHIELD-RALLY CARD LOCK: true while a shield rally hold is locking this wizard's deck cards (gates new
-## presses; see _network_process). The card-hand HUD reads this (duck-typed) to POP the whole hand out for
-## the rally beat. Reads the sibling movement's saved lock, so it stays in lockstep on every peer.
-func is_card_locked() -> bool:
-	return _movement != null and _movement.is_card_locked()
+## SHIELD-RALLY CAST LOCK: true while a shield rally hold is locking this wizard's casting (see
+## _network_process). The card-hand HUD reads this (duck-typed) to POP the whole hand out for the rally beat
+## (the cast button fades off the SpellCasterComponent's matching is_cast_locked()). Reads the sibling
+## movement's saved lock, so it stays in lockstep on every peer.
+func is_cast_locked() -> bool:
+	return _movement != null and _movement.is_cast_locked()
 
 
 # =====================================================================
@@ -191,13 +192,13 @@ func is_card_locked() -> bool:
 # =====================================================================
 
 func _network_process(input: Dictionary) -> void:
-	# SHIELD-CAPTURE FULL LOCK (Task 3) + SHIELD-RALLY CARD LOCK (the rally beat): no card presses are
+	# SHIELD-CAPTURE FULL LOCK (Task 3) + SHIELD-RALLY CAST LOCK (the rally beat): no card presses are
 	# accepted while this wizard is committed to a block (is_frozen — the deploying owner) OR while a shield
-	# RALLY hold is locking BOTH wizards' cards (is_card_locked — the 2nd reciprocated block on, so neither
+	# RALLY hold is locking BOTH wizards' casting (is_cast_locked — the 2nd reciprocated block on, so neither
 	# player drops a fresh projectile into the moment). Skip the whole tick (cooldowns hold too). Already-
 	# STAGED spells still resolve via release_staged() on the stack's own timer; this gates only NEW presses.
-	# Deterministic read of the sibling movement's saved freeze / card lock.
-	if _movement != null and (_movement.is_frozen() or _movement.is_card_locked()):
+	# Deterministic read of the sibling movement's saved freeze / cast lock.
+	if _movement != null and (_movement.is_frozen() or _movement.is_cast_locked()):
 		return
 
 	for i in 3:

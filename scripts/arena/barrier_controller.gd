@@ -339,7 +339,8 @@ func _freeze_owner() -> void:
 ## SHIELD RALLY MOMENT: once a RALLY is established ([param reflects] >= rally_min_reflects — the 2nd
 ## reciprocated block onward), drive the rally beat's GAMEPLAY half every held tick: crawl every OTHER
 ## field projectile (apply_sim_slow) so a stray can't cross into a frozen wizard, and LOCK both wizards'
-## deck cards (apply_card_lock — the hands pop out, no new card enters the moment). All re-pushed each tick
+## casting (apply_cast_lock — card hands pop out + fireball buttons fade, so no new projectile enters the
+## moment). All re-pushed each tick
 ## with a short TTL so both lapse ~1 tick after release. A single isolated block (reflects 0) never triggers
 ## it — the moment is RESERVED for rallies. Deterministic: a sibling walk in scene-tree order + int pushes,
 ## identical on every peer; each touched projectile saves its slow and each wizard saves its lock, so a
@@ -355,14 +356,14 @@ func _apply_rally_lockdown(reflects: int) -> void:
 				continue
 			if child.has_method(&"apply_sim_slow"):
 				child.apply_sim_slow(_rally_slow_fp, 2)
-	# Lock BOTH wizards' deck cards: the deploying owner AND the captured ball's original thrower (the
-	# receiver the ball will be returned to). The hit source is the thrower until release overwrites it.
-	if _owner_body != null and is_instance_valid(_owner_body) and _owner_body.has_method(&"apply_card_lock"):
-		_owner_body.apply_card_lock(2)
+	# Lock BOTH wizards' casting (cards + fireball): the deploying owner AND the captured ball's original
+	# thrower (the receiver the ball will be returned to). The hit source is the thrower until release overwrites it.
+	if _owner_body != null and is_instance_valid(_owner_body) and _owner_body.has_method(&"apply_cast_lock"):
+		_owner_body.apply_cast_lock(2)
 	if _captured_ball != null and is_instance_valid(_captured_ball) and _captured_ball.has_method(&"get_hit_source"):
 		var receiver: Node = _captured_ball.get_hit_source()
-		if receiver != null and is_instance_valid(receiver) and receiver.has_method(&"apply_card_lock"):
-			receiver.apply_card_lock(2)
+		if receiver != null and is_instance_valid(receiver) and receiver.has_method(&"apply_cast_lock"):
+			receiver.apply_cast_lock(2)
 
 
 ## SHIELD-REFLECT RALLY: deterministic fixed-point power base_fp^exp (exp >= 0) for the hold
