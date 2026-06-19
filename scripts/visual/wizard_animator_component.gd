@@ -782,18 +782,13 @@ func _select_pose_name(now: int, speed: float) -> StringName:
 	return &"idle"
 
 
-## SHIELD-HOLD pose (Task 3): the frame held while motion-locked during a barrier capture. Prefer a
-## dedicated charging_shield frame, then a charging_fire frame, else fall back to cast_fire (the pose a
-## fireball charge already shows). Resolved ONCE in _ready (the manifest is static after load).
+## SHIELD-HOLD pose: the frame held while motion-locked during a barrier capture / hold-release reflect.
+## Prefer a dedicated charging_shield frame if the artist adds one; otherwise CAST_FIRE (cast_fire_back /
+## _front, picked by perspective). Deliberately NOT the fireball-charge "charging" frame — the hold-release
+## reflect must read as a CAST, not a charge (Creative Director). Resolved ONCE in _ready (manifest static).
 func _resolve_shield_pose() -> StringName:
 	if WizardPoseLibrary.has_pose(&"charging_shield"):
 		return &"charging_shield"
-	if WizardPoseLibrary.has_pose(&"charging_fire"):
-		return &"charging_fire"
-	# Fall back to whatever a fireball CHARGE currently shows (its generic "charging" frame if the
-	# artist added one, else cast_fire) so the shield-hold pose always matches "like it currently is".
-	if WizardPoseLibrary.has_pose(&"charging"):
-		return &"charging"
 	return &"cast_fire"
 
 

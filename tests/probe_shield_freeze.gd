@@ -60,6 +60,11 @@ func _run() -> void:
 		return
 	_ck(not mv.is_frozen(), "fresh wizard: not frozen")
 
+	# The pose held during the shield hold/release reflect must read as a CAST (cast_fire_back/_front),
+	# NOT the fireball-charge "charging" frame (regression guard for the wrong-sprite bug).
+	var anim: Node = wiz.get_node_or_null(^"WizardAnimator")
+	_ck(anim != null and anim.get(&"_shield_pose") == &"cast_fire", "shield-hold pose resolves to cast_fire (not charging)")
+
 	# --- CONTROL: with no lock, movement input MOVES the wizard ---
 	var x_before: int = wiz.get_global_fixed_position().x
 	mv._network_process({InputCommand.KEY_X: 1})
