@@ -87,12 +87,31 @@ signal card_rejected(card: CardResource)
 @export_range(0.0, 1.0) var aim_max_fraction: float = 0.5
 @export var aim_full_hold_ticks: int = 24
 
+## LATE-RALLY SHIELD WINDOW (Creative Director — anti-spam): a rallied ball pops the DEFENSE card into the
+## hand early so you can ready a block. Past this many reflects the "prediction window" (how far down-court
+## the ball is when the shield pops in) starts SHRINKING per extra reflect, so SUSTAINING a long rally needs
+## tighter timing instead of mashing the auto-appearing shield. At/below the threshold the warning is the
+## full generous any-distance pop-in (unchanged). PRESENTATION ONLY — drives the HUD pop-in, never the sim.
+@export var rally_window_threshold_reflects: int = 5
+## Down-court distance (sim units) the ball must be within to pop the shield in at the FIRST shrink step
+## (one reflect past the threshold) — generous, most of the approach.
+@export var rally_window_base_distance: float = 1400.0
+## Sim units the prediction window shrinks per extra reflect beyond the threshold.
+@export var rally_window_shrink_per_reflect: float = 230.0
+## Floor: the shield never pops in later than this close, no matter how long the rally — a deep rally is
+## HARD to keep alive, not impossible (leaves a reactable sliver).
+@export var rally_window_min_distance: float = 300.0
+
 ## Path to the caster's SGCharacterBody2D. Empty = direct parent.
 @export var body_path: NodePath
 
 # --- Cached fixed-point / tick values (computed once in _ready()) ---
 var _cooldown_ticks: int = 1
 var _spawn_offset_y_fp: int = 0
+# LATE-RALLY SHIELD WINDOW: the prediction-window distances as fixed-point (cached in _ready).
+var _rally_window_base_fp: int = 0
+var _rally_window_shrink_fp: int = 0
+var _rally_window_min_fp: int = 0
 
 # Authoritative simulation state (ints only — rollback-safe).
 var _slot_cd: Array[int] = [0, 0, 0]  # per-slot cooldown ticks remaining
@@ -132,6 +151,9 @@ func _cache_fixed_point_values() -> void:
 	var safe_tick_rate: int = maxi(1, tick_rate)
 	_cooldown_ticks = maxi(1, ceili(cooldown_time * float(safe_tick_rate)))
 	_spawn_offset_y_fp = SGFixed.from_float(spawn_offset_y)
+	_rally_window_base_fp = SGFixed.from_float(maxf(0.0, rally_window_base_distance))
+	_rally_window_shrink_fp = SGFixed.from_float(maxf(0.0, rally_window_shrink_per_reflect))
+	_rally_window_min_fp = SGFixed.from_float(maxf(0.0, rally_window_min_distance))
 
 
 ## Whole-tick hold a card needs to commit. Cards now commit on the press EDGE
@@ -576,8 +598,10 @@ func _defense_woa_fp(card: CardResource) -> int:
 ## moving TOWARD our wizard's baseline, regardless of lane or distance — drives the DEFENSE card popping
 ## into the hand whenever there's an attack on the way to block. The old version also gated on a 650-unit
 ## range AND a 300-unit lane band, so a ball that flew off-angle dropped out of "threat" and only
-## re-popped on its wall-bounce, leaving no time to ready a block. Now it is purely DIRECTIONAL: is it
-## coming at me. Pure read (never sim/saved); the emerald is skipped for free (it exposes no get_velocity_y).
+## re-popped on its wall-bounce, leaving no time to ready a block. Now it is purely DIRECTIONAL — is it
+## coming at me — EXCEPT for a deep rally: past rally_window_threshold_reflects the reaction distance shrinks
+## per reflect (anti-spam, see the export docs), so a long rally's shield pops in later and later. Pure read
+## (never sim/saved — the AI uses its own block gate); the emerald is skipped for free (no get_velocity_y).
 func has_incoming_threat() -> bool:
 	if _body == null:
 		return false
@@ -595,7 +619,17 @@ func has_incoming_threat() -> bool:
 		var vy: int = child.get_velocity_y()
 		if vy == 0 or (vy > 0) != (dy > 0):
 			continue  # moving away / already past us — not coming toward our baseline
-		return true  # a hostile ball is heading our way (any lane, any distance)
+		# LATE-RALLY SKILL WINDOW (anti-spam): once this ball has been rallied to/past the threshold it only
+		# counts as a "threat" (pops the shield in) when it is within a reaction distance that SHRINKS per
+		# extra reflect — so keeping a long rally alive needs timing, not mashing the auto-appearing shield.
+		# Below the threshold any distance counts (the generous warning is unchanged).
+		var reflects: int = child.get_reflect_count() if child.has_method(&"get_reflect_count") else 0
+		if reflects >= rally_window_threshold_reflects:
+			var extra: int = reflects - rally_window_threshold_reflects + 1
+			var react_fp: int = maxi(_rally_window_min_fp, _rally_window_base_fp - extra * _rally_window_shrink_fp)
+			if absi(dy) > react_fp:
+				continue  # still too far for this deep into the rally — the shield stays tucked
+		return true  # a hostile ball is heading our way (within the rally-scaled reaction window)
 	return false
 
 
