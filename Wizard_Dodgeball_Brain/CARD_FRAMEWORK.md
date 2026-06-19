@@ -4,6 +4,11 @@
 > resolves it. Updated by the Orchestrator at the close of the Round System
 > sprint (2026-06-12). Companion to `Cards_Spells.txt` (the design spec this
 > framework implements field-for-field).
+>
+> **DECK / ECONOMY MODEL (2026-06-19) → see `CONTENT_ENGINE.md`.** The 15-card
+> deck (5 attack / 5 counter / 5 defense), the cooldown-cycle "draw", the
+> build-time copy-limits, and the XP / pack / forge economy SUPERSEDE the older
+> mana / draft model. This file stays the per-card AUTHORING + RUNTIME reference.
 
 ## THE ONE RULE
 **Every card is a `.tres` of `CardResource` (`resources/card_resource.gd`).
@@ -20,8 +25,21 @@ If a new card seems to need new code, it needs a new *parameter* (extend
 
 Because MatchController releases the stack on `stack_closed`, the on-screen
 countdown and the release are the SAME event — the timer cannot lie.
-COOLDOWNS: per-slot, 4 s, starting at the stage/deploy (placeholder until
-the deck system makes cards limited-use); cooling cards dim in the hand.
+COOLDOWNS: per-slot, 4 s, starting at the stage/deploy; cooling cards dim in
+the hand. Under the deck system (below) the cooldown now DRIVES the cycle: when
+a slot's cooldown ends, the slot advances to the next card of its type.
+
+## DECK & DRAW — the loadout system (2026-06-19, see `CONTENT_ENGINE.md`)
+The 3 slots are no longer single cards — they are the 3 TYPE-CYCLES of a
+15-card deck (5 ATTACK / 5 COUNTER / 5 DEFENSE); the hand of 3 shows the
+"current" card of each type. The existing card-pop IS the draw: on use +
+cooldown, a slot CYCLES to the next card of its type (sequential index
+0→1→2→3→4→0 — deterministic, no RNG to sync; the index is NEW saved sim-state).
+Deck-build copy limits (UI-enforced): 5× same Common, 3× same Uncommon, 1× same
+Rare. The deck is SNAPSHOTTED into `CardCasterComponent` at match start
+(offline: player deck vs default AI deck; online: both decks exchanged at the
+handshake) and only the integer index changes thereafter — so it stays
+rollback-safe. NO mana, NO draft-choice (both cut after playtesting).
 
 ## WINDOW OF AFFECT (WOA) — risk vs reward timing
 A 0..1 quality score for instant casts; it can scale ANY card attribute.
@@ -64,6 +82,32 @@ shared by both players and every rollback re-simulation.
 
 \* = data landed per spec; runtime effect arrives with later cards.
 
+## PARAMETER SURFACE — WIRED vs DATA-ONLY (what's free vs needs code)
+*(Verified 2026-06-19 against the resources + consuming components.)* The ONE
+RULE — moves come from parameters — holds for almost the whole COMMON/UNCOMMON
+pool. Author those as pure `.tres`, NO code:
+
+- **Ballistics (all cards):** `base_speed`, `damage`, `projectile_size`,
+  `bounciness` (wall-ricochet retention → multi-bounce trick shots), `cast_time`,
+  `element` (Fire/Spark/Ice impact colour), `projectile_scene`.
+- **ATTACK:** `lifetime`, `projectile_count` (1–5, auto-fanned), `spread_x_speed`,
+  `stage_ticks`, `homing_strength` (0–1 seek), `barrier_breaker` (shatter+split).
+- **DEFENSE:** `wall_size`, `wall_lifetime`, `wall_movement_speed` (drifting
+  walls), `wall_offset_y`, + full WOA (`woa_range` / `woa_max_reflect` /
+  `woa_max_hold_seconds` / `woa_ricochet`).
+- **COUNTER:** `slow_duration`, `slow_scale_weak`/`strong`, `speed_modifier`.
+- **Per-card presentation:** `screen_shake_intensity`, `cast_vfx_scene`,
+  `cast_animation_name`, `ui_sprite`, `world_sprite`.
+
+**DECLARED but NOT wired anywhere in `scripts/` → need NEW RUNTIME CODE:**
+`is_exploding`, `rebound_window` (Perfect-Parry), `healing_absorb`,
+`cast_while_charging`, `movement_dash_distance`, `conditional_draw`,
+`teleport_distance`, `freeze_duration`, `phase_immunity`. These are the EXOTIC
+mechanics — **RARES will generally need new wiring AND likely brand-new
+parameters** (+ bespoke `cast_vfx_scene` / shake) to feel distinct from the
+param-tuned commons/uncommons. Budget each Rare as a small mechanic feature,
+determinism-checked individually — a Rare is NOT a pure `.tres`.
+
 ## RUNTIME MAP
 | Piece | File | Role |
 |---|---|---|
@@ -104,7 +148,10 @@ shared by both players and every rollback re-simulation.
 2. Set Identity (type/faction/rarity/cost; counters: `is_reactive_only = true`)
    and write the `description` (include damage).
 3. Tune ONLY the parameter block for its category. `is_card = true` always.
-4. Reference it from a hand slot (`player.tscn` CardCasterComponent for now).
+4. Register it in the card pool / `PlayerProfile` inventory so it can be
+   collected and slotted into a deck. (Historically the 3 slots were hardcoded
+   on `player.tscn`'s CardCasterComponent; under the deck system the caster is
+   fed the deck at match start — see `CONTENT_ENGINE.md` §4.)
 5. Run `tests/test_card_system.gd` + `tests/test_round_flow.gd` headless,
    then playtest with 8/9/0.
 

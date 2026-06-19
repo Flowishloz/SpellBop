@@ -32,11 +32,14 @@ GAME MANIFESTO: WIZARD DODGEBALL (WORKING TITLE)
 - Free-to-play model inspired by MTG Arena.
 - Level-up rewards include card packs.
 - Premium currency strictly reserved for cosmetic card variants, player skins, and bespoke animations. No pay-to-win mechanics.
+- PACKS (2026-06-19, see CONTENT_ENGINE.md): two flavors, each also dropping Coins — a SPELL pack (spell cards + coins) and a COSMETIC pack (skin cards + coins); contents randomly generated and rarity-weighted.
+- FORGE / cash-in (so no pull is worthless): 5 Commons -> 1 random Uncommon; 3 Uncommons -> 1 random Rare (applies to both spells and skins).
+- Premium GEOMETRY skins (cyber/neon/space) are buyable with Gems AND can drop from cosmetic packs as VERY RARE finds — still cosmetic-only, so still no pay-to-win.
 
 4. CARDS & DECKBUILDING
 - Total Launch Pool: 51 Cards (17 per faction).
 - Deck Size: 15 Cards.
-- Draft Mechanic: During the 10-second break, players choose to either DRAW a card OR gain an OFF-COLOR MANA token to support multi-faction decks.
+- DECK MODEL (2026-06-19, SUPERSEDES the old draft/mana mechanic — see CONTENT_ENGINE.md): a 15-card deck = 5 ATTACK + 5 COUNTER + 5 DEFENSE; hand size 3 (one of each type). NO mana, NO draft-choice. The in-round card-pop is the "draw": a used slot cycles to the NEXT card of that type in the deck (sequential = deterministic for rollback). Build-time copy limits: 5x same Common, 3x same Uncommon, 1x same Rare.
 - Rarity Economy: 
   * Commons (39 total): Generic, clean visual animations to maintain readable screen state.
   * Uncommons (9 total, 3 per color): Small, low-effort bespoke animations.

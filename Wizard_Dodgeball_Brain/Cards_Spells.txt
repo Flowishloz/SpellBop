@@ -1,5 +1,18 @@
 SPELL & CARD ARCHITECTURE SPECIFICATION: WIZARD DODGEBALL
 
+*******************************************************************************
+>>> PARTIALLY SUPERSEDED (2026-06-19) — the LIVE deck + economy model is now
+    CONTENT_ENGINE.md. After playtesting the Creative Director DROPPED: the MANA
+    system, the DRAFT-CHOICE, and the OFF-COLOR TOKEN mechanic. The live model:
+      - Deck = 15 cards (5 ATTACK / 5 COUNTER / 5 DEFENSE); hand = 3 (one each).
+      - The card-pop "cooldown replace" IS the draw: a used slot cycles to the
+        NEXT card of that type in the deck (sequential, deterministic).
+      - Deck-build copy limits: 5x same Common, 3x same Uncommon, 1x same Rare.
+    THIS FILE REMAINS the canonical CARD-DATA spec — the category architectures
+    (§2) and the parameter surface are accurate; see CARD_FRAMEWORK.md §"PARAMETER
+    SURFACE" for which params are WIRED today vs need new code.
+*******************************************************************************
+
 ===============================================================================
 1. CORE DATA TEMPLATE (GLOBAL PROPERTIES)
 ===============================================================================
@@ -10,7 +23,8 @@ Every single card in the 51-card pool inherits from this base data class
 - faction (Enum): RED (Adrenaline), BLUE (Control), GREEN (Momentum).
 - rarity (Enum): COMMON, UNCOMMON, RARE.
 - cast_time (Float): The duration (in seconds) the player must hold the input 
-  to charge and cast the spell. Generates mana sequentially during the hold.
+  to charge and cast the spell.  NOTE (2026-06-19): the MANA system is DROPPED —
+  casting_cost is now purely hold-time + the UI cost gauge (see CONTENT_ENGINE.md).
 - is_reactive_only (Bool): Determines if the card can only be played onto the stack.
 - ui_sprite (Texture2D): The 2D card art face displayed during the draft phase.
 - world_sprite (Texture2D): Pixel art sprite used for the projectile/wall in 3D space.
@@ -110,6 +124,8 @@ FACTION PATHS:
 
 ===============================================================================
 6. MOBILE UI & INPUT ERGONOMICS (THE CASTING BUFFER)
+   [SUPERSEDED 2026-06-19: cards COMMIT ON PRESS (no charge/channel, no mana
+   buffer); the mid-cast mana mechanics below are historical. See CONTENT_ENGINE.md.]
 ===============================================================================
 Optimized explicitly for a dual-thumb mobile control layout (Left Thumb = Character Movement, Right Thumb = Card Selection & Casting).
 
