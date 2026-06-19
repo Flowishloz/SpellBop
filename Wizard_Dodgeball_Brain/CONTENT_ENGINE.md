@@ -95,8 +95,10 @@ killed it):**
   has variety; a deck of 5 identical copies legitimately pops the same card.
 - **DECK-BUILD COPY LIMITS** (enforced in the BUILDER UI, never at runtime):
   - max **5×** the same COMMON,
-  - max **3×** the same UNCOMMON,
+  - max **2×** the same UNCOMMON,  *(CD revised 2026-06-19 from 3 → 2 during the Decks overhaul)*
   - max **1×** the same RARE.
+  - SINGLE SOURCE OF TRUTH: `PlayerProfile.COPY_LIMIT = {0:5, 1:2, 2:1}` (rarity→max). The builder's
+    quantity-prompt cap = `min(copy_limit − in_deck, owned − in_deck, 5 − type_count)`.
 - Every player AND the AI always holds a LEGAL 5/5/5 deck — a **DEFAULT STARTER DECK** ships so
   new accounts and the offline opponent are never illegal/empty.
 
@@ -210,7 +212,8 @@ each determinism-checked individually. A Rare is NOT a pure `.tres`.
 > **STATUS — wave 1 SHIPPED (commit `ab25938`, 2026-06-19):** P0 ✅ (`PlayerProfile` + `profile.cfg`);
 > P2 🟡 (4 of N cards: 2 attack commons + 2 defense buffs — RARES + the rest pending); P3 🟡 (BASIC
 > offline loadout = ONE active card per slot, headless-hermetic; the 15-card cooldown-CYCLING deck is
-> still TODO); P4 🟡 (BASIC Decks menu; the home-screen clickable 3D + the full 5/5/5 builder are TODO).
+> still TODO); P4 🟡 (full 5/5/5 deck-BUILDER SHIPPED 2026-06-19 — landing + builder + inspect + qty-prompt,
+> see §13; the home-screen clickable 3D model is the last P4 piece TODO).
 > P1 (XP/levels), P5 (packs/forge), P6 (online deck exchange), P7 (APK/sync) = TODO. **See §11 for exactly
 > what's built, and §12 for the move-authoring recipe.**
 - **P0 — Profile spine** *(meta-only)*: `PlayerProfile` autoload + `user://profile.cfg` +
@@ -349,9 +352,51 @@ entity's `_network_spawn(data)` rebuilds it (every spawn AND every rollback re-s
   check the persisted deck (`user://profile.cfg`), not the spawn code.
 - Test `printerr` failures print to **STDERR**, not stdout — scan both (or trust the suite's exit code).
 
-## 13. NEXT — DECKS PAGE OVERHAUL (do this BEFORE authoring more moves)
-The basic Decks menu (text buttons, one active card per slot) is too thin to TEST moves clearly. Overhaul
-it FIRST for clarity: show each card's type/rarity/faction + key stats + `description` (and `ui_sprite` art
-when present), a clear per-slot picker, and an at-a-glance read of what each move does — so new moves can be
-authored + eyeballed fast. This precedes P2's larger card-content push (Ricochet Round, Mitosis Bolt, the
-stack-manipulating counters Mirror Thief / Siphon Ward, etc.).
+## 13. DECKS PAGE OVERHAUL — SHIPPED (2026-06-19)
+The thin text-button picker is REPLACED by a full two-state deck-builder (`scripts/ui/decks.gd`, ~700 lines;
+`scenes/decks.tscn` is just the root Control + script). Built so moves can be authored + eyeballed fast:
+
+- **STATE 1 — "MY DECKS" landing:** the deck BOXES hero-centred (placeholder `DeckBoxIcon` art) — one active
+  deck + two LOCKED "purchasable upgrade" slots. Tap the active box → tweens down into the bottom dock,
+  revealing the builder.
+- **STATE 2 — BUILDER (40/5/40/15 split):** TOP deck list (5 slots/type, empty slots dashed, the slot-0
+  "loaded in match" card gets a green border) · SEP bar (`DECK x/15` + 🔴/🟢/🔵 per-type counts) · filter
+  strip (search + type/rarity chips) · inventory grid (rows of 3, scroll) · bottom dock (docked box + swipe
+  arrows + Back).
+- **CARD VARIANTS:** small tile (70/30 text/art + owned `xN` badge, faction-tinted, rarity stripe, type
+  glyph) and a BIG inspect modal (50/50, scales up over a darkened backdrop, tap-out to dismiss; shows the
+  full `description` + every mechanic + ADD / REMOVE / LOAD-IN-MATCH).
+- **INTERACTIONS:** drag inventory→deck (drop anywhere in the list, +1); double-tap OR the qty badge → a
+  quantity prompt whose max is the DYNAMIC cap; deck-tile tap → inspect, double-tap → remove. Rejections
+  shake the type counter + buzz (`Input.vibrate_handheld`) + toast the reason. Haptics on pickup/drop/modal.
+- **DATA (`PlayerProfile`):** the deck is now up to 5 ids/type (was 1); `owned_count` is dev-granted (6/3/2
+  by rarity — exceeds the cap so the dynamic cap is testable) until packs land (`DEV_GRANT_ALL`, mirrors
+  `SkinCatalog.DEV_UNLOCK_ALL`). `add_card`/`remove_card`/`make_active`/`max_addable`/`copy_limit` are the
+  builder API. Still 100% META — offline still loads only `deck[type][0]`, headless-gated; **20/20 sweep
+  bit-identical**, probe `tests/probe_decks.gd` + screenshots `tests/screenshot_decks.gd`.
+- **STILL TODO (P4):** the home-screen clickable 3D deck model (edge-glow + click-shake) → this screen, and
+  the actual in-round 15-card cooldown CYCLING (P3 sim change — the builder persists the deck; the sim only
+  consumes slot 0 today).
+- **POLISH PASS (CD batch 2, same day):** editable DECK NAMES (under the box on the landing + in the dock;
+  persisted `[deck] name`, `PlayerProfile.set_deck_name`); cards COLOURED BY TYPE (red attack / green defense
+  / blue counter, matching `card_hand_hud.TYPE_COLORS`) — faction is now text-only; the BIG view rebuilt to
+  read like the IN-MATCH card (gold MTG frame, type-coloured header, the real type art icon, two bordered
+  text boxes with `clip_contents` so text never spills) + the full stat line + ADD/REMOVE buttons; the slot-0
+  "loaded" card carries a GOLD border (stands out on all three type colours); dragging a card focus-DIMS the
+  other-type cards (smooth tween) and dropping onto a FILLED same-type slot REPLACES it (`replace_at`). The
+  inventory dock was raised to kill the empty void. Verified: `probe_decks` + 20/20 sweep + 6 screenshots.
+
+**Next:** P2's card-content push (Ricochet Round, Mitosis Bolt, the stack-manipulating counters Mirror Thief
+/ Siphon Ward, + the first RARE per category) — now testable card-by-card in the new builder.
+
+## 14. NEXT — CARD CREATION ENGINE (drag-and-drop authoring; CD direction 2026-06-19)
+**Before hand-authoring more moves**, the CD wants a drag-and-drop card pipeline that MIRRORS the wizard
+SKIN/sprite system: drop a card's art into a folder and the card auto-appears in `CardCatalog` → the Decks
+builder → the in-match hand, with NO hand-editing of `.tres` or the catalog. The RUNTIME is already ready —
+`CardResource.ui_sprite` / `world_sprite` hooks are wired (just UNSET), and the Decks tiles + big inspect
+already read `ui_sprite` (falling back to drawn glyphs / the `TYPE_ART` placeholders). Only the EDITOR tooling
+is missing: an `@tool` `card_pipeline` plugin modelled line-for-line on `addons/wizard_pipeline/plugin.gd`
+(watch `res://assets_final/cards/<id>/`, regenerate the card `.tres` + `CardCatalog.ENTRIES` ONLY-when-changed
+to avoid the save→`filesystem_changed` loop). Art is PRESENTATION ONLY (never sim) so the sweep stays bit-
+identical. **Full spec + the piece-by-piece build list lives in `HANDOFF.md` → "NEXT PHASE — CARD CREATION
+ENGINE".**

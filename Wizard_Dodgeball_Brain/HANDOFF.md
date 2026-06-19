@@ -240,8 +240,12 @@ The Creative Director reported the AI opponent "doesn't block much" and asked fo
 > roadmap approved 2026-06-19; **WAVE 1 SHIPPED `ab25938`** — `PlayerProfile` + a basic Decks menu + 5
 > cards (2 attack commons + 2 defense BUFFS) + the defense-buff archetype + a headless deck-hermeticity
 > gate; 20/20 bit-identical. **See `CONTENT_ENGINE.md` §11 (exactly what's built) + §12 (the move-authoring
-> recipe future AI should follow).** **IMMEDIATE NEXT (CD direction): overhaul the Decks page for testing
-> CLARITY (§13) BEFORE authoring more moves** (Ricochet Round / Mitosis Bolt / the stack-counters come after).
+> recipe future AI should follow).** **DECKS PAGE OVERHAUL — SHIPPED 2026-06-19** (`7e0d3fd`, on top of
+> `ab25938`/`d228895`): the full two-state deck BUILDER (My Decks landing ↔ builder; editable deck names;
+> cards coloured BY TYPE red/green/blue; a match-card "big" inspect view; drag-focus-dim + drop-to-replace;
+> rarity copy-limits 5/2/1) — see `CONTENT_ENGINE.md` §13. **IMMEDIATE NEXT (CD direction): the CARD CREATION
+> ENGINE — a drag-and-drop card-authoring pipeline (its own section below) — BEFORE hand-authoring more
+> moves** (Ricochet Round / Mitosis Bolt / the stack-counters come after).
 > The three
 > companion docs were updated to match (the old mana/draft model is now SUPERSEDED): the
 > **`Cards_Spells.txt`** header banner + the mana/§6 annotations, the **Manifesto** §3 economy +
@@ -290,7 +294,68 @@ The Creative Director reported the AI opponent "doesn't block much" and asked fo
 > builder + clickable home-screen 3D · P5 packs/reveal/forge + coins sink · P6 online deck +
 > opponent-skin exchange · P7 verify + APK + Delta doc sync.
 
+## 🚧 NEXT PHASE — CARD CREATION ENGINE (drag-and-drop card authoring — mirrors the skin/sprite pipeline)
+> **CD DIRECTION (2026-06-19):** "Build the Card Creation Engine. It should function like the character
+> sprite system — let me easily DRAG AND DROP in assets." GOAL: the CD drops a card's art into a folder and
+> the card AUTOMATICALLY appears in the catalog → the Decks builder → the in-match hand, with **ZERO** hand-
+> editing of `.tres` or `CardCatalog`. This is the AUTHORING half of the Content Engine (the RUNTIME half —
+> `CardResource` params, the Decks builder, casting — is already built + shipped).
+
+**THE MODEL TO COPY — the wizard SKIN / POSE pipeline (already shipping):**
+- `addons/wizard_pipeline/plugin.gd` is an `@tool EditorPlugin` that WATCHES `res://assets_final/sprites/
+  wizards/` via `EditorInterface.get_resource_filesystem().filesystem_changed` and regenerates an EXPORT-SAFE
+  manifest `.tres` (`WizardPoseManifest`) on any change — **only when the content actually changed**, else the
+  save re-fires `filesystem_changed` → infinite loop. It groups `<pose>_front.png` / `<pose>_back.png` / plain
+  `<pose>.png` by FILENAME CONVENTION. A "Rescan Wizard Poses" toolbar button forces a refresh; the runtime
+  library re-reads the manifest. `SkinCatalog` is the committed, load-BY-PATH registry (res:// dir listing is
+  unreliable in exported mobile builds).
+
+**WHAT ALREADY EXISTS (the runtime is READY — only the AUTHORING tooling is missing):**
+- `CardCatalog` (`scripts/cards/card_catalog.gd`) — the committed `{id, path, type, rarity}` load-by-path
+  registry, the exact analogue of `SkinCatalog`. Today it is HAND-EDITED.
+- `CardResource` already exports `ui_sprite` (card-face art) + `world_sprite` (projectile/wall pixel art) —
+  **both currently UNSET**, so the Decks tiles + the in-match card fall back to drawn glyphs / the `TYPE_ART`
+  placeholder icons (`spark/shield/ice_icon.png`). The hooks are wired; nothing populates them yet.
+
+**PIECES TO BUILD (each independently committable; sweep stays bit-identical):**
+1. **Folder convention** — one folder per card, e.g. `res://assets_final/cards/<card_id>/` holding dropped
+   assets by filename: `face.png` → `ui_sprite`, `projectile.png` → `world_sprite`, (optional) `cast_vfx.png`
+   / `sound.wav`. Mirrors the `<pose>_front.png` convention.
+2. **`card_pipeline` editor plugin** (`@tool EditorPlugin`, model `wizard_pipeline/plugin.gd` line-for-line):
+   watch `res://assets_final/cards/`, and on `filesystem_changed` (**only-when-changed guard is mandatory**)
+   for each card folder: create/UPDATE the card `.tres` (assign `ui_sprite`/`world_sprite` from the dropped
+   PNGs) + REGENERATE `CardCatalog.ENTRIES` so the registry stays export-safe + in sync. "Rescan Cards"
+   toolbar button. **The plugin wires the ART + registers the card; it does NOT invent gameplay params.**
+3. **Param authoring** — type/rarity/stats/`description` can't come from a PNG. Cleanest parallel to the skin
+   `SkinPalette.tres`: a per-card `card.tres` the CD tunes in the Inspector for the numbers, while the plugin
+   owns the ART + registry wiring. Default split: "drop art → plugin stubs a `CardResource` with sane type-
+   defaults → CD tunes params in the Inspector." (A future in-game "card forge" UI on the Decks screen, §5
+   P5, can layer on top.)
+4. **Runtime art swap** — when `ui_sprite` is set, the Decks tiles + the big inspect + the in-match
+   `card_hand_hud._build_card_face` show it instead of `TYPE_ART`; when `world_sprite` is set, the projectile/
+   wall shows it (the `world_sprite`/`palette_swap` hook + the `sprite3d-material-override-billboard` rule
+   already exist).
+
+**DETERMINISM / RULES (non-negotiable):**
+- The pipeline is **EDITOR-TIME + META only** — it runs in the editor, writes `.tres` + the catalog, NEVER a
+  sim tick. Card `.tres` stay shared IMMUTABLE sim data.
+- `ui_sprite`/`world_sprite` are **PRESENTATION ONLY** — read by the HUD / projectile visual, never by sim
+  math (exactly like the skin texture). Adding art CANNOT move the 20/20 bit-identical sweep.
+- `CardCatalog` stays a COMMITTED load-by-path registry; the plugin regenerates it, the CD commits it. After
+  any new `class_name` / new card path: `--headless --import` once, then the sweep.
+
+**VERIFY:** `--headless --import`; instantiate the Decks scene (model `tests/probe_decks.gd`) + assert a card
+with a set `ui_sprite` renders it; 20-suite sweep bit-identical (art is presentation); a screenshot of the
+builder + in-match hand showing real card art. Then Delta archival sync.
+
 ## 🐞 BUG GRAVEYARD (RESOLVED — DO NOT REINTRODUCE)
+- **GDScript inner-class scoping (Decks overhaul, 2026-06-19):** an `class Foo extends Control:` INNER class
+  CANNOT read the OUTER script's top-level `const`/`enum`/methods by bare name ("Identifier not found"). The
+  codebase pattern (`cosmetics.gd`, `y2k_ui_button.gd`, the Decks `CardTile`): inner-class widgets are SELF-
+  CONTAINED — every value is their own `var`/`const` or is FED IN as a set-property from the outer builder;
+  keep only a `var screen: Node` back-ref for callback dispatch (dynamic calls on a Node-typed ref are a
+  WARNING, not an error). Outer→inner is free; inner→outer must be passed in. Will bite the Card Creation
+  Engine UI. Memory: `gdscript-inner-class-no-outer-scope`.
 - **Frame-0 backwards fireball (Sprint 2 hotfix, 2026-06-10):** Godot editor fails to persist SG Physics 2D collision layer/mask UI assignments — all bodies silently fell back to layer 1/mask 1, so spawned fireballs collided with their caster and bounce()d backwards on tick 0. FIX: layers/masks hardcoded in `_ready()` via `scripts/physics_layers.gd` constants (Players=1, Projectiles=2, Walls=4). RULE: never assign SG collision layers through the Inspector. Regression test: `tests/test_collision_layers.gd`.
 - **Dead spawn_offset_y export (Sprint 2 hotfix, 2026-06-10):** float @exports cached to fixed-point once in `_ready()` ignore runtime Inspector edits — symptom: "changing the export does nothing". FIX: `spawn_offset_y` now uses a setter that re-caches on write. RULE: any float @export whose fixed-point cache should respond to live tuning needs a re-caching setter. Also note: `scenes/test_area.tscn` overrides `spawn_offset_y=24.0` on its Player instance, shadowing `player.tscn` (10.0) and the script default (48.0) — per-instance scene overrides shadow tuning edits made elsewhere. Regression test: `tests/test_spawn_offset.gd`.
 - **Origin spawn trap — local vs global fixed coordinates (Sprint 2 hotfix 2, 2026-06-10):** SpellCasterComponent read the caster's LOCAL `fixed_position` and wrote it into the projectile container's coordinate space — with the player positioned via a parent/wrapper or a container at a different origin, fireballs spawned at midfield (0,0). FIX: spawn path is global end-to-end via `get_global_fixed_position()` / `set_global_fixed_position()` (SG API has getter/setter METHODS, no property). RULE: never mix SG local fixed_position across different parents — cross-node placement must use the global fixed API. Regression test: `tests/test_spawn_offset.gd` TEST 4.
