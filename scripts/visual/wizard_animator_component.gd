@@ -27,6 +27,23 @@ extends Node
 @export var dust_path: NodePath = NodePath("../WizardRig/DustParticles")
 @export var health_path: NodePath = NodePath("../Health")
 
+## PARTICLE OVERHAUL (character-emitted only). The character's emitters, all SAME across walking + hovering
+## skins EXCEPT the movement trail:
+## • the DBZ "ki" CHARGE aura is the reshaped CastParticles, driven by CastChargeVFXComponent — feet-up,
+##   on ANY skin while charging. It lives on the rig + its VFX component, NOT here.
+## • buff_aura — the green "boon" aura, emitting on ANY skin while a defense-card buff is active
+##   (Hermes' Boon / Focus Sigil). Toggle via set_defense_buff_active(); auto-driven from the buff state.
+## • MOVEMENT TRAILS (the 'Trails' cosmetic; search: cosmetic trails): the footstep DUST (default WALK
+##   trail, dust_path) and the trailing energy MOTES (default HOVER trail, hover_trail_path). Walk trails
+##   show only on grounded sprites, hover trails only on floating ones; alternatives plug in via set_trail().
+@export var hover_trail_path: NodePath
+@export var buff_aura_path: NodePath
+## Equipped MOVEMENT-TRAIL cosmetics (null = the baked default for that style: dust / motes). A future
+## cosmetics screen sets these; set_trail() applies one at runtime. The trail's movement_type slots it,
+## so a walking sprite can never wear a hover trail.
+@export var walk_trail: TrailResource
+@export var hover_trail: TrailResource
+
 ## Lean angle per m/s of travel (radians), and its clamp.
 @export var lean_per_speed: float = 0.10
 @export var max_lean: float = 0.22
@@ -67,12 +84,19 @@ extends Node
 @export var base_skin: SkinPalette
 ## Container scanned for the close_call near-miss read (the arena's hostile projectiles).
 @export var projectile_container_path: NodePath = ^"../../Projectiles"
-## Wizard body half-width in SIM units (the close_call HIT boundary; 52.5 = default collider).
-@export var body_half_width: float = 52.5
+## Wizard body half-width in SIM units (the close_call HIT boundary). Kept in lockstep with
+## HitDetectionComponent.target_half_width (35 = the visible-character get-hit box) so a ball that
+## BARELY misses the real hitbox is what trips the close_call — not the wider physics collider.
+@export var body_half_width: float = 35.0
 ## Sim units OUTSIDE the hit boundary that still count as a "barely missed" close call.
 @export var close_call_margin: float = 80.0
 ## Seconds a momentary pose (cast / hurt / close_call) holds before falling back to motion poses.
 @export var pose_hold_seconds: float = 0.25
+## SHIELD-HOLD SHAKE (Task 3): while a barrier this wizard deployed grips a captured ball the wizard is
+## motion-locked (MovementComponent.is_frozen()) and RATTLES in place — a wall-clock sprite jitter, like
+## the charge shake but steady. Amplitude in meters; 0 disables the shake (the hold pose still shows).
+@export var shield_hold_shake_amount: float = 0.03
+@export var shield_hold_shake_frequency: float = 34.0
 ## Visual speed (m/s) above which the running pose shows.
 @export var run_pose_speed: float = 0.6
 ## True if the art is drawn FACING RIGHT (flip_h then mirrors it when moving left). Flip if not.
@@ -129,6 +153,7 @@ var _wall_last_msec: int = 0
 # HealthComponent it reads the struck element from to tint the flash.
 var _hit_pop_msec: int = 0
 var _health: Node = null
+var _movement: Node = null            # sibling MovementComponent — is_frozen() drives the shield-hold pose + shake
 # DEATH state (visual only).
 var _dead: bool = false
 var _death_vel: Vector3 = Vector3.ZERO
@@ -142,9 +167,16 @@ var _container: Node = null            # the projectile container (close_call sc
 var _cur_tex: Texture2D = null         # the pose texture currently on the sprite
 var _uploaded_tex: Texture2D = null    # last texture pushed to the shader's pose_tex uniform
 var _cast_pose: StringName = &"cast_fire"
+# SHIELD-HOLD pose (Task 3), resolved once in _ready: prefer a dedicated charging_shield frame, then a
+# charging_fire frame, else the current cast_fire charge pose ("default to charging_fire like it is now").
+var _shield_pose: StringName = &"cast_fire"
 var _cast_until_msec: int = 0
 var _hurt_until_msec: int = 0
 var _close_call_until_msec: int = 0
+# CLOSE-CALL FACING (Task 2): the side the near-miss ball passed on (-1 left / +1 right), captured
+# at trigger time. While the close_call pose shows, the wizard faces THIS instead of its last-
+# movement direction — it reacts TOWARD the threat, regardless of which way it was last moving.
+var _close_call_face_dir: int = 0
 var _ball_prev_dy: Dictionary = {}     # projectile instance_id -> last dy (sim fixed int)
 var _body_half_x_fp: int = 0
 var _close_margin_fp: int = 0
@@ -163,6 +195,17 @@ var _hover_lean: float = 0.0             # current eased bank angle (rad) -> the
 var _prev_hover_dir: int = 0             # last travel dir incl. 0 (idle) — detects start/reverse/halt
 var _gs: Node = null                     # GameSettings autoload (hover_mode source); null in headless
 
+# --- AURA / TRAIL PARTICLE state (presentation only; never saved/sim) ---
+var _buff_aura: Node = null              # green boon aura (any skin, while a defense buff is active)
+var _spell_caster: Node = null           # sibling SpellCasterComponent — haste_ticks_remaining() for the boon aura
+var _buff_active: bool = false           # last boon-aura state (edge-detect so set_defense_buff_active fires once)
+# MOVEMENT TRAILS (the 'Trails' cosmetic). The ACTIVE walk/hover trail emitter — the baked default node
+# (dust / HoverTrail) unless set_trail() swapped in a cosmetic's emitter_scene (tracked to free on re-swap).
+var _walk_trail_node: Node = null
+var _hover_trail_node: Node = null
+var _walk_trail_instanced: Node = null   # non-null = a set_trail() instance is the active walk trail
+var _hover_trail_instanced: Node = null  # non-null = a set_trail() instance is the active hover trail
+
 
 func _ready() -> void:
 	_rig = get_node_or_null(rig_path) as Node3D
@@ -174,6 +217,13 @@ func _ready() -> void:
 	if _rig == null:
 		push_warning("WizardAnimatorComponent: rig not found — animator inert.")
 		return
+
+	# AURA + TRAIL refs (driven in _update_aura_particles). The DBZ charge aura is CastParticles, owned by
+	# CastChargeVFXComponent — not touched here. Movement trails default to the baked dust / HoverTrail nodes;
+	# set_trail() (applied at the end of _ready for any equipped cosmetic) can swap them.
+	_buff_aura = get_node_or_null(buff_aura_path)
+	_walk_trail_node = _dust
+	_hover_trail_node = get_node_or_null(hover_trail_path)
 
 	_health = get_node_or_null(health_path)
 	if _health != null:
@@ -188,10 +238,13 @@ func _ready() -> void:
 			sibling.spell_cast.connect(_on_cast_released)
 			sibling.cast_charge_level_changed.connect(_on_charge_level)
 			_cast_dir = sibling.cast_direction_y  # down-court sign -> front/back facing
+			if sibling is SpellCasterComponent:
+				_spell_caster = sibling  # haste_ticks_remaining() feeds the boon aura
 		elif sibling is MovementComponent:
 			# FROST FLASH (Sprint 23 batch 2): a frost wave deals 0 damage, so it never reaches the
 			# damage path — flash ICE-blue + pop off the movement slow instead (being frozen IS its hit).
 			sibling.slow_started.connect(_on_slowed)
+			_movement = sibling  # read is_frozen() each frame for the shield-capture hold pose + shake
 		elif sibling is VisualBridgeComponent:
 			_bridge = sibling  # read view_flip_z (the online perspective mirror) for facing
 
@@ -220,8 +273,14 @@ func _ready() -> void:
 		var hv: Variant = _gs.get(&"hover_mode")
 		if hv != null:
 			_hover_active = bool(hv)
+	_shield_pose = _resolve_shield_pose()
 	_apply_skin()
 	_apply_pose(&"idle")
+	# Apply any equipped trail cosmetics over the baked defaults (movement_type slots each one).
+	if walk_trail != null:
+		set_trail(walk_trail)
+	if hover_trail != null:
+		set_trail(hover_trail)
 
 
 func _process(delta: float) -> void:
@@ -302,7 +361,13 @@ func _process(delta: float) -> void:
 	# gauge banks. Pure visual jitter on the SPRITE within the rig (rig X/Z belong
 	# to the VisualBridge). Wall-clock phase so it reads at full speed in slow-mo.
 	if _sprite != null:
-		if _charging and _charge_level > 0:
+		# SHIELD-HOLD shake (Task 3) wins over the charge shake — a steady wall-clock rattle for the whole
+		# capture beat while motion-locked (you can't move-charge while frozen anyway).
+		if _movement != null and _movement.is_frozen() and shield_hold_shake_amount > 0.0:
+			var amp: float = shield_hold_shake_amount
+			var ct: float = float(now) / 1000.0 * shield_hold_shake_frequency
+			_sprite.position = _sprite_base_pos + Vector3(sin(ct * 1.7) * amp, sin(ct * 2.6 + 1.1) * amp, 0.0)
+		elif _charging and _charge_level > 0:
 			var amp: float = 0.013 * float(_charge_level)
 			var ct: float = float(now) / 1000.0 * (26.0 + 14.0 * float(_charge_level))
 			# Jitter AROUND the authored base offset — never reset to (0,0,0), or
@@ -311,9 +376,8 @@ func _process(delta: float) -> void:
 		elif _sprite.position != _sprite_base_pos:
 			_sprite.position = _sprite_base_pos
 
-	# Dust trail while running (minimal squash partner).
-	if _dust != null:
-		_dust.set(&"emitting", speed_norm > 0.25)
+	# Character-emitted aura particles (footstep dust / DBZ hover aura / green boon aura).
+	_update_aura_particles(speed_norm)
 
 	# --- DAMAGE flicker (wall clock — reads instantly in slow-mo) ------
 	if _sprite != null:
@@ -339,9 +403,15 @@ func _process(delta: float) -> void:
 		var flip_z: bool = _bridge != null and _bridge.view_flip_z
 		_facing = &"front" if (_cast_dir * (-1 if flip_z else 1)) > 0 else &"back"
 	if _sprite != null:
-		if dir != 0:
+		var pose: StringName = _select_pose_name(now, speed)
+		# FACING: while the close_call pose is actually showing, face the SIDE the near-miss ball passed
+		# on (Task 2 — captured in _scan_close_call) so the flinch reacts toward the threat; otherwise the
+		# normal travel-direction flip applies. flip_h sign follows the same face_art_default_right rule.
+		if pose == &"close_call" and _close_call_face_dir != 0:
+			_sprite.set(&"flip_h", (_close_call_face_dir < 0) if face_art_default_right else (_close_call_face_dir > 0))
+		elif dir != 0:
 			_sprite.set(&"flip_h", (dir < 0) if face_art_default_right else (dir > 0))
-		_apply_pose(_select_pose_name(now, speed))
+		_apply_pose(pose)
 
 
 func _on_damaged(_amount: int) -> void:
@@ -387,6 +457,15 @@ func _on_knocked_out() -> void:
 	if _dead or _sprite == null:
 		return
 	_dead = true
+	# Particle Overhaul: stop the movement trails + boon aura on death (the _process aura updater early-
+	# returns while _dead, so they'd keep emitting through the fling). Round restart re-enables via _process.
+	if _walk_trail_node != null:
+		_walk_trail_node.set(&"emitting", false)
+	if _hover_trail_node != null:
+		_hover_trail_node.set(&"emitting", false)
+	if _buff_aura != null:
+		_buff_aura.set(&"emitting", false)
+	_buff_active = false
 	# HOVER: drop the bank so the death fling isn't tilted (the lean uniform would otherwise persist while
 	# _process early-returns through the death state). rig.y is left as-is, so the fling starts from the
 	# wizard's current hover height.
@@ -439,6 +518,7 @@ func _on_health_changed(current: int, _max_health: int) -> void:
 		_hurt_until_msec = 0
 		_cast_until_msec = 0
 		_close_call_until_msec = 0
+		_close_call_face_dir = 0
 		_ball_prev_dy.clear()
 		_sprite.position = _sprite_base_pos
 		_sprite.scale = Vector3.ONE
@@ -537,6 +617,88 @@ func _update_hover(delta: float, dir: int, now: int) -> void:
 
 
 # =====================================================================
+# AURA PARTICLES (Particle Overhaul) — PRESENTATION ONLY (no sim / no saved state)
+# =====================================================================
+
+## Drives the character-emitted MOVEMENT trails + the boon aura each frame. The DBZ CHARGE aura is owned
+## by CastChargeVFXComponent (on CastParticles) and is identical on every skin — not handled here. The
+## ONLY walk/hover difference is the movement trail: the footstep dust for grounded sprites, the trailing
+## energy motes for floating ones — both on only while ACTUALLY moving.
+func _update_aura_particles(speed_norm: float) -> void:
+	var hovering: bool = _hover_active
+	var moving: bool = speed_norm > 0.25
+	# MOVEMENT TRAILS (the 'Trails' cosmetic): one per movement style, mutually exclusive by hover mode.
+	if _walk_trail_node != null:
+		_walk_trail_node.set(&"emitting", (not hovering) and moving)
+	if _hover_trail_node != null:
+		_hover_trail_node.set(&"emitting", hovering and moving)
+	# Green boon aura: any skin, while a defense-card buff is active. Edge-driven via the public hook.
+	var buffed: bool = _boon_active()
+	if buffed != _buff_active:
+		set_defense_buff_active(buffed)
+
+
+## True while a defense-card BOON is active on this wizard: Hermes' Boon (move-speed boost) or Focus
+## Sigil (fireball haste). Pure presentation read of the deterministic buff counters.
+func _boon_active() -> bool:
+	var boost: bool = _movement != null and _movement.has_method(&"boost_ticks_remaining") and _movement.boost_ticks_remaining() > 0
+	var haste: bool = _spell_caster != null and _spell_caster.has_method(&"haste_ticks_remaining") and _spell_caster.haste_ticks_remaining() > 0
+	return boost or haste
+
+
+## PUBLIC HOOK (Particle Overhaul): toggle the green defense-buff aura's emission. Auto-called each frame
+## from the boon state (see _update_aura_particles) and exposed for external/manual control. Presentation
+## only — never touches sim state.
+func set_defense_buff_active(is_active: bool) -> void:
+	_buff_active = is_active
+	if _buff_aura != null:
+		_buff_aura.set(&"emitting", is_active)
+
+
+## TRAILS COSMETIC HOOK (search: cosmetic trails): equip a movement trail at runtime — the future
+## cosmetics screen calls this. The trail's movement_type picks the slot (a WALK trail replaces the walk
+## emitter, a HOVER trail the hover one), so a grounded sprite can never show a hover trail (it only ever
+## drives its walk slot). A trail with no emitter_scene reverts that slot to the baked default (dust /
+## motes). The new emitter starts idle; _update_aura_particles drives it. Presentation only.
+func set_trail(trail: TrailResource) -> void:
+	if trail == null:
+		return
+	var is_walk: bool = trail.movement_type == TrailResource.MovementType.WALK
+	if trail.emitter_scene == null:
+		# Revert this slot to its baked default node.
+		if is_walk:
+			if _walk_trail_instanced != null:
+				_walk_trail_instanced.queue_free()
+				_walk_trail_instanced = null
+			_walk_trail_node = _dust
+		else:
+			if _hover_trail_instanced != null:
+				_hover_trail_instanced.queue_free()
+				_hover_trail_instanced = null
+			_hover_trail_node = get_node_or_null(hover_trail_path)
+		return
+	if _rig == null:
+		return
+	var inst: Node = trail.emitter_scene.instantiate()
+	if not (inst is CPUParticles3D or inst is GPUParticles3D):
+		push_warning("TrailResource '%s': emitter_scene root must be a CPUParticles3D/GPUParticles3D." % String(trail.id))
+		inst.queue_free()
+		return
+	inst.set(&"emitting", false)
+	_rig.add_child(inst)
+	if is_walk:
+		if _walk_trail_instanced != null:
+			_walk_trail_instanced.queue_free()
+		_walk_trail_instanced = inst
+		_walk_trail_node = inst
+	else:
+		if _hover_trail_instanced != null:
+			_hover_trail_instanced.queue_free()
+		_hover_trail_instanced = inst
+		_hover_trail_node = inst
+
+
+# =====================================================================
 # FRAME PIPELINE (Sprint 24) — PRESENTATION ONLY (no sim / no saved state)
 # =====================================================================
 
@@ -604,6 +766,10 @@ func _apply_pose(pose: StringName) -> void:
 func _select_pose_name(now: int, speed: float) -> StringName:
 	if now < _hurt_until_msec:
 		return &"hurt"
+	# SHIELD HOLD (Task 3): motion-locked by a barrier this wizard deployed gripping a captured ball —
+	# hold the charging pose (charging_shield / charging_fire / cast_fire) for the whole capture beat.
+	if _movement != null and _movement.is_frozen():
+		return _shield_pose
 	if now < _close_call_until_msec:
 		return &"close_call"
 	if now < _cast_until_msec:
@@ -614,6 +780,21 @@ func _select_pose_name(now: int, speed: float) -> StringName:
 	if speed > run_pose_speed:
 		return &"running"
 	return &"idle"
+
+
+## SHIELD-HOLD pose (Task 3): the frame held while motion-locked during a barrier capture. Prefer a
+## dedicated charging_shield frame, then a charging_fire frame, else fall back to cast_fire (the pose a
+## fireball charge already shows). Resolved ONCE in _ready (the manifest is static after load).
+func _resolve_shield_pose() -> StringName:
+	if WizardPoseLibrary.has_pose(&"charging_shield"):
+		return &"charging_shield"
+	if WizardPoseLibrary.has_pose(&"charging_fire"):
+		return &"charging_fire"
+	# Fall back to whatever a fireball CHARGE currently shows (its generic "charging" frame if the
+	# artist added one, else cast_fire) so the shield-hold pose always matches "like it currently is".
+	if WizardPoseLibrary.has_pose(&"charging"):
+		return &"charging"
+	return &"cast_fire"
 
 
 ## Map a cast to its key-pose. DEFENSE -> shield; otherwise by the spell/card element.
@@ -677,6 +858,11 @@ func _scan_close_call(now: int) -> void:
 		var outer: int = inner + _close_margin_fp
 		if dx > inner and dx <= outer:
 			_close_call_until_msec = now + int(pose_hold_seconds * 1000.0)
+			# Task 2: remember WHICH SIDE the ball passed on so the pose faces toward it. dx > inner > 0
+			# guarantees bp.x != my.x, so the sign is always ±1 here. +X (ball to our right) -> face right.
+			var side: int = signi(bp.x - my.x)
+			if side != 0:
+				_close_call_face_dir = side
 	# Prune departed projectiles so the dictionary can't grow unbounded.
 	for id in _ball_prev_dy.keys():
 		if not alive.has(id):

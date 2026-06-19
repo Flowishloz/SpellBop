@@ -115,6 +115,14 @@ var _slow_scale_fp: int = SGFixed.ONE
 var _boost_ticks: int = 0
 var _boost_scale_fp: int = SGFixed.ONE
 
+# SHIELD-CAPTURE MOTION LOCK (Task 3): while a barrier this wizard deployed is HOLDING a captured ball,
+# the owner is frozen — no directional input, an instant stop. A capturing BarrierController re-pushes
+# this every held tick (apply_movement_freeze) with a small TTL, so the lock lapses ~1 tick after the
+# ball releases. Counts DOWN one per tick, exactly like _slow_ticks. Saved as "fz" so a rollback that
+# straddles the hold restores the lock (the cross-tick push has the same one-tick latency as the speed
+# accumulator). The WizardAnimatorComponent reads is_frozen() at render-rate for the hold pose + shake.
+var _freeze_ticks: int = 0
+
 # AIM STATE (Creative Director: the held movement input at release tilts a
 # projectile's launch angle — hold longer = steeper). Sim state "ad"/"at".
 # While idle the banked aim DECAYS one tick per tick (intent fades). On
@@ -159,6 +167,15 @@ func _cache_fixed_point_values() -> void:
 ## same prior state + same input = bit-identical next state on every machine.
 func _network_process(input: Dictionary) -> void:
 	var input_x: int = InputCommand.get_x(input)
+
+	# SHIELD-CAPTURE MOTION LOCK (Task 3): while a barrier this wizard deployed holds a captured ball it
+	# re-pushes this freeze every held tick. Burn one tick, then drop directional input AND any carried
+	# velocity so the wizard is pinned in place (not coasting to a stop) for the whole hold. Aiming/casting
+	# are untouched — the lock is "no directional inputs accepted", per the brief. Deterministic (int only).
+	if _freeze_ticks > 0:
+		_freeze_ticks -= 1
+		input_x = 0
+		_velocity_x = 0
 
 	# This tick's effective tuning under the deterministic speed modifier
 	# (ONE = unscaled). Pure fixed-point multiplies — still integer math.
@@ -276,6 +293,21 @@ func boost_ticks_remaining() -> int:
 	return _boost_ticks
 
 
+## SHIELD-CAPTURE MOTION LOCK (Task 3): freeze this wizard for at least [param ttl] ticks. A capturing
+## BarrierController re-pushes this EVERY held tick (default TTL 2 spans the one-tick cross-node ordering
+## latency and keeps is_frozen() stable for the render-rate animator read); the lock auto-lapses ~1 tick
+## after the barrier stops pushing (on release). MAX-composes so overlapping pushes never shorten it.
+## Deterministic: a single int max, identical on every peer; saved as "fz".
+func apply_movement_freeze(ttl: int = 2) -> void:
+	_freeze_ticks = maxi(_freeze_ticks, maxi(1, ttl))
+
+
+## True while the shield-capture motion lock is active (see apply_movement_freeze). Read-only — the
+## WizardAnimatorComponent polls it each rendered frame to drive the hold pose + shake.
+func is_frozen() -> bool:
+	return _freeze_ticks > 0
+
+
 ## Current aim direction (-1/0/+1) and how many ticks it has been held —
 ## casters tilt launch angles from these (read-only sim accessors).
 func get_aim_dir() -> int:
@@ -328,6 +360,7 @@ func halt() -> void:
 	_slow_scale_fp = SGFixed.ONE
 	_boost_ticks = 0
 	_boost_scale_fp = SGFixed.ONE
+	_freeze_ticks = 0
 	_aim_dir = 0
 	_aim_ticks = 0
 	_aim_key = 0
@@ -355,6 +388,7 @@ func _save_state() -> Dictionary:
 		"bs": _boost_scale_fp,
 		"ad": _aim_dir,
 		"at": _aim_ticks,
+		"fz": _freeze_ticks,
 	}
 
 
@@ -370,6 +404,7 @@ func _load_state(state: Dictionary) -> void:
 	_boost_scale_fp = int(state.get("bs", SGFixed.ONE))
 	_aim_dir = int(state.get("ad", 0))
 	_aim_ticks = int(state.get("at", 0))
+	_freeze_ticks = int(state.get("fz", 0))
 
 	var pos: SGFixedVector2 = _body.fixed_position
 	pos.x = int(state.get("px", 0))

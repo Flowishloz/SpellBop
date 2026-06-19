@@ -286,6 +286,7 @@ func _try_capture() -> void:
 		_capture_total = maxi(1, (base_hold * _rally_pow_fp(_hold_growth_fp, mini(reflects, max_rally_reflects))) >> 16)
 		_capture_remaining = _capture_total
 		_woa_armed = false  # one capture per barrier
+		_freeze_owner()  # Task 3: lock the deploying wizard from the capture tick (re-pushed each hold tick)
 		child.launch(0, 0, SGFixed.ONE)
 		# INTERCEPT FX (pure visual): shield-colored shards FLATTEN against
 		# the wall — fanning UP/ACROSS the wall plane like a snowball hitting
@@ -308,6 +309,15 @@ func _reflect_intensity_fp() -> int:
 	var spd_part: int = SGFixed.mul(speed_norm_fp, w_fp)
 	var woa_part: int = SGFixed.mul(clampi(_woa_fp, 0, SGFixed.ONE), SGFixed.ONE - w_fp)
 	return clampi(spd_part + woa_part, 0, SGFixed.ONE)
+
+
+## SHIELD-CAPTURE MOTION LOCK (Task 3): pin the deploying wizard in place for as long as this barrier
+## grips a captured ball. Re-pushed EVERY held tick (short TTL) so the lock tracks the hold exactly and
+## lapses ~1 tick after release. Deterministic sim write — same owner, same tick on every peer — and the
+## owner's MovementComponent saves the freeze ("fz"), so a rollback across the hold restores it.
+func _freeze_owner() -> void:
+	if _owner_body != null and is_instance_valid(_owner_body) and _owner_body.has_method(&"freeze_movement"):
+		_owner_body.freeze_movement(2)
 
 
 ## SHIELD-REFLECT RALLY: deterministic fixed-point power base_fp^exp (exp >= 0) for the hold
@@ -393,6 +403,7 @@ func _tick_capture() -> void:
 		# cleanup (ProjectileMovementComponent's stall despawn) from reclaiming it mid-hold.
 		if _captured_ball.has_method(&"keep_alive"):
 			_captured_ball.keep_alive()
+		_freeze_owner()  # Task 3: keep the deploying wizard locked for the whole hold
 		var total: float = float(maxi(1, _capture_total))
 		capture_charging.emit(1.0 - float(_capture_remaining) / total)
 		return

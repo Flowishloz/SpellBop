@@ -214,6 +214,13 @@ func _cache_fixed_point_values() -> void:
 ## when it drains to zero. Releasing AT or PAST the minimum is the throw —
 ## that release is intentional by definition.
 func _network_process(input: Dictionary) -> void:
+	# SHIELD-CAPTURE FULL LOCK (Task 3): committed to the block. While a barrier this wizard deployed holds
+	# a captured ball, the wizard cannot cast or charge — skip the whole tick. No new charge, no release/fire,
+	# and an in-progress charge simply PAUSES with the player (cooldown holds too), resolving once unfrozen.
+	# Reads the sibling movement's deterministic freeze (saved "fz"), so both peers gate on the same tick.
+	if _movement != null and _movement.is_frozen():
+		return
+
 	if _ticks_until_ready > 0:
 		_ticks_until_ready -= 1
 

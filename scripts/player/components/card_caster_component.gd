@@ -184,6 +184,13 @@ func is_defense_buff() -> bool:
 # =====================================================================
 
 func _network_process(input: Dictionary) -> void:
+	# SHIELD-CAPTURE FULL LOCK (Task 3): committed to the block. While a barrier this wizard deployed holds
+	# a captured ball, no card presses are accepted — no attack/counter staging, no defense deploy. Skip the
+	# whole tick (cooldowns hold too). Already-STAGED spells still resolve via release_staged() on the stack's
+	# own timer; this gates only NEW presses. Deterministic read of the sibling movement's saved freeze.
+	if _movement != null and _movement.is_frozen():
+		return
+
 	for i in 3:
 		if _slot_cd[i] > 0:
 			_slot_cd[i] -= 1
