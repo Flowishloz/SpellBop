@@ -382,6 +382,14 @@ func keep_alive() -> void:
 		_movement.keep_alive()
 
 
+## SHIELD-RALLY SIM SLOW (duck-typed entry point the BarrierController calls each rally hold tick on every
+## OTHER projectile): crawl this ball's per-tick motion so a stray can't cross into a frozen wizard during
+## the rally. Passthrough to the mover (which owns the saved "ssk"/"ssf" sim state).
+func apply_sim_slow(factor_fp: int, ttl: int = 2) -> void:
+	if _movement != null:
+		_movement.apply_sim_slow(factor_fp, ttl)
+
+
 ## The lane half-width (fixed-point) shards clamp to. A projectile owns no
 ## MovementComponent, so read the bound from a wizard's mover — deterministic:
 ## the "wizards" group iterates in scene-tree order, identical on every peer

@@ -117,6 +117,17 @@ var _stationary_ticks: int = 0
 # by BarrierController at release; NEVER reset by launch() (it must persist across the rally).
 var _reflect_count: int = 0
 
+# SHIELD-RALLY SIM SLOW (the gameplay half of the shield rally slow-mo): while _sim_slow_ticks > 0 this
+# projectile's per-tick MOTION is scaled by _sim_slow_factor_fp (< ONE), so a stray ball CRAWLS during a
+# shield rally hold and can't cross into a frozen wizard mid-rally. This is the deterministic counterpart to
+# the presentation time-dilation: Engine.time_scale slows REAL time but NEVER the per-tick sim distance
+# (graveyard rule), so on its own it can't hold a stray back — this does. A capturing BarrierController
+# re-pushes it every rally hold tick (apply_sim_slow, TTL 2 spans the cross-node ordering latency), so it
+# lapses ~1 tick after release. Only the MOVE is scaled — stored velocity is untouched, so the speed cap,
+# stall-despawn and homing all keep reading the TRUE speed. Int sim state, saved/loaded as "ssk"/"ssf".
+var _sim_slow_ticks: int = 0
+var _sim_slow_factor_fp: int = SGFixed.ONE
+
 # Authoritative simulation state (fixed-point ints). Velocity is stored here —
 # not read from the body between ticks — so _save_state()/_load_state() fully
 # own it. Bounciness is mutable sim state too (set per-launch by the spell).
@@ -191,6 +202,15 @@ func _network_process(_input: Dictionary) -> void:
 	# move_and_collide() takes the motion for THIS call — our per-tick velocity —
 	# and stops at the first deterministic contact, returning the collision info.
 	var motion: SGFixedVector2 = SGFixed.vector2(_velocity_x, _velocity_y)
+	# SHIELD-RALLY SIM SLOW: a stray ball crawls during a shield rally hold so it can't cross into a frozen
+	# wizard mid-rally. Scale ONLY this tick's move (stored velocity stays true for the cap/stall/homing
+	# above) and burn one tick — resetting the factor when it lapses so the next slow starts clean.
+	if _sim_slow_ticks > 0:
+		motion.x = SGFixed.mul(motion.x, _sim_slow_factor_fp)
+		motion.y = SGFixed.mul(motion.y, _sim_slow_factor_fp)
+		_sim_slow_ticks -= 1
+		if _sim_slow_ticks == 0:
+			_sim_slow_factor_fp = SGFixed.ONE
 	var collision: SGKinematicCollision2D = _body.move_and_collide(motion)
 
 	if collision != null:
@@ -300,6 +320,18 @@ func keep_alive() -> void:
 	_stationary_ticks = 0
 
 
+## SHIELD-RALLY SIM SLOW: scale this projectile's per-tick MOVE distance by [param factor_fp] (< ONE) for at
+## least [param ttl] ticks, so a stray ball crawls during a shield rally hold and can't reach a frozen
+## wizard. A capturing BarrierController re-pushes it every rally hold tick (TTL 2 spans the cross-node
+## ordering latency), so the slow lapses ~1 tick after release. MAX-composes the TTL (overlapping pushes
+## never shorten it) and takes the DEEPEST factor (mini), so two simultaneous rallies can't net to a
+## weaker slow. Stored velocity is untouched — only the move is scaled. Deterministic ints, identical on
+## every peer; saved as "ssk"/"ssf".
+func apply_sim_slow(factor_fp: int, ttl: int = 2) -> void:
+	_sim_slow_ticks = maxi(_sim_slow_ticks, maxi(1, ttl))
+	_sim_slow_factor_fp = mini(_sim_slow_factor_fp, clampi(factor_fp, 0, SGFixed.ONE))
+
+
 ## Current fixed-point velocity components, sim units per TICK. Read-only
 ## accessors for gameplay readers (e.g. the AI threat scan) — sim state stays
 ## owned by this component.
@@ -348,6 +380,8 @@ func _save_state() -> Dictionary:
 		"hb": _homing_blend_fp,
 		"sk": _stationary_ticks,
 		"rc": _reflect_count,
+		"ssk": _sim_slow_ticks,
+		"ssf": _sim_slow_factor_fp,
 	}
 
 
@@ -362,6 +396,8 @@ func _load_state(state: Dictionary) -> void:
 	_homing_blend_fp = int(state.get("hb", 0))
 	_stationary_ticks = int(state.get("sk", 0))
 	_reflect_count = int(state.get("rc", 0))
+	_sim_slow_ticks = int(state.get("ssk", 0))
+	_sim_slow_factor_fp = int(state.get("ssf", SGFixed.ONE))
 
 	var pos: SGFixedVector2 = _body.fixed_position
 	pos.x = int(state.get("px", 0))

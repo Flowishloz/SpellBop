@@ -123,6 +123,15 @@ var _boost_scale_fp: int = SGFixed.ONE
 # accumulator). The WizardAnimatorComponent reads is_frozen() at render-rate for the hold pose + shake.
 var _freeze_ticks: int = 0
 
+# SHIELD-RALLY CARD LOCK (the rally "commit"): while a shield RALLY hold runs — the 2nd reciprocated block
+# on (a single block never triggers it) — BOTH wizards' DECK CARDS are locked: the hand pops out and no
+# card press is accepted, so neither player drops a fresh projectile into the dramatic beat. DISTINCT from
+# _freeze_ticks above: this gates ONLY casting (the CardCasterComponent reads is_card_locked()), NEVER
+# movement — so the non-blocking wizard can still dodge a stray. A capturing BarrierController re-pushes it
+# every rally hold tick (apply_card_lock, TTL 2 spans the cross-node ordering latency), so it lapses ~1
+# tick after release. Counts DOWN one per tick like the freeze; saved as "cl" so a rollback restores it.
+var _card_lock_ticks: int = 0
+
 # AIM STATE (Creative Director: the held movement input at release tilts a
 # projectile's launch angle — hold longer = steeper). Sim state "ad"/"at".
 # While idle the banked aim DECAYS one tick per tick (intent fades). On
@@ -176,6 +185,12 @@ func _network_process(input: Dictionary) -> void:
 		_freeze_ticks -= 1
 		input_x = 0
 		_velocity_x = 0
+
+	# SHIELD-RALLY CARD LOCK (gates casting only — see the field doc): burn one tick. Movement is left
+	# untouched here on purpose, so the non-blocking wizard keeps dodging; only the card caster reads
+	# is_card_locked() to refuse new presses and pop the hand out.
+	if _card_lock_ticks > 0:
+		_card_lock_ticks -= 1
 
 	# This tick's effective tuning under the deterministic speed modifier
 	# (ONE = unscaled). Pure fixed-point multiplies — still integer math.
@@ -308,6 +323,21 @@ func is_frozen() -> bool:
 	return _freeze_ticks > 0
 
 
+## SHIELD-RALLY CARD LOCK: lock this wizard's deck cards for at least [param ttl] ticks (gates CASTING only,
+## never movement). A capturing BarrierController re-pushes it on BOTH wizards every rally hold tick; the
+## lock lapses ~1 tick after the barrier stops pushing (release). MAX-composes so overlapping pushes never
+## shorten it. Deterministic single int max, identical on every peer; saved as "cl".
+func apply_card_lock(ttl: int = 2) -> void:
+	_card_lock_ticks = maxi(_card_lock_ticks, maxi(1, ttl))
+
+
+## True while the shield-rally card lock is active (see apply_card_lock). The CardCasterComponent gates new
+## presses on it, and the card-hand HUD reads it (via the caster) to POP the whole hand out for the rally
+## beat. Read-only — does NOT affect movement.
+func is_card_locked() -> bool:
+	return _card_lock_ticks > 0
+
+
 ## Current aim direction (-1/0/+1) and how many ticks it has been held —
 ## casters tilt launch angles from these (read-only sim accessors).
 func get_aim_dir() -> int:
@@ -361,6 +391,7 @@ func halt() -> void:
 	_boost_ticks = 0
 	_boost_scale_fp = SGFixed.ONE
 	_freeze_ticks = 0
+	_card_lock_ticks = 0
 	_aim_dir = 0
 	_aim_ticks = 0
 	_aim_key = 0
@@ -389,6 +420,7 @@ func _save_state() -> Dictionary:
 		"ad": _aim_dir,
 		"at": _aim_ticks,
 		"fz": _freeze_ticks,
+		"cl": _card_lock_ticks,
 	}
 
 
@@ -405,6 +437,7 @@ func _load_state(state: Dictionary) -> void:
 	_aim_dir = int(state.get("ad", 0))
 	_aim_ticks = int(state.get("at", 0))
 	_freeze_ticks = int(state.get("fz", 0))
+	_card_lock_ticks = int(state.get("cl", 0))
 
 	var pos: SGFixedVector2 = _body.fixed_position
 	pos.x = int(state.get("px", 0))

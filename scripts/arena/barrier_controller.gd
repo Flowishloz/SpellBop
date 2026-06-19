@@ -73,6 +73,17 @@ signal capture_released
 @export var reflect_hold_growth: float = 1.35
 @export var max_rally_reflects: int = 6
 
+## SHIELD RALLY MOMENT (Creative Director): the deeper "rally" treatment — BOTH wizards' deck cards lock +
+## pop out, and every OTHER projectile on the field crawls (so a stray can't kill a player mid-rally) —
+## only kicks in once a RALLY is established: the SECOND reciprocated block onward (a single isolated block
+## NEVER triggers it). Gate = the captured ball's reflect count at/above this. reflect 0 = the first block
+## (no rally); 1 = the opponent's return block (rally begins). The existing per-block slow-mo is untouched.
+@export var rally_min_reflects: int = 1
+## SHIELD RALLY MOMENT: per-tick MOTION scale stamped onto every OTHER field projectile each rally hold tick
+## (0.3 = 30% — they crawl). The presentation time-dilation slows REAL time but NEVER the per-tick sim
+## distance (graveyard rule), so THIS deterministic slow is what actually holds the strays back.
+@export_range(0.05, 1.0) var rally_projectile_slow_scale: float = 0.3
+
 ## Visual rig (a Node3D holding the wall mesh). The barrier positions it from
 ## the sim ONCE at deploy (and per tick when drifting) — barriers have no
 ## VisualBridge because they have no movement component to signal from.
@@ -119,6 +130,9 @@ var _view_flip_z: bool = false
 ## SHIELD-REFLECT RALLY: reflect_hold_growth as fixed-point (cached in _ready).
 var _hold_growth_fp: int = SGFixed.ONE
 
+## SHIELD RALLY MOMENT: rally_projectile_slow_scale as fixed-point (cached in _ready).
+var _rally_slow_fp: int = SGFixed.ONE
+
 
 func _ready() -> void:
 	# HARDCODED COLLISION LAYERS (graveyard rule: the editor fails to persist
@@ -129,6 +143,7 @@ func _ready() -> void:
 	fixed_rotation = 0
 	_visual_root = get_node_or_null(visual_root_path) as Node3D
 	_hold_growth_fp = SGFixed.from_float(maxf(1.0, reflect_hold_growth))
+	_rally_slow_fp = SGFixed.from_float(clampf(rally_projectile_slow_scale, 0.05, 1.0))
 
 	# Mirror the visual on the CLIENT (same rule as VisualBridgeComponent): the client
 	# presents the court spun front-to-back so ITS wizard is at the near baseline.
@@ -287,6 +302,7 @@ func _try_capture() -> void:
 		_capture_remaining = _capture_total
 		_woa_armed = false  # one capture per barrier
 		_freeze_owner()  # Task 3: lock the deploying wizard from the capture tick (re-pushed each hold tick)
+		_apply_rally_lockdown(reflects)  # SHIELD RALLY MOMENT: crawl strays + lock both hands (rallies only)
 		child.launch(0, 0, SGFixed.ONE)
 		# INTERCEPT FX (pure visual): shield-colored shards FLATTEN against
 		# the wall — fanning UP/ACROSS the wall plane like a snowball hitting
@@ -318,6 +334,35 @@ func _reflect_intensity_fp() -> int:
 func _freeze_owner() -> void:
 	if _owner_body != null and is_instance_valid(_owner_body) and _owner_body.has_method(&"freeze_movement"):
 		_owner_body.freeze_movement(2)
+
+
+## SHIELD RALLY MOMENT: once a RALLY is established ([param reflects] >= rally_min_reflects — the 2nd
+## reciprocated block onward), drive the rally beat's GAMEPLAY half every held tick: crawl every OTHER
+## field projectile (apply_sim_slow) so a stray can't cross into a frozen wizard, and LOCK both wizards'
+## deck cards (apply_card_lock — the hands pop out, no new card enters the moment). All re-pushed each tick
+## with a short TTL so both lapse ~1 tick after release. A single isolated block (reflects 0) never triggers
+## it — the moment is RESERVED for rallies. Deterministic: a sibling walk in scene-tree order + int pushes,
+## identical on every peer; each touched projectile saves its slow and each wizard saves its lock, so a
+## rollback across the hold restores both. (Movement is untouched — the non-blocking wizard keeps dodging.)
+func _apply_rally_lockdown(reflects: int) -> void:
+	if reflects < rally_min_reflects:
+		return
+	# Crawl every OTHER projectile on the field — never the captured ball (already frozen on the wall).
+	var container: Node = get_parent()
+	if container != null:
+		for child in container.get_children():
+			if child == self or child == _captured_ball:
+				continue
+			if child.has_method(&"apply_sim_slow"):
+				child.apply_sim_slow(_rally_slow_fp, 2)
+	# Lock BOTH wizards' deck cards: the deploying owner AND the captured ball's original thrower (the
+	# receiver the ball will be returned to). The hit source is the thrower until release overwrites it.
+	if _owner_body != null and is_instance_valid(_owner_body) and _owner_body.has_method(&"apply_card_lock"):
+		_owner_body.apply_card_lock(2)
+	if _captured_ball != null and is_instance_valid(_captured_ball) and _captured_ball.has_method(&"get_hit_source"):
+		var receiver: Node = _captured_ball.get_hit_source()
+		if receiver != null and is_instance_valid(receiver) and receiver.has_method(&"apply_card_lock"):
+			receiver.apply_card_lock(2)
 
 
 ## SHIELD-REFLECT RALLY: deterministic fixed-point power base_fp^exp (exp >= 0) for the hold
@@ -404,6 +449,9 @@ func _tick_capture() -> void:
 		if _captured_ball.has_method(&"keep_alive"):
 			_captured_ball.keep_alive()
 		_freeze_owner()  # Task 3: keep the deploying wizard locked for the whole hold
+		# SHIELD RALLY MOMENT: keep strays crawling + both hands locked for the whole hold (rallies only).
+		var reflects: int = _captured_ball.get_reflect_count() if _captured_ball.has_method(&"get_reflect_count") else 0
+		_apply_rally_lockdown(reflects)
 		var total: float = float(maxi(1, _capture_total))
 		capture_charging.emit(1.0 - float(_capture_remaining) / total)
 		return

@@ -556,6 +556,13 @@ func _update_card_availability() -> void:
 	var defense_is_buff: bool = _caster != null and _caster.has_method(&"is_defense_buff") \
 			and bool(_caster.call(&"is_defense_buff"))
 	avail[1] = (attack_imminent or ball_incoming or defense_is_buff) and defense_off_cd
+	# SHIELD-RALLY CARD LOCK: while a shield rally hold locks this wizard (the 2nd reciprocated block on),
+	# OVERRIDE every card to unavailable so the WHOLE hand pops out and taps are ignored (_card_hit skips
+	# unavailable cards). The lock is deterministic sim state the caster exposes; this is a presentation read
+	# only. It clears the instant the hold releases, so the hand springs straight back in. (Override here
+	# rather than threading a guard through each line above.)
+	if _caster != null and _caster.has_method(&"is_card_locked") and bool(_caster.call(&"is_card_locked")):
+		avail = [false, false, false]
 	for i in 3:
 		if avail[i] and not _available[i] and _states[i] != CardState.EXPANDED:
 			# POP IN at the dock slot, springing the scale up from small (overshoot = pop).
