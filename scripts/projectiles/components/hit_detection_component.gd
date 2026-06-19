@@ -38,9 +38,11 @@ signal hit(body: Node)
 @export var hit_extent_x: float = 0.0
 @export var hit_extent_y: float = 0.0
 
-## Target wizard collider half-extents, sim units. Match player.tscn's
-## SGRectangleShape2D extents.
-@export var target_half_width: float = 52.5
+## Target wizard collider half-extents, sim units — the VULNERABLE "get-hit" box (a pure
+## overlap query; wizards aren't on any projectile mask). Tuned to the visible character, NOT
+## the wizard's physics SGRectangleShape2D (52.5, which still governs wizard-vs-wall/barrier):
+## 35 sim units ≈ 43px of the 128px wizard sprite (CD: hitbox was too wide for the art).
+@export var target_half_width: float = 35.0
 @export var target_half_height: float = 16.0
 
 ## Group the wizard bodies register under (PlayerController._ready()).

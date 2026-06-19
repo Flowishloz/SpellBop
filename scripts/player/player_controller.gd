@@ -215,6 +215,14 @@ func apply_slow(duration_ticks: int, scale_fp: int) -> void:
 		_movement.apply_timed_slow(duration_ticks, scale_fp)
 
 
+## SHIELD-CAPTURE MOTION LOCK (Task 3): a barrier this wizard deployed re-pushes this every held tick
+## while it grips a captured ball, freezing the owner in place for the hold. Same public-API routing as
+## apply_slow — the barrier never pokes the MovementComponent directly.
+func freeze_movement(ttl: int = 2) -> void:
+	if _movement != null:
+		_movement.apply_movement_freeze(ttl)
+
+
 ## STACK WINNER REWARD: grant this wizard a one-shot launch-speed multiplier for
 ## its NEXT fired projectile (MatchController calls this when it wins a stack).
 func grant_speed_boost(multiplier_fp: int) -> void:
