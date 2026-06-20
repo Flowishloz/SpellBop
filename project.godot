@@ -29,8 +29,8 @@ NetworkManager="*res://core/network_manager.gd"
 
 window/size/viewport_width=1080
 window/size/viewport_height=1920
-window/size/window_width_override=486
-window/size/window_height_override=864
+window/size/window_width_override=540
+window/size/window_height_override=960
 window/stretch/mode="canvas_items"
 window/handheld/orientation=1
 
@@ -101,4 +101,5 @@ move_right_arrows={
 
 rendering_device/driver.windows="d3d12"
 textures/vram_compression/import_etc2_astc=true
+anti_aliasing/quality/msaa_2d=1
 environment/defaults/default_clear_color=Color(0.03, 0.035, 0.07, 1)

@@ -54,8 +54,38 @@ signal ai_difficulty_changed(tier: int)
 
 
 func _ready() -> void:
+	_apply_desktop_window()
 	_load_online()
 	_load_cosmetics()
+
+
+## DESKTOP WINDOW SIZING — presentation only; never touches the deterministic sim.
+## The game renders its UI into the WINDOW framebuffer (canvas_items stretch over a
+## 1080x1920 base), so the old fixed 486x864 desktop test window forced every menu —
+## the Decks builder worst of all — to render at <0.5x and look low-res. On desktop we
+## size a 9:16 portrait window to ~92% of the player's screen (capped at the native
+## 1080x1920 design res = 1:1 pixels) and centre it, so the UI gets its full pixel
+## detail back. The gameplay stays retro regardless: that look is the nearest-filtered
+## pixel-art sprites + the world-only dither/scanline shader, NOT a small framebuffer.
+## No-op on headless (the test sweep) and on mobile (the device already runs native).
+func _apply_desktop_window() -> void:
+	if DisplayServer.get_name() == "headless":
+		return
+	if OS.has_feature("mobile") or not OS.has_feature("pc"):
+		return
+	var screen: int = DisplayServer.window_get_current_screen()
+	var usable: Rect2i = DisplayServer.screen_get_usable_rect(screen)
+	# Claim the full working-area height minus a slim title-bar allowance, so a portrait
+	# 9:16 window uses every vertical pixel the monitor offers (capped at the 1920 design
+	# height = 1:1). On 1080p this is ~990 tall; on 1440p/4K it scales straight to native.
+	var h: int = mini(1920, maxi(480, usable.size.y - 40))
+	var w: int = int(round(float(h) * 9.0 / 16.0))
+	# Refit by width on the rare ultra-short / narrow screen so we never overrun it.
+	if w > int(float(usable.size.x) * 0.96):
+		w = int(float(usable.size.x) * 0.96)
+		h = int(round(float(w) * 16.0 / 9.0))
+	DisplayServer.window_set_size(Vector2i(w, h))
+	DisplayServer.window_set_position(usable.position + (usable.size - Vector2i(w, h)) / 2)
 
 
 func set_left_handed(value: bool) -> void:
