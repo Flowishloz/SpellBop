@@ -193,6 +193,13 @@ func remaining_seconds() -> float:
 
 
 func _process(_delta: float) -> void:
+	# UI COUNTDOWN: emit FIRST, every frame the window is open, BEFORE the hitstop / timed-slow-mo
+	# early-returns below (they hold Engine.time_scale and used to skip the bottom emit, freezing the
+	# on-screen countdown + its tick audio while a hit's slow-mo played even though the SIM resolver
+	# kept perfect time -- the 'timer stuck but spells still resolve' bug). The UI exception: the
+	# countdown runs at 100% always, immune to the dilation.
+	if state == State.STACK_WINDOW:
+		stack_tick.emit(remaining_seconds())
 	# HITSTOP: hold the freeze until its wall-clock deadline, then either SNAP back to 1.0 (a plain
 	# crunch) or EASE INTO the follow-on slow-mo — a HELD death beat or a TIMED player-damage beat.
 	if _hitstop_until_msec > 0:
@@ -235,10 +242,3 @@ func _process(_delta: float) -> void:
 			Engine.time_scale = 1.0
 			_resuming = false
 
-	if state != State.STACK_WINDOW:
-		return
-	# UI COUNTDOWN ONLY (Sprint 22 Phase 2): the SIM-side StackResolver owns when the
-	# window actually closes (a deterministic tick), so the wall clock no longer
-	# auto-resolves. remaining_seconds() clamps at 0, so the on-screen timer just sits
-	# at 0.0 until the resolver fires (≈ the same instant at the tuned window length).
-	stack_tick.emit(remaining_seconds())

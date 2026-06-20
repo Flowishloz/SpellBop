@@ -2,16 +2,16 @@
 
 importer="texture"
 type="CompressedTexture2D"
-uid="uid://cftj2te7e81l3"
-path="res://.godot/imported/charging_back.png-4ea16a834675db67286c861495f456ef.ctex"
+uid="uid://1q02vbjnihkk"
+path="res://.godot/imported/close_call.png-1a535c0f49f0a4cad045f531cb73c828.ctex"
 metadata={
 "vram_texture": false
 }
 
 [deps]
 
-source_file="res://assets_final/skins/space_wizard/charging_back.png"
-dest_files=["res://.godot/imported/charging_back.png-4ea16a834675db67286c861495f456ef.ctex"]
+source_file="res://assets_final/skins/space_wizard/close_call.png"
+dest_files=["res://.godot/imported/close_call.png-1a535c0f49f0a4cad045f531cb73c828.ctex"]
 
 [params]
 
