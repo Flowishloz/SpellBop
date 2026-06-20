@@ -101,6 +101,12 @@ signal card_rejected(card: CardResource)
 ## Floor: the shield never pops in later than this close, no matter how long the rally — a deep rally is
 ## HARD to keep alive, not impossible (leaves a reactable sliver).
 @export var rally_window_min_distance: float = 300.0
+## LATE-RALLY WHIFF GATE: the actual block-CAPTURE window is the inner this-fraction of the pop-in window
+## above, so past the threshold the shield card pops in as a "get ready" cue but the block only LANDS once
+## the ball is inside the tighter inner window — a too-early press WHIFFS (no barrier) and still burns the
+## cooldown, so mashing the auto-shield locks you out and you eat the ball. 1.0 disables the whiff (the
+## capture window equals the pop-in window — pure pop-in shrink, no mistimed-press penalty).
+@export_range(0.1, 1.0) var rally_capture_window_fraction: float = 0.6
 
 ## Path to the caster's SGCharacterBody2D. Empty = direct parent.
 @export var body_path: NodePath
@@ -112,6 +118,7 @@ var _spawn_offset_y_fp: int = 0
 var _rally_window_base_fp: int = 0
 var _rally_window_shrink_fp: int = 0
 var _rally_window_min_fp: int = 0
+var _rally_capture_fraction_fp: int = SGFixed.ONE  # capture window = pop-in window x this
 
 # Authoritative simulation state (ints only — rollback-safe).
 var _slot_cd: Array[int] = [0, 0, 0]  # per-slot cooldown ticks remaining
@@ -154,6 +161,7 @@ func _cache_fixed_point_values() -> void:
 	_rally_window_base_fp = SGFixed.from_float(maxf(0.0, rally_window_base_distance))
 	_rally_window_shrink_fp = SGFixed.from_float(maxf(0.0, rally_window_shrink_per_reflect))
 	_rally_window_min_fp = SGFixed.from_float(maxf(0.0, rally_window_min_distance))
+	_rally_capture_fraction_fp = SGFixed.from_float(clampf(rally_capture_window_fraction, 0.1, 1.0))
 
 
 ## Whole-tick hold a card needs to commit. Cards now commit on the press EDGE
@@ -256,9 +264,16 @@ func _network_process(input: Dictionary) -> void:
 		match card.card_type:
 			CardResource.CardType.DEFENSE:
 				# DEFENSE — truly instant, never on the stack.
-				_resolve_defense(card)
-				_emit_card_cast(card)
-				_slot_cd[raw_slot - 1] = _cooldown_ticks
+				# LATE-RALLY WHIFF GATE (anti-spam): in a deep rally a too-early block lands NO barrier but
+				# still burns the cooldown, so mashing the auto-shield locks you out and the ball gets
+				# through; only a last-moment press deploys. False in normal play / early rallies (unchanged).
+				if _defense_block_whiffs(card):
+					_slot_cd[raw_slot - 1] = _cooldown_ticks  # the whiff penalty (no barrier deployed)
+					_reject_once(raw_slot, card)              # presentation: the refusal shake
+				else:
+					_resolve_defense(card)
+					_emit_card_cast(card)
+					_slot_cd[raw_slot - 1] = _cooldown_ticks
 			CardResource.CardType.COUNTER:
 				# COUNTER — SLAP IT ON THE STACK: latch the WOA (how late into
 				# the running countdown this response came) and stage it. The
@@ -624,13 +639,55 @@ func has_incoming_threat() -> bool:
 		# extra reflect — so keeping a long rally alive needs timing, not mashing the auto-appearing shield.
 		# Below the threshold any distance counts (the generous warning is unchanged).
 		var reflects: int = child.get_reflect_count() if child.has_method(&"get_reflect_count") else 0
-		if reflects >= rally_window_threshold_reflects:
-			var extra: int = reflects - rally_window_threshold_reflects + 1
-			var react_fp: int = maxi(_rally_window_min_fp, _rally_window_base_fp - extra * _rally_window_shrink_fp)
-			if absi(dy) > react_fp:
-				continue  # still too far for this deep into the rally — the shield stays tucked
+		if reflects >= rally_window_threshold_reflects and absi(dy) > _rally_pop_in_dist_fp(reflects):
+			continue  # still too far for this deep into the rally — the shield stays tucked
 		return true  # a hostile ball is heading our way (within the rally-scaled reaction window)
 	return false
+
+
+## LATE-RALLY SHIELD WINDOW: the pop-in reaction distance (fixed-point) for a ball reflected [param reflects]
+## times, valid for reflects >= rally_window_threshold_reflects — the generous base shrunk per extra reflect,
+## floored. Shared so the HUD pop-in (has_incoming_threat) and the tighter block-CAPTURE window
+## (_defense_block_whiffs, which scales this by rally_capture_window_fraction) can never drift apart.
+func _rally_pop_in_dist_fp(reflects: int) -> int:
+	var extra: int = reflects - rally_window_threshold_reflects + 1
+	return maxi(_rally_window_min_fp, _rally_window_base_fp - extra * _rally_window_shrink_fp)
+
+
+## LATE-RALLY WHIFF GATE (anti-spam, sim): true when a DEFENSE press should WHIFF — i.e. the ONLY incoming
+## hostile ball(s) have been rallied past the threshold AND none is yet inside the tight CAPTURE window (the
+## inner rally_capture_window_fraction of the pop-in window), so the block is mistimed (too early). The
+## caller deploys NO barrier but still burns the cooldown, so mashing the auto-shield locks you out; only a
+## last-moment press lands. False below the threshold (deploy anytime — unchanged), for a BUFF defense
+## (proactive, never a reactive block), or when no deep-rally ball is incoming. Deterministic int read of
+## ball positions + reflect counts — identical on every peer (same proven shape as has_incoming_threat).
+func _defense_block_whiffs(card: CardResource) -> bool:
+	if card == null or card.buff_duration > 0.0:
+		return false
+	var container: Node = _resolve_container()
+	if container == null:
+		return false
+	var my_pos: SGFixedVector2 = _body.get_global_fixed_position()
+	var deep_ball_incoming: bool = false   # a past-threshold ball is on its way in
+	var deep_ball_in_window: bool = false  # ...and at least one is inside the tight capture window
+	for child in container.get_children():
+		if not child.has_method(&"get_velocity_y") or not child.has_method(&"get_hit_source"):
+			continue
+		if child.get_hit_source() == _body:
+			continue  # our own throw
+		var ball_pos: SGFixedVector2 = child.get_global_fixed_position()
+		var dy: int = my_pos.y - ball_pos.y
+		var vy: int = child.get_velocity_y()
+		if vy == 0 or (vy > 0) != (dy > 0):
+			continue  # not incoming
+		var reflects: int = child.get_reflect_count() if child.has_method(&"get_reflect_count") else 0
+		if reflects < rally_window_threshold_reflects:
+			return false  # a normal (not-deep) incoming ball is present — this is an ordinary block, never a whiff
+		deep_ball_incoming = true
+		var capture_fp: int = SGFixed.mul(_rally_pop_in_dist_fp(reflects), _rally_capture_fraction_fp)
+		if absi(dy) <= capture_fp:
+			deep_ball_in_window = true
+	return deep_ball_incoming and not deep_ball_in_window
 
 
 ## The lane half-width (fixed-point) spawns clamp to — the SAME bound the wizard
