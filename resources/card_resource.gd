@@ -66,6 +66,12 @@ enum Rarity { COMMON, UNCOMMON, RARE }
 
 @export_group("Card Art")
 
+## RAW card illustration (your base_art.png) — the per-card artwork the Card Creation Engine assembles
+## UNDER the three universal frames (border_pill / border_in_round / border_full). Drop your base_art.png
+## straight into this slot on each card's .tres; the deck-builder tiles, the in-round card, and the Big
+## Inspect screen all crop + frame it automatically. Presentation only — NEVER read by the sim.
+@export var card_art: Texture2D
+
 ## 2D card-art face shown in the draft phase and the in-round hand dock.
 @export var ui_sprite: Texture2D
 

@@ -294,12 +294,26 @@ The Creative Director reported the AI opponent "doesn't block much" and asked fo
 > builder + clickable home-screen 3D · P5 packs/reveal/forge + coins sink · P6 online deck +
 > opponent-skin exchange · P7 verify + APK + Delta doc sync.
 
-## 🚧 NEXT PHASE — CARD CREATION ENGINE (drag-and-drop card authoring — mirrors the skin/sprite pipeline)
+## ✅ NEXT PHASE — CARD CREATION ENGINE — VISUAL ASSEMBLY DONE / BUILT (2026-06-20); auto-watch plugin still optional
 > **CD DIRECTION (2026-06-19):** "Build the Card Creation Engine. It should function like the character
 > sprite system — let me easily DRAG AND DROP in assets." GOAL: the CD drops a card's art into a folder and
 > the card AUTOMATICALLY appears in the catalog → the Decks builder → the in-match hand, with **ZERO** hand-
 > editing of `.tres` or `CardCatalog`. This is the AUTHORING half of the Content Engine (the RUNTIME half —
 > `CardResource` params, the Decks builder, casting — is already built + shipped).
+>
+> **✅ SHIPPED 2026-06-20 — the VISUAL ASSEMBLY half (Phases 1-3):** `CardResource.card_art` (raw illustration)
+> + procedural assembly of art + universal frame + rarity + text across the deck-list PILL tile, the new
+> COLLECTION full vertical card, the Big Inspect well, and `scenes/match_card_ui.tscn` (`class MatchCardUI`,
+> strict 5:7 in-round card, NO rules text). Universal frame PNGs live at `res://resources/cards/frames/`
+> (`border_pill|in_round|full.png`). Procedural fallbacks so nothing looks broken pre-art: no `card_art` →
+> a type glyph, no frame PNG → a cyan/gold `PlaceholderBorder`, plus a procedural rarity icon (silver
+> circle / green diamond / gold star). Helpers: `scripts/ui/{rarity_icon,type_glyph_icon,placeholder_border}.gd`.
+> Also shipped: the COLLECTION redesign (inventory → full cards + quick-filter popup + clickable type
+> counters + symmetric grid). SOP: `resources/cards/card_instructions.txt`; **ALL tunables (sizes / fonts /
+> colors / copy-limits / frame paths) tabulated in `docs/DECK_BUILDER_FRAMEWORK.md` §11.** 20/20 determinism
+> sweep BIT-IDENTICAL; presentation-only. **STILL OPTIONAL (not built):** the @tool auto-watch plugin for
+> ZERO-hand-editing catalog registration (today: drop `card_art` into the `.tres` + add one
+> `CardCatalog.ENTRIES` line). The drag-and-drop-folder spec below is the (still-valid) plan for that half.
 
 **THE MODEL TO COPY — the wizard SKIN / POSE pipeline (already shipping):**
 - `addons/wizard_pipeline/plugin.gd` is an `@tool EditorPlugin` that WATCHES `res://assets_final/sprites/

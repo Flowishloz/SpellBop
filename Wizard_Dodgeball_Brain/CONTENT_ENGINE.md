@@ -389,7 +389,13 @@ The thin text-button picker is REPLACED by a full two-state deck-builder (`scrip
 **Next:** P2's card-content push (Ricochet Round, Mitosis Bolt, the stack-manipulating counters Mirror Thief
 / Siphon Ward, + the first RARE per category) — now testable card-by-card in the new builder.
 
-## 14. NEXT — CARD CREATION ENGINE (drag-and-drop authoring; CD direction 2026-06-19)
+## 14. CARD CREATION ENGINE — VISUAL ASSEMBLY DONE / BUILT (2026-06-20); auto-watch plugin still optional
+> **✅ SHIPPED 2026-06-20 (visual assembly):** `CardResource.card_art` + procedural art+frame+rarity+text
+> assembly across the deck pill, the Collection full card, the Big Inspect, and `scenes/match_card_ui.tscn`
+> (5:7), with procedural fallbacks (type glyph / cyan & gold placeholder borders); + the COLLECTION redesign
+> (inventory → full cards, quick-filter popup, clickable type counters, symmetric grid). Tunables:
+> `docs/DECK_BUILDER_FRAMEWORK.md` §11. SOP: `resources/cards/card_instructions.txt`. **STILL OPTIONAL:** the
+> @tool auto-watch plugin (zero-hand-editing catalog). The drag-and-drop-folder spec below is the plan for it.
 **Before hand-authoring more moves**, the CD wants a drag-and-drop card pipeline that MIRRORS the wizard
 SKIN/sprite system: drop a card's art into a folder and the card auto-appears in `CardCatalog` → the Decks
 builder → the in-match hand, with NO hand-editing of `.tres` or the catalog. The RUNTIME is already ready —

@@ -73,7 +73,7 @@ shared by both players and every rollback re-simulation.
 | Block | Fields |
 |---|---|
 | Identity | `card_type`, `faction`, `rarity`, `casting_cost` 1–3, `is_reactive_only`, `description` (HUD rules text + damage) |
-| Art | `ui_sprite`, `world_sprite` |
+| Art | **`card_art`** (raw illustration — the Card Creation Engine face, assembled under the universal frames), `ui_sprite`, `world_sprite` |
 | Rarity anim hooks | `cast_vfx_scene`, `cast_animation_name`, `screen_shake_intensity` (Rare = screen-shaking) |
 | Attack (A) | inherited ballistics + `lifetime`, `projectile_count`, `spread_x_speed`, `stage_ticks` (countdown length in SIM ticks; 15 @ 10% = 2.5 real s) |
 | Defense (B) | `barrier_scene`, `wall_size`, `wall_lifetime`, `wall_movement_speed`, `wall_offset_y`, WOA: `woa_range` / `woa_max_reflect` / `woa_max_hold_seconds` / `woa_ricochet`, + spec fields (`is_exploding`*, `rebound_window`*, `healing_absorb`*) |
@@ -81,6 +81,20 @@ shared by both players and every rollback re-simulation.
 | Counter (C) | `projectile_scene` (the wave), WOA: `slow_duration` / `slow_scale_weak` / `slow_scale_strong`, + spec fields (`opportunity_window`, `speed_modifier`, `teleport_distance`*, `freeze_duration`*, `phase_immunity`*) |
 
 \* = data landed per spec; runtime effect arrives with later cards.
+
+## CARD CREATION ENGINE (visual assembly — shipped 2026-06-20)
+Card art is DROP-IN + procedurally assembled (mirrors the wizard skin pipeline):
+one raw `card_art` PNG per card + three UNIVERSAL frame PNGs
+(`res://resources/cards/frames/border_pill|in_round|full.png`) + a procedural
+rarity icon. The deck-builder pill tiles, the Collection grid (full vertical
+cards), the in-round card (`scenes/match_card_ui.tscn`, strict 5:7), and the Big
+Inspect all crop the art + lay the frame + draw the text automatically, with
+procedural fallbacks (type glyph / cyan & gold placeholder frames) so nothing
+looks broken before art exists. Helpers: `scripts/ui/{rarity_icon,type_glyph_icon,
+placeholder_border}.gd`. Authoring SOP: `resources/cards/card_instructions.txt`.
+ALL UI sizes / fonts / colors / copy-limits / frame paths are tabulated in
+`docs/DECK_BUILDER_FRAMEWORK.md` §11 TUNABLE PARAMETERS. Presentation only — never
+read by the sim (determinism sweep stays bit-identical).
 
 ## PARAMETER SURFACE — WIRED vs DATA-ONLY (what's free vs needs code)
 *(Verified 2026-06-19 against the resources + consuming components.)* The ONE
@@ -96,7 +110,8 @@ pool. Author those as pure `.tres`, NO code:
   walls), `wall_offset_y`, + full WOA (`woa_range` / `woa_max_reflect` /
   `woa_max_hold_seconds` / `woa_ricochet`).
 - **COUNTER:** `slow_duration`, `slow_scale_weak`/`strong`, `speed_modifier`.
-- **Per-card presentation:** `screen_shake_intensity`, `cast_vfx_scene`,
+- **Per-card presentation:** `card_art` (the Card Creation Engine illustration —
+  drop a PNG into the slot), `screen_shake_intensity`, `cast_vfx_scene`,
   `cast_animation_name`, `ui_sprite`, `world_sprite`.
 
 **DECLARED but NOT wired anywhere in `scripts/` → need NEW RUNTIME CODE:**

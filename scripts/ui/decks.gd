@@ -32,7 +32,10 @@ const SEP_TOP := 768.0
 const SEP_H := 96.0              # separator bar (~5%) — deck stats + type counts
 const INV_TOP := 864.0
 const INV_H := 768.0            # inventory region (~40%) — a filter strip + the scroll grid
-const FILTER_H := 156.0          # filter strip (search + chips) at the top of the inventory region
+const COLLECTION_H := 76.0       # the Collection header row (title + Filters button) at the top of the inventory band
+const INV_MARGIN := 20.0         # symmetric L/R margin for the Collection grid
+const SCROLLBAR_W := 18.0        # scrollbar reserve — lives in the right margin so the cards stay centred
+const INV_CARD_H := 340.0        # full-card height in the Collection grid (rows of 3)
 const BOTTOM_TOP := 1540.0       # deck-box dock — raised so the inventory grid isn't left with a big void
 const BOTTOM_H := 380.0
 
@@ -45,8 +48,16 @@ const RARITY_NAME := {0: "COMMON", 1: "UNCOMMON", 2: "RARE"}
 const TYPE_COL := {0: Color(0.92, 0.36, 0.32), 1: Color(0.34, 0.78, 0.46), 2: Color(0.36, 0.6, 0.98)}      # ATTACK red / DEFENSE green / COUNTER blue
 const TYPE_NAME := {0: "ATTACK", 1: "DEFENSE", 2: "COUNTER"}
 const FACTION_NAME := {0: "RED", 1: "BLUE", 2: "GREEN"}
-# The in-match card art (the actual icons the match HUD uses) — for the BIG view's "as in a match" look.
+# The in-match card art (the actual icons the match HUD uses) — the FALLBACK glyph for a card that has
+# no card_art yet (the BIG view's "as in a match" look).
 const TYPE_ART := {0: "res://resources/placeholder/spark_icon.png", 1: "res://resources/placeholder/shield_icon.png", 2: "res://resources/placeholder/ice_icon.png"}
+
+# --- Card Creation Engine: the UNIVERSAL frame assets (drop-in; every load is guarded so a missing file
+#     is a graceful no-op until you add it). base_art is per-card (CardResource.card_art). The in-round
+#     frame (border_in_round) is consumed by scenes/match_card_ui.tscn, not here. ---
+const FRAME_DIR := "res://resources/cards/frames/"
+const BORDER_PILL := FRAME_DIR + "border_pill.png"   # frames the small deck-list / inventory tile art well
+const BORDER_FULL := FRAME_DIR + "border_full.png"   # frames the Big Inspect art well
 
 var _pp: Node
 
@@ -79,6 +90,8 @@ var _filter_rarity: int = -1     # -1 = all
 var _search: String = ""
 var _type_chip_btns: Array = []
 var _rarity_chip_btns: Array = []
+var _type_counter_btns: Array = []   # the separator's clickable type-count filters
+var _filter_btn: Button              # opens the quick-filter popup
 
 
 func _ready() -> void:
@@ -259,63 +272,49 @@ func _build_separator() -> void:
 	_stat_lbl = _lbl("DECK  0 / 15", Vector2(34, SEP_TOP + 18), Vector2(360, 60), 40, HORIZONTAL_ALIGNMENT_LEFT)
 	_builder.add_child(_stat_lbl)
 
+	# The three coloured counters are CLICKABLE type filters for the Collection (tap the active one to clear).
 	var x := 470.0
+	_type_counter_btns = []
 	for t in 3:
+		var ti := t
+		var hit := Button.new()
+		hit.flat = true
+		hit.focus_mode = Control.FOCUS_NONE
+		hit.position = Vector2(x - 6, SEP_TOP + 14)
+		hit.size = Vector2(160, 64)
+		hit.pressed.connect(func() -> void: _set_type_filter(ti))
+		_builder.add_child(hit)
 		var dot := TypeDot.new()
 		dot.col = TYPE_COL[t]
-		dot.position = Vector2(x, SEP_TOP + 30)
+		dot.position = Vector2(6, 16)
 		dot.size = Vector2(36, 36)
 		dot.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		_builder.add_child(dot)
-		var lbl := _lbl("0/5", Vector2(x + 44, SEP_TOP + 18), Vector2(120, 60), 36, HORIZONTAL_ALIGNMENT_LEFT)
+		hit.add_child(dot)
+		var lbl := _lbl("0/5", Vector2(50, 4), Vector2(104, 56), 36, HORIZONTAL_ALIGNMENT_LEFT)
 		lbl.modulate = TYPE_COL[t]
-		_builder.add_child(lbl)
+		lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		hit.add_child(lbl)
 		_type_counters[t] = lbl
+		_type_counter_btns.append(hit)
 		x += 200.0
 
 
 func _build_inventory_region() -> void:
-	# --- filter strip (search + type/rarity chips) at the TOP of the inventory region (conceptually part
-	#     of the separator's control deck) ---
-	var search := LineEdit.new()
-	search.placeholder_text = "Search cards…"
-	search.position = Vector2(28, INV_TOP + 14)
-	search.size = Vector2(SCREEN.x - 56, 64)
-	search.add_theme_font_size_override(&"font_size", 30)
-	search.text_changed.connect(func(t: String) -> void: _search = t.strip_edges().to_lower(); _rebuild_inventory())
-	_builder.add_child(search)
+	# --- COLLECTION header (replaced the always-on filter strip): a title on the LEFT + a FILTERS button on
+	#     the RIGHT that opens the quick-filter popup. The freed vertical space goes to a taller grid. ---
+	var head := _lbl("COLLECTION", Vector2(28, INV_TOP + 10), Vector2(560, 56), 40, HORIZONTAL_ALIGNMENT_LEFT)
+	head.theme_type_variation = &"HeaderLabel"
+	_builder.add_child(head)
+	_filter_btn = _btn("FILTERS", Vector2(SCREEN.x - 320, INV_TOP + 8), Vector2(292, 62), 28)
+	_filter_btn.pressed.connect(_open_filter_popup)
+	_builder.add_child(_filter_btn)
 
-	var chips := HBoxContainer.new()
-	chips.position = Vector2(28, INV_TOP + 86)
-	chips.add_theme_constant_override(&"separation", 10)
-	chips.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	_builder.add_child(chips)
-	# type filter chips
-	_type_chip_btns = []
-	for spec in [[-1, "ALL"], [0, "ATK"], [1, "DEF"], [2, "CTR"]]:
-		var b := _chip(String(spec[1]), 96 if int(spec[0]) == -1 else 92)
-		var ft := int(spec[0])
-		b.pressed.connect(func() -> void: _click(); _filter_type = ft; _sync_chips(); _rebuild_inventory())
-		chips.add_child(b)
-		_type_chip_btns.append({"btn": b, "v": ft})
-	var spacer := Control.new()
-	spacer.custom_minimum_size = Vector2(22, 0)
-	chips.add_child(spacer)
-	# rarity filter chips
-	_rarity_chip_btns = []
-	for spec2 in [[-1, "ALL"], [0, "C"], [1, "U"], [2, "R"]]:
-		var b2 := _chip(String(spec2[1]), 96 if int(spec2[0]) == -1 else 72)
-		var fr := int(spec2[0])
-		if fr >= 0:
-			b2.add_theme_color_override(&"font_color", RARITY_COL[fr])
-		b2.pressed.connect(func() -> void: _click(); _filter_rarity = fr; _sync_chips(); _rebuild_inventory())
-		chips.add_child(b2)
-		_rarity_chip_btns.append({"btn": b2, "v": fr})
-
-	# --- the scroll grid (rows of 3) ---
+	# --- the scroll grid (rows of 3 full cards) — SYMMETRIC margins: the grid spans SCREEN-2*INV_MARGIN and
+	#     the scrollbar reserve sits in the right margin, so the cards stay centred (fixes the L/R imbalance). ---
+	var top := INV_TOP + COLLECTION_H
 	var scroll := ScrollContainer.new()
-	scroll.position = Vector2(20, INV_TOP + FILTER_H)
-	scroll.size = Vector2(SCREEN.x - 40, BOTTOM_TOP - (INV_TOP + FILTER_H) - 12)
+	scroll.position = Vector2(INV_MARGIN, top)
+	scroll.size = Vector2(SCREEN.x - 2.0 * INV_MARGIN + SCROLLBAR_W, BOTTOM_TOP - top - 12)
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	_builder.add_child(scroll)
 	_inv_grid = GridContainer.new()
@@ -421,6 +420,7 @@ func _refresh() -> void:
 	_rebuild_inventory()
 	_update_stats()
 	_sync_chips()
+	_refresh_type_counter_highlight()
 	_refresh_name()
 
 
@@ -466,7 +466,8 @@ func _rebuild_inventory() -> void:
 		c.queue_free()
 	if _pp == null:
 		return
-	var col_w := (SCREEN.x - 40 - 36 - 36) / 3.0    # scroll inset + 2 gaps
+	# 3 columns + 2 gaps fill the symmetric content width (matches the scroll above — fixes the L/R imbalance).
+	var col_w := (SCREEN.x - 2.0 * INV_MARGIN - 2.0 * 18.0) / 3.0
 	for id in CardCatalog.all_ids():
 		var e := CardCatalog.entry_for(id)
 		if e.is_empty():
@@ -480,7 +481,7 @@ func _rebuild_inventory() -> void:
 			var nm := (card.display_name if card != null and card.display_name != "" else String(id)).to_lower()
 			if not (nm.contains(_search) or String(id).contains(_search)):
 				continue
-		_inv_grid.add_child(_make_tile(id, &"inventory", Vector2(col_w, 156), -1))
+		_inv_grid.add_child(_make_tile(id, &"inventory", Vector2(col_w, INV_CARD_H), -1))
 
 
 func _update_stats() -> void:
@@ -497,9 +498,115 @@ func _update_stats() -> void:
 
 func _sync_chips() -> void:
 	for entry in _type_chip_btns:
-		(entry["btn"] as Button).button_pressed = (int(entry["v"]) == _filter_type)
+		if is_instance_valid(entry["btn"]):
+			(entry["btn"] as Button).button_pressed = (int(entry["v"]) == _filter_type)
 	for entry2 in _rarity_chip_btns:
-		(entry2["btn"] as Button).button_pressed = (int(entry2["v"]) == _filter_rarity)
+		if is_instance_valid(entry2["btn"]):
+			(entry2["btn"] as Button).button_pressed = (int(entry2["v"]) == _filter_rarity)
+
+
+## Click a separator type counter → toggle that type filter (click the active one again to clear).
+func _set_type_filter(t: int) -> void:
+	_click()
+	_filter_type = -1 if _filter_type == t else t
+	_sync_chips()
+	_refresh_type_counter_highlight()
+	_rebuild_inventory()
+
+
+## Dim the non-selected type counters when a type filter is active (all bright when off).
+func _refresh_type_counter_highlight() -> void:
+	for t in 3:
+		if t >= _type_counter_btns.size():
+			continue
+		var btn: Control = _type_counter_btns[t]
+		if btn == null:
+			continue
+		var on := (_filter_type < 0) or (_filter_type == t)
+		create_tween().set_trans(Tween.TRANS_SINE).tween_property(btn, "modulate", Color(1, 1, 1, 1.0 if on else 0.4), 0.15)
+
+
+## The quick-filter popup (opened by the Collection FILTERS button): search + type + rarity chips.
+func _open_filter_popup() -> void:
+	_click()
+	_open_overlay()
+	var sz := Vector2(880, 660)
+	var panel := Panel.new()
+	panel.size = sz
+	panel.position = (SCREEN - sz) * 0.5
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.10, 0.13, 0.20, 1.0)
+	sb.set_corner_radius_all(24)
+	sb.set_border_width_all(3)
+	sb.border_color = Color(0.55, 0.82, 1.0, 0.9)
+	panel.add_theme_stylebox_override(&"panel", sb)
+	_overlay.add_child(panel)
+
+	var title := _lbl("FILTERS", Vector2(40, 28), Vector2(sz.x - 80, 56), 40, HORIZONTAL_ALIGNMENT_LEFT)
+	title.theme_type_variation = &"HeaderLabel"
+	title.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.add_child(title)
+
+	var search := LineEdit.new()
+	search.placeholder_text = "Search cards…"
+	search.text = _search
+	search.position = Vector2(40, 104)
+	search.size = Vector2(sz.x - 80, 64)
+	search.add_theme_font_size_override(&"font_size", 30)
+	search.text_changed.connect(func(t: String) -> void: _search = t.strip_edges().to_lower(); _rebuild_inventory())
+	panel.add_child(search)
+
+	var tl := _lbl("TYPE", Vector2(40, 196), Vector2(300, 34), 26, HORIZONTAL_ALIGNMENT_LEFT)
+	tl.theme_type_variation = &"MutedLabel"
+	tl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.add_child(tl)
+	var trow := HBoxContainer.new()
+	trow.position = Vector2(40, 234)
+	trow.add_theme_constant_override(&"separation", 12)
+	trow.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.add_child(trow)
+	_type_chip_btns = []
+	for spec in [[-1, "ALL"], [0, "ATK"], [1, "DEF"], [2, "CTR"]]:
+		var b := _chip(String(spec[1]), 150)
+		var ft := int(spec[0])
+		b.pressed.connect(func() -> void: _click(); _filter_type = ft; _sync_chips(); _refresh_type_counter_highlight(); _rebuild_inventory())
+		trow.add_child(b)
+		_type_chip_btns.append({"btn": b, "v": ft})
+
+	var rl := _lbl("RARITY", Vector2(40, 338), Vector2(300, 34), 26, HORIZONTAL_ALIGNMENT_LEFT)
+	rl.theme_type_variation = &"MutedLabel"
+	rl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.add_child(rl)
+	var rrow := HBoxContainer.new()
+	rrow.position = Vector2(40, 376)
+	rrow.add_theme_constant_override(&"separation", 12)
+	rrow.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	panel.add_child(rrow)
+	_rarity_chip_btns = []
+	for spec2 in [[-1, "ALL"], [0, "C"], [1, "U"], [2, "R"]]:
+		var b2 := _chip(String(spec2[1]), 140)
+		var fr := int(spec2[0])
+		if fr >= 0:
+			b2.add_theme_color_override(&"font_color", RARITY_COL[fr])
+		b2.pressed.connect(func() -> void: _click(); _filter_rarity = fr; _sync_chips(); _rebuild_inventory())
+		rrow.add_child(b2)
+		_rarity_chip_btns.append({"btn": b2, "v": fr})
+
+	_sync_chips()
+
+	var clear := _btn("CLEAR", Vector2(40, sz.y - 104), Vector2(sz.x * 0.5 - 60, 84), 32)
+	clear.pressed.connect(func() -> void:
+		_filter_type = -1
+		_filter_rarity = -1
+		_search = ""
+		search.text = ""
+		_sync_chips()
+		_refresh_type_counter_highlight()
+		_rebuild_inventory())
+	panel.add_child(clear)
+	var done := _btn("DONE", Vector2(sz.x * 0.5 + 20, sz.y - 104), Vector2(sz.x * 0.5 - 60, 84), 32)
+	done.pressed.connect(func() -> void: _close_overlay())
+	panel.add_child(done)
 
 
 # =====================================================================
@@ -516,13 +623,17 @@ func _make_tile(id: StringName, context: StringName, sz: Vector2, slot_index: in
 	t.id = id
 	t.card = card
 	t.context = context
+	t.full = (context == &"inventory")   # Collection cards render as full vertical cards (not pills)
 	t.slot_index = slot_index
 	t.ftype = ftype
 	t.type_col = TYPE_COL[ftype]   # CARDS ARE COLOURED BY TYPE (red attack / green defense / blue counter)
 	t.rarity_col = RARITY_COL[rarity]
+	t.rarity = rarity
 	t.title = card.display_name if card != null and card.display_name != "" else String(id)
 	t.short_stats = _short_stats(card) if card != null else ""
 	t.owned = _pp.owned_count(id) if _pp != null else 0
+	t.card_art = card.card_art if card != null else null   # raw illustration (CardResource.card_art)
+	t.border_tex = _frame_tex(BORDER_PILL)                  # universal pill frame (null until the asset exists)
 	t.custom_minimum_size = sz
 	t.size = sz
 	t.build()
@@ -699,18 +810,50 @@ func _open_inspect(id: StringName, context: StringName, slot_index: int) -> void
 	name_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	face.add_child(name_lbl)
 
-	# art well + the in-match type icon
+	# art well — the RAW card_art (cover-filled + cropped) under the universal border_full frame (Card
+	# Creation Engine). No art yet → the procedural TYPE GLYPH fallback. No PNG yet → the procedural gold
+	# placeholder border. Geometry UNCHANGED (art_y / art_h identical — no spacing touched).
 	var art_y := m + 104.0
 	var art_h := H * 0.30
-	face.add_child(_info_box(Vector2(m, art_y), Vector2(W - 2 * m, art_h), Color(0.05, 0.06, 0.09, 0.96)))
-	var art := TextureRect.new()
-	art.texture = load(TYPE_ART[ftype])
-	art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
-	art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_CENTERED
-	art.position = Vector2(m + 20, art_y + 14)
-	art.size = Vector2(W - 2 * m - 40, art_h - 28)
-	art.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	face.add_child(art)
+	var well_pos := Vector2(m, art_y)
+	var well_sz := Vector2(W - 2 * m, art_h)
+	face.add_child(_info_box(well_pos, well_sz, Color(0.05, 0.06, 0.09, 0.96)))   # dark backdrop
+	var well := Control.new()
+	well.position = well_pos
+	well.size = well_sz
+	well.clip_contents = true   # crop the COVER-filled art to the well
+	well.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	face.add_child(well)
+	if card.card_art != null:
+		var art := TextureRect.new()
+		art.set_anchors_preset(Control.PRESET_FULL_RECT)
+		art.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		art.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+		art.texture = card.card_art
+		art.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		well.add_child(art)
+	else:
+		var glyph := TypeGlyphIcon.new()
+		glyph.set_anchors_preset(Control.PRESET_FULL_RECT)
+		glyph.card_type = ftype
+		glyph.tint = tcol.lightened(0.3)
+		well.add_child(glyph)
+	var bfull := _frame_tex(BORDER_FULL)
+	if bfull != null:
+		var frame := TextureRect.new()
+		frame.texture = bfull
+		frame.position = well_pos
+		frame.size = well_sz
+		frame.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		frame.stretch_mode = TextureRect.STRETCH_SCALE
+		frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		face.add_child(frame)
+	else:
+		var phb := PlaceholderBorder.new()
+		phb.col = Color(1.0, 0.81, 0.36)   # gold placeholder frame (the well)
+		phb.position = well_pos
+		phb.size = well_sz
+		face.add_child(phb)
 
 	# panel A — TYPE • DMG line + rarity · faction (MTG text box)
 	var pa_y := art_y + art_h + 12
@@ -726,6 +869,14 @@ func _open_inspect(id: StringName, context: StringName, slot_index: int) -> void
 	a2.modulate = RARITY_COL[rarity]
 	a2.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	face.add_child(a2)
+
+	# RARITY indicator — middle-right, on the line between the art-well bottom and the rules-box top
+	# (procedural placeholder shape).
+	var rar := RarityIcon.new()
+	rar.rarity = rarity
+	rar.size = Vector2(52, 52)
+	rar.position = Vector2(W - m - 60, pa_y + 20)
+	face.add_child(rar)
 
 	# panel B — rules text + the full stat line (autowrap + clip_contents → always contained)
 	var btn_h := 88.0
@@ -857,6 +1008,8 @@ func _close_overlay() -> void:
 		c.queue_free()
 	_overlay.visible = false
 	_overlay.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_type_chip_btns = []      # the filter popup's chips were just freed — drop the stale refs
+	_rarity_chip_btns = []
 
 
 # =====================================================================
@@ -1055,6 +1208,12 @@ func _click() -> void:
 		sfx.play(&"ui_click")
 
 
+## Load a universal frame texture (border_pill / border_full), or null if it isn't on disk yet — so the
+## Card Creation Engine assembles gracefully BEFORE you drop the PNGs in. Drop-in safe.
+func _frame_tex(path: String) -> Texture2D:
+	return (load(path) as Texture2D) if ResourceLoader.exists(path) else null
+
+
 # Tiny shim so the inner classes / row builder can read PlayerProfile's PER_TYPE without a hard dep.
 class PlayerProfileConst:
 	const PER_TYPE := 5
@@ -1075,15 +1234,46 @@ class CardTile extends Control:
 	var ftype: int = 0
 	var type_col: Color = Color(0.6, 0.6, 0.7)
 	var rarity_col: Color = Color(0.7, 0.74, 0.8)
+	var rarity: int = 0               # rarity tier (drives the procedural rarity icon)
 	var title: String = ""
 	var short_stats: String = ""
 	var owned: int = 0
+	var card_art: Texture2D = null     # raw per-card illustration (CardResource.card_art)
+	var border_tex: Texture2D = null   # universal border_pill frame (null until the asset exists)
+	var full: bool = false             # Collection cards render as full vertical cards; deck-list = pill
 
 	var _last_tap_ms: int = -10000
 
 
 	func build() -> void:
 		mouse_filter = Control.MOUSE_FILTER_STOP
+		if full:
+			_build_full()
+			return
+		_build_pill()
+
+
+	# PILL variant (deck list): horizontal — art well left 30%, name + stats right 70%, frame over the whole
+	# tile, rarity top-right, owned badge bottom-right.
+	func _build_pill() -> void:
+		# --- ART WELL (Card Creation Engine): raw card_art cropped to the left art well (geometry MATCHES
+		#     the _draw art rect exactly — no spacing change). No art yet → the procedural type glyph in
+		#     _draw is the fallback. The border_pill frame (WHOLE tile, Phase 2) is added after the text. ---
+		var art_rect := Rect2(12, 10, size.x * 0.30 - 8, size.y - 20)
+		if card_art != null:
+			var well := Control.new()
+			well.position = art_rect.position
+			well.size = art_rect.size
+			well.clip_contents = true   # crop the COVER-filled art to the well
+			well.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			add_child(well)
+			var tex := TextureRect.new()
+			tex.texture = card_art
+			tex.set_anchors_preset(Control.PRESET_FULL_RECT)
+			tex.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			tex.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+			tex.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			well.add_child(tex)
 		var compact := size.x < 230.0   # the narrow deck-list slots scale their text down
 		var name_fs := 18 if compact else 25
 		var stat_fs := 14 if compact else 19
@@ -1096,7 +1286,7 @@ class CardTile extends Control:
 		var name_lbl := Label.new()
 		name_lbl.text = title
 		name_lbl.position = Vector2(tx, 8)
-		name_lbl.size = Vector2(tw, name_h)
+		name_lbl.size = Vector2(tw - 42, name_h)   # leave room for the top-right rarity icon
 		name_lbl.add_theme_font_size_override(&"font_size", name_fs)
 		name_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 		name_lbl.modulate = type_col
@@ -1114,10 +1304,106 @@ class CardTile extends Control:
 		stat_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		add_child(stat_lbl)
 
-		# inventory tiles show the owned-qty badge (bottom-right); deck slot-0 ("loaded in match") is
-		# signalled by a green border in _draw instead, so nothing overlaps the cramped name.
+		# FRAME — the universal border_pill over the WHOLE tile (Phase 2 scope: frame the full row, not just
+		# the art well). PNG if present, else the procedural cyan placeholder. On top of the art + text; its
+		# transparent centre shows them through.
+		if border_tex != null:
+			var frame := TextureRect.new()
+			frame.texture = border_tex
+			frame.position = Vector2.ZERO
+			frame.size = size
+			frame.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			frame.stretch_mode = TextureRect.STRETCH_SCALE
+			frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			add_child(frame)
+		else:
+			var ph := PlaceholderBorder.new()
+			ph.col = Color(0.47, 0.78, 1.0)   # cyan placeholder frame (whole tile)
+			ph.position = Vector2.ZERO
+			ph.size = size
+			add_child(ph)
+
+		# inventory tiles show the owned-qty badge (bottom-right) — on top of the frame.
 		if context == &"inventory":
 			_add_badge("x%d" % owned, Color(0.12, 0.16, 0.24, 0.95), Color(1, 1, 1), false)
+
+		# RARITY indicator — TOP-right corner (procedural placeholder shape).
+		var rsz := 28.0 if compact else 32.0
+		var rar := RarityIcon.new()
+		rar.rarity = rarity
+		rar.size = Vector2(rsz, rsz)
+		rar.position = Vector2(size.x - rsz - 8.0, 8.0)
+		add_child(rar)
+
+
+	# FULL variant (Collection): vertical — art on top (clipped), name + shorthand stats below, frame over the
+	# whole card, rarity top-right, owned badge bottom-right.
+	func _build_full() -> void:
+		var pad := 12.0
+		var art_h := size.y * 0.50
+		var art_top := pad
+		# ART (top) — cover-cropped + clipped; the type-glyph fallback is drawn in _draw_full.
+		if card_art != null:
+			var well := Control.new()
+			well.position = Vector2(pad, art_top)
+			well.size = Vector2(size.x - 2.0 * pad, art_h)
+			well.clip_contents = true
+			well.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			add_child(well)
+			var tex := TextureRect.new()
+			tex.texture = card_art
+			tex.set_anchors_preset(Control.PRESET_FULL_RECT)
+			tex.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			tex.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+			tex.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			well.add_child(tex)
+		# NAME (below the art)
+		var name_lbl := Label.new()
+		name_lbl.text = title
+		name_lbl.position = Vector2(pad + 4, art_top + art_h + 4)
+		name_lbl.size = Vector2(size.x - 2.0 * pad - 8, 38)
+		name_lbl.add_theme_font_size_override(&"font_size", 24)
+		name_lbl.autowrap_mode = TextServer.AUTOWRAP_OFF
+		name_lbl.clip_text = true
+		name_lbl.modulate = type_col
+		name_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		add_child(name_lbl)
+		# SHORTHAND STATS (bottom)
+		var stat_top := art_top + art_h + 46
+		var stat_lbl := Label.new()
+		stat_lbl.text = short_stats
+		stat_lbl.position = Vector2(pad + 4, stat_top)
+		stat_lbl.size = Vector2(size.x - 2.0 * pad - 8, size.y - stat_top - pad - 4)
+		stat_lbl.add_theme_font_size_override(&"font_size", 18)
+		stat_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		stat_lbl.vertical_alignment = VERTICAL_ALIGNMENT_TOP
+		stat_lbl.modulate = Color(0.80, 0.85, 0.93)
+		stat_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		add_child(stat_lbl)
+		# FRAME — the universal border_pill over the WHOLE card (PNG or procedural cyan placeholder).
+		if border_tex != null:
+			var frame := TextureRect.new()
+			frame.texture = border_tex
+			frame.position = Vector2.ZERO
+			frame.size = size
+			frame.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+			frame.stretch_mode = TextureRect.STRETCH_SCALE
+			frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
+			add_child(frame)
+		else:
+			var ph := PlaceholderBorder.new()
+			ph.col = Color(0.47, 0.78, 1.0)
+			ph.position = Vector2.ZERO
+			ph.size = size
+			add_child(ph)
+		# owned badge (bottom-right) + RARITY (top-right)
+		if context == &"inventory":
+			_add_badge("x%d" % owned, Color(0.12, 0.16, 0.24, 0.95), Color(1, 1, 1), false)
+		var rar := RarityIcon.new()
+		rar.rarity = rarity
+		rar.size = Vector2(40, 40)
+		rar.position = Vector2(size.x - 40 - 12, 12)
+		add_child(rar)
 
 
 	func _add_badge(text: String, bg: Color, fg: Color, top: bool) -> void:
@@ -1149,6 +1435,13 @@ class CardTile extends Control:
 
 
 	func _draw() -> void:
+		if full:
+			_draw_full()
+		else:
+			_draw_pill()
+
+
+	func _draw_pill() -> void:
 		var fac := type_col
 		var is_active := context == &"deck" and slot_index == 0   # the "loaded in match" slot
 		var sb := StyleBoxFlat.new()
@@ -1166,7 +1459,28 @@ class CardTile extends Control:
 		asb.bg_color = Color(fac.r * 0.30 + 0.04, fac.g * 0.30 + 0.05, fac.b * 0.30 + 0.08, 1.0)
 		asb.set_corner_radius_all(10)
 		draw_style_box(asb, art)
-		_draw_type_glyph(art, Color(fac.r, fac.g, fac.b, 0.95))
+		# type glyph — FALLBACK only (the card_art TextureRect replaces it when art is assigned)
+		if card_art == null:
+			_draw_type_glyph(art, Color(fac.r, fac.g, fac.b, 0.95))
+
+
+	func _draw_full() -> void:
+		var fac := type_col
+		var sb := StyleBoxFlat.new()
+		sb.bg_color = Color(fac.r * 0.16 + 0.05, fac.g * 0.16 + 0.06, fac.b * 0.16 + 0.09, 0.96)
+		sb.set_corner_radius_all(16)
+		sb.set_border_width_all(2)
+		sb.border_color = Color(fac.r, fac.g, fac.b, 0.45)
+		draw_style_box(sb, Rect2(Vector2.ZERO, size))
+		# art-well backdrop (top half) + type-glyph fallback when no card_art
+		var pad := 12.0
+		var art := Rect2(pad, pad, size.x - 2.0 * pad, size.y * 0.50)
+		var asb := StyleBoxFlat.new()
+		asb.bg_color = Color(fac.r * 0.26 + 0.03, fac.g * 0.26 + 0.04, fac.b * 0.26 + 0.07, 1.0)
+		asb.set_corner_radius_all(10)
+		draw_style_box(asb, art)
+		if card_art == null:
+			_draw_type_glyph(art, Color(fac.r, fac.g, fac.b, 0.95))
 
 
 	func _draw_type_glyph(rect: Rect2, col: Color) -> void:

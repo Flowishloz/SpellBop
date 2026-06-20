@@ -1,0 +1,177 @@
+================================================================================
+ SPELL BOP — CARD CREATION ENGINE (SOP: how to add / art a card)
+ Location: res://resources/cards/card_instructions.txt
+================================================================================
+
+This game assembles every card's look from FIVE pieces, at most:
+
+  1. base_art.png   ........ ONE raw illustration per card  (per-card)
+  2. border_pill.png ....... frame for the deck-editor list tile  (universal)
+  3. border_in_round.png ... frame for the in-round gameplay card  (universal)
+  4. border_full.png ....... frame for the Big Inspect screen  (universal)
+  5. the card's text ....... name + stats/rules  (drawn by the engine, never art)
+
+You provide the 4 images. The engine crops the raw art to each frame's well,
+lays the universal frame on top, and overlays the text. You never touch code.
+
+--------------------------------------------------------------------------------
+ WHERE FILES GO
+--------------------------------------------------------------------------------
+- Card data ............ res://resources/cards/<your_card>.tres   (a CardResource)
+- Raw card art ......... anywhere you like; the suggested home is
+                         res://resources/cards/art/<your_card>.png
+                         (you point the .tres at it — see Step 4 below)
+- The 3 universal frames (drop them here, exact filenames):
+      res://resources/cards/frames/border_pill.png
+      res://resources/cards/frames/border_in_round.png
+      res://resources/cards/frames/border_full.png
+
+  NOTE: files named "_placeholder_*" in those folders are throwaway dev stand-ins
+  so the pipeline renders before your real art arrives. Overwrite / delete them.
+
+--------------------------------------------------------------------------------
+ PART A — DROP IN THE 3 UNIVERSAL FRAMES (do this once)
+--------------------------------------------------------------------------------
+1. Put border_pill.png, border_in_round.png, border_full.png into
+   res://resources/cards/frames/  (create the folder if missing).
+2. Design notes for each frame:
+   - border_pill.png    — frames the WHOLE deck-list / inventory tile (the full
+                          row: art well + text), stretched to the tile (a wide
+                          rectangle). The CENTER must be TRANSPARENT (the art +
+                          name + stats show through it).
+   - border_in_round.png — frames the WHOLE in-round card. STRICT 5:7 aspect
+                          (e.g. 500x700). Center transparent. Leave a "name
+                          plate" near the TOP — the card name is drawn there
+                          (default band: y 30..96 of a 500x700 card). If your
+                          plate sits elsewhere, tell us and we nudge the label.
+   - border_full.png    — frames the art WELL on the Big Inspect card. It is a
+                          wide rectangle (~2.2:1). Center transparent.
+   All three: PNG with alpha. The art is cropped to the well and the frame is
+   laid OVER it, so anything opaque in your frame hides the art beneath it.
+
+--------------------------------------------------------------------------------
+ PART B — ADD A NEW CARD (per card)
+--------------------------------------------------------------------------------
+Step 1 — Duplicate the closest baseline .tres in res://resources/cards/:
+         basic_attack.tres (ATTACK) / basic_defense.tres (DEFENSE) /
+         basic_counter.tres (COUNTER). Rename it <your_card>.tres.
+
+Step 2 — Open it in the Inspector. Set the Card Identity:
+         card_type (ATTACK/DEFENSE/COUNTER), faction (RED/BLUE/GREEN),
+         rarity (COMMON/UNCOMMON/RARE), casting_cost (1-3). For counters set
+         is_reactive_only = true. Keep is_card = true.
+
+Step 3 — Write the `description` (rules text + damage). This shows on the Big
+         Inspect screen and the in-hand HUD — NOT on the in-round card.
+
+Step 4 — DROP YOUR ART:  in the Inspector, find the "Card Art" group and drag
+         your base_art.png into the  >> card_art <<  slot. That is the only art
+         field the Creation Engine uses. (ui_sprite / world_sprite are legacy
+         and unrelated — leave them empty.)
+
+Step 5 — Tune ONLY the parameter block for the card's type (Attack / Defense /
+         Counter). Unique moves come from PARAMETERS, never new code. See
+         Wizard_Dodgeball_Brain/CARD_FRAMEWORK.md for which params are "free".
+
+Step 6 — REGISTER the card so it can be collected + slotted. Open
+         scripts/cards/card_catalog.gd and add a line to ENTRIES:
+            {"id": &"your_card", "path": "res://resources/cards/your_card.tres",
+             "type": <0 atk / 1 def / 2 ctr>, "rarity": <0 C / 1 U / 2 R>},
+         (type/rarity here MUST match the .tres.) The deck builder enumerates
+         the pool from this list.
+
+Step 7 — VERIFY:
+         - Reimport once (open the editor, or run the headless --import).
+         - Headless: run tests/test_card_system.gd + tests/test_round_flow.gd.
+         - Open the game → Decks: your card appears in the inventory with its
+           art framed by border_pill; tap it to see the Big Inspect (border_full).
+
+That's it. No code changes beyond the one-line catalog registration.
+
+--------------------------------------------------------------------------------
+ WHAT EACH VARIANT LOOKS LIKE (so you can design art that fits)
+--------------------------------------------------------------------------------
+- PILL (deck list slots):  horizontal — art fills the LEFT ~30% "well" (cropped),
+  name + stats in the right ~70%, border_pill frames the WHOLE tile, a small
+  RARITY shape sits TOP-right. Slot size 195x150 (design units).
+- COLLECTION (the inventory grid):  vertical FULL card — art on TOP (cover-
+  cropped), name + shorthand stats below, border_pill over the whole card, RARITY
+  top-right, owned qty badge bottom-right. Card ~335x340, 3 per row (design units).
+- IN-ROUND (scenes/match_card_ui.tscn):  the WHOLE card is your art (cover-
+  cropped to 5:7) under border_in_round, NAME across the top plate, RARITY
+  bottom-centre. NO rules text here — ever.
+- BIG INSPECT (Decks tap-to-view):  art fills the upper art WELL (cover-cropped),
+  border_full over it, RARITY middle-right; the engine still draws name + full
+  rules text below.
+
+ROBUST FALLBACKS — so the game never looks broken mid-art-pass:
+- No card_art   → the procedural TYPE GLYPH (lightning / shield / frost-diamond).
+- No border PNG → a procedural placeholder frame (cyan on the pill, gold on the
+  in-round + inspect), respecting the same layout. Drop the real PNG to override.
+- RARITY shape  → procedural placeholder (Common = silver circle, Uncommon =
+  green diamond, Rare = gold star) until you supply a real asset.
+
+================================================================================
+ SECTION FOR AI / ENGINEERS — HOW THE SYSTEM WORKS
+================================================================================
+GOAL: one raw illustration per card + three universal frames, assembled at three
+render sites. Mirrors the wizard skin pipeline philosophy (data-driven, drop-in).
+
+DATA
+- CardResource (resources/card_resource.gd) exposes `@export var card_art:
+  Texture2D` in the "Card Art" group. This is the per-card raw illustration. It
+  is PRESENTATION-ONLY — the sim never reads it, so it cannot affect determinism.
+- The 3 universal frames are plain PNGs at res://resources/cards/frames/. They
+  are loaded by PATH, guarded by ResourceLoader.exists() so a missing file is a
+  no-op (the assembly still renders art + text).
+
+RENDER SITES (all assemble the same way: WELL(clip) -> art(COVER) -> frame -> text)
+1. Deck-builder tiles — scripts/ui/decks.gd, inner class CardTile:
+   - build() DISPATCHES on the `full` flag: deck-list slots -> _build_pill()
+     (horizontal), the Collection grid -> _build_full() (vertical full card).
+     _make_tile sets t.full = (context == "inventory") and feeds t.card_art /
+     t.border_tex / t.rarity (inner classes can't read outer consts/methods).
+   - Both add: a clipped well with a card_art TextureRect (COVER); the border_pill
+     PNG over the WHOLE tile/card (else a procedural cyan PlaceholderBorder); a
+     RarityIcon TOP-right; the owned badge bottom-right.
+   - _draw() dispatches to _draw_pill / _draw_full (body + art-well backdrop; the
+     procedural type glyph draws ONLY as the `card_art == null` fallback).
+   - Frame path constants + the guarded loader `_frame_tex(path)` live in the
+     outer script (BORDER_PILL / BORDER_FULL).
+2. Big Inspect — scripts/ui/decks.gd, _open_inspect(): the art WELL builds a
+   clipped Control, the card_art TextureRect (COVER) — or a TypeGlyphIcon
+   fallback when card_art is null; border_full PNG overlay, else a procedural
+   PlaceholderBorder (gold); a RarityIcon sits middle-right between the well and
+   the rules box. Header / panels / rules text / buttons are unchanged.
+3. In-round — scenes/match_card_ui.tscn + scripts/ui/match_card_ui.gd
+   (class MatchCardUI): a standalone 5:7 card. ArtWell(clip) > Art(COVER) +
+   ArtFallback(TypeGlyphIcon) > BorderFallback(PlaceholderBorder, gold+plate) /
+   Border(border_in_round PNG) > Rarity(RarityIcon, bottom-centre) > NameLabel.
+   setup(card) or the `card` export fills art + name + rarity; PNG/art presence
+   toggles the fallbacks. NO description/rules text by rule.
+
+HELPERS (reusable Control class_names, scripts/ui/):
+   - RarityIcon        — circle/diamond/star by rarity (silver/green/gold).
+   - TypeGlyphIcon     — lightning/shield/frost glyph by card_type (art fallback);
+                         static draw_glyph() shared with the deck-pill _draw().
+   - PlaceholderBorder — cyan/gold double-rect frame (border fallback; `plate`
+                         adds a name band). Drop a real PNG / author a node and
+                         the matching fallback stands down automatically.
+
+CONVENTIONS / GOTCHAS
+- Aspect ratios: in-round is STRICTLY 5:7 (REF_SIZE 500x700); keep its container
+  5:7 (scale the whole node) or the art/frame distort.
+- Clipping: the wells use Control.clip_contents = true (clip to the well rect).
+  The universal frame's opaque border defines the visible silhouette; the art
+  beneath is cover-cropped so it always fills with no letterboxing.
+- Do NOT change the deck-builder UX, coordinate spacing, drag/drop, or the
+  PlayerProfile logic when touching art — those are frozen. Art is additive only.
+- Determinism: everything here is META / presentation. Headless runs draw
+  nothing and never load these textures, so the 20-suite determinism sweep stays
+  bit-identical. Keep it that way (no card_art reads inside a sim tick).
+- Adding a card = one .tres + one CardCatalog.ENTRIES line (+ drop base_art into
+  card_art). Reference: Wizard_Dodgeball_Brain/CARD_FRAMEWORK.md (which gameplay
+  params are free vs need code) and docs/DECK_BUILDER_FRAMEWORK.md — see its
+  "TUNABLE PARAMETERS" section to change card sizes / columns / fonts / colors /
+  copy-limits / frame paths in one lookup.
+================================================================================
