@@ -314,6 +314,13 @@ The Creative Director reported the AI opponent "doesn't block much" and asked fo
 > sweep BIT-IDENTICAL; presentation-only. **STILL OPTIONAL (not built):** the @tool auto-watch plugin for
 > ZERO-hand-editing catalog registration (today: drop `card_art` into the `.tres` + add one
 > `CardCatalog.ENTRIES` line). The drag-and-drop-folder spec below is the (still-valid) plan for that half.
+>
+> **POLISH + UX (2026-06-20):** type-tinted grayscale borders (red/green/blue by Card Type), stat-free deck
+> pills, bigger-art Big Inspect (tighter rules box + clean word-wrap/ellipsis), BACK moved BOTTOM-LEFT (decks
+> landing + cosmetics), a centred card-shaped drag preview, and intent-aware Collection input (tap = inspect /
+> hold-then-move = pick up + drag / swipe = scroll) with FLICK MOMENTUM. 20/20 sweep bit-identical; signed
+> debug APK re-exported (arm64). The touch feel is pending the CD's device playtest; tunables in
+> `docs/DECK_BUILDER_FRAMEWORK.md` §11.
 
 **THE MODEL TO COPY — the wizard SKIN / POSE pipeline (already shipping):**
 - `addons/wizard_pipeline/plugin.gd` is an `@tool EditorPlugin` that WATCHES `res://assets_final/sprites/

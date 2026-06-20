@@ -71,9 +71,10 @@ Five render paths, all produced by `_make_tile()` / `_open_inspect()` / `match_c
 | Drag preview / Quantity / Filter popup | overlays | 220×84 / 780×560 / 880×660 | literals | `make_drag_preview` / `_open_quantity` / `_open_filter_popup` |
 
 ### 4a. Deck pill (`CardTile`, `full=false`)
-Horizontal: art well left ~30% (`Rect2(12,10, size.x·0.30−8, size.y−20)`), name + stats right ~70%, frame
-over the **whole tile**, **rarity top-right**, owned badge bottom-right. Compact text (`size.x<230`):
-name font 18, stat 14; else 25 / 19. Slot-0 of each type = the "loaded" card → gold border in `_draw_pill`.
+Horizontal: art well left ~30% (`Rect2(12,10, size.x·0.30−8, size.y−20)`), **name only** (vertically
+centred, no shorthand stats) right ~70%, frame over the **whole tile** (type-tinted), **rarity top-right**,
+owned badge bottom-right. Compact text (`size.x<230`): name font 18 else 25. Slot-0 of each type = the
+"loaded" card → gold border in `_draw_pill`.
 
 ### 4b. Collection full card (`CardTile`, `full=true`)
 Vertical: **art on top** (`pad..size.y·0.50`, cover-cropped + clipped), **name** + **shorthand stats** below,
@@ -81,8 +82,9 @@ frame over the whole card, **rarity top-right**, owned badge bottom-right. `pad=
 rarity 40. 3 columns; `INV_CARD_H` (340) sets the height. *The 5 elements: border, name, art, rarity, stats.*
 
 ### 4c. Big inspect (`_open_inspect`)
-MTG frame (gold border, `clip_contents`). Margin `m=22`. Header strip (type color) → art **well** (`H·0.30`)
-→ panel A (TYPE • DMG / rarity · faction) → panel B (rules + full stats) → action buttons (88 tall). A
+MTG frame (gold border, `clip_contents`). Margin `m=22`. Header strip (type color) → art **well** (`H·0.40`,
+type-tinted frame) → panel A (TYPE • DMG / rarity · faction) → panel B (rules + full stats, `AUTOWRAP_WORD`
++ ellipsis; auto-fills down to the buttons, so the bigger art tightens it) → action buttons (88 tall). A
 **rarity icon** sits middle-right on panel A. Pop-in scale 0.72→1.0.
 
 ### 4d. In-round (`match_card_ui.tscn` + `MatchCardUI`)
@@ -192,7 +194,9 @@ read outer consts) but CAN use the global `class_name` helpers.
 | Collection columns | `_build_inventory_region` → `_inv_grid.columns = 3` | cards per row |
 | Collection card W/H | `_rebuild_inventory` → `Vector2(col_w, INV_CARD_H)` | full-card size (W auto from columns) |
 | grid gaps | `_inv_grid` `h_/v_separation = 18` | spacing between cards |
+| Collection touch feel | `CardTile` `HOLD_MS` (150) · `MOVE_THRESH` (14) · `decks.gd` `SCROLL_FRICTION` (4) · `SCROLL_MIN_VEL` (8) | hold-then-move = pick up + drag; quick swipe = scroll; release = **flick momentum** (friction-decayed glide; tap-to-stop) |
 | inspect size | `_open_inspect` → `face_sz = (SCREEN.x·0.80, SCREEN.y·0.64)` | Big inspect card |
+| inspect art well | `_open_inspect` → `art_h = H·0.40` | bigger art → tighter Panel B (auto-fills to buttons) |
 | in-round size | `match_card_ui.gd` → `REF_SIZE = (500,700)` | 5:7 card (keep 5:7!) |
 | quantity / filter / drag-preview | `_open_quantity` 780×560 / `_open_filter_popup` 880×660 / `make_drag_preview` 220×84 | overlay sizes |
 
@@ -220,7 +224,8 @@ read outer consts) but CAN use the global `class_name` helpers.
 | type colors | `decks.gd` `TYPE_COL` (+ `RarityIcon`/`card_hand_hud` mirror) | attack/defense/counter tints |
 | rarity colors | `decks.gd` `RARITY_COL` & `rarity_icon.gd` `COL` | stripe + rarity shape tints |
 | frame PNG paths | `decks.gd` `BORDER_PILL`/`BORDER_FULL`, `match_card_ui.gd` `BORDER_PATH` | where to drop real frames |
-| placeholder frame colors | `_build_pill`/`_build_full` (cyan) · `_open_inspect`/`match_card_ui.tscn` (gold) | fallback frame tint |
+| border tint (by type) | frames set `modulate = TYPE_COL[type]` in `_build_pill`/`_build_full`/`_open_inspect` + `match_card_ui.gd` | red/green/blue border per Card Type (tints the grayscale PNG / placeholder) |
+| placeholder base color | `placeholder_border.gd` `col` (near-white grayscale) | the un-tinted frame base that `modulate` multiplies |
 
 ### 11f. Per-card params — `resources/cards/<card>.tres` (`CardResource`)
 `card_art` (raw illustration) + Identity (type/faction/rarity/cost) + the per-type gameplay block. See

@@ -40,6 +40,8 @@ const BOTTOM_TOP := 1540.0       # deck-box dock — raised so the inventory gri
 const BOTTOM_H := 380.0
 
 const DOUBLE_MS := 260           # tap-vs-double-tap disambiguation window
+const SCROLL_FRICTION := 4.0     # Collection flick-momentum decay (higher = stops sooner)
+const SCROLL_MIN_VEL := 8.0      # px/s below which the flick stops
 
 # Palettes — one source of truth. CARDS ARE COLOURED BY TYPE (CD: red=attack, green=defense, blue=counter),
 # matching the in-match card (card_hand_hud.TYPE_COLORS). Faction stays a text attribute only.
@@ -92,6 +94,10 @@ var _type_chip_btns: Array = []
 var _rarity_chip_btns: Array = []
 var _type_counter_btns: Array = []   # the separator's clickable type-count filters
 var _filter_btn: Button              # opens the quick-filter popup
+var _inv_scroll: ScrollContainer     # the Collection scroll (for swipe-pan + flick momentum)
+var _scroll_vel: float = 0.0         # current flick velocity (px/s); decayed in _process
+var _scroll_last: float = 0.0        # last frame's scroll_vertical (to measure live drag velocity)
+var _scroll_dragging: bool = false   # true while a finger is actively panning the Collection
 
 
 func _ready() -> void:
@@ -135,7 +141,7 @@ func _build_landing() -> void:
 	_landing.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_landing)
 
-	var back := _btn("‹  BACK", Vector2(40, 44), Vector2(220, 92), 34)
+	var back := _btn("‹  BACK", Vector2(40, SCREEN.y - 116), Vector2(220, 92), 34)   # bottom-left (matches the builder)
 	back.pressed.connect(func() -> void: _click(); get_tree().change_scene_to_file(HOME_SCENE))
 	_landing.add_child(back)
 
@@ -317,6 +323,7 @@ func _build_inventory_region() -> void:
 	scroll.size = Vector2(SCREEN.x - 2.0 * INV_MARGIN + SCROLLBAR_W, BOTTOM_TOP - top - 12)
 	scroll.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
 	_builder.add_child(scroll)
+	_inv_scroll = scroll
 	_inv_grid = GridContainer.new()
 	_inv_grid.columns = 3
 	_inv_grid.add_theme_constant_override(&"h_separation", 18)
@@ -624,6 +631,7 @@ func _make_tile(id: StringName, context: StringName, sz: Vector2, slot_index: in
 	t.card = card
 	t.context = context
 	t.full = (context == &"inventory")   # Collection cards render as full vertical cards (not pills)
+	t.scroll = _inv_scroll if context == &"inventory" else null   # swipe-to-pan + flick momentum
 	t.slot_index = slot_index
 	t.ftype = ftype
 	t.type_col = TYPE_COL[ftype]   # CARDS ARE COLOURED BY TYPE (red attack / green defense / blue counter)
@@ -687,6 +695,48 @@ func _notification(what: int) -> void:
 		_apply_drag_focus(false)
 
 
+# =====================================================================
+# COLLECTION SCROLL MOMENTUM — a CardTile pans _inv_scroll directly during a swipe; here we measure that
+# live velocity and, after the finger lifts, glide it to a stop (flick). scroll_stop() kills it (tap-to-stop).
+# =====================================================================
+func scroll_begin() -> void:
+	if _inv_scroll == null:
+		return
+	_scroll_dragging = true
+	_scroll_vel = 0.0
+	_scroll_last = float(_inv_scroll.scroll_vertical)
+
+
+func scroll_end() -> void:
+	_scroll_dragging = false   # _process now decays the captured velocity (momentum)
+
+
+func scroll_stop() -> void:
+	_scroll_vel = 0.0
+	_scroll_dragging = false
+
+
+func _process(delta: float) -> void:
+	if _inv_scroll == null:
+		return
+	if _scroll_dragging:
+		# live drag — track velocity from the position the CardTile is panning.
+		var inst := (float(_inv_scroll.scroll_vertical) - _scroll_last) / maxf(delta, 0.0001)
+		_scroll_vel = lerpf(_scroll_vel, inst, 0.35)
+		_scroll_last = float(_inv_scroll.scroll_vertical)
+	elif absf(_scroll_vel) > SCROLL_MIN_VEL:
+		# flick — glide + decay; stop dead at the top/bottom bound.
+		var before := _inv_scroll.scroll_vertical
+		_inv_scroll.scroll_vertical = int(round(float(before) + _scroll_vel * delta))
+		if _inv_scroll.scroll_vertical == before:
+			_scroll_vel = 0.0
+		else:
+			_scroll_vel *= exp(-SCROLL_FRICTION * delta)
+			if absf(_scroll_vel) <= SCROLL_MIN_VEL:
+				_scroll_vel = 0.0
+		_scroll_last = float(_inv_scroll.scroll_vertical)
+
+
 ## Drag onto a FILLED slot → replace that card (same-type only; the dim guides this). Rejects if illegal.
 func request_replace(card_type: int, index: int, id: StringName) -> void:
 	if _pp == null:
@@ -699,21 +749,63 @@ func request_replace(card_type: int, index: int, id: StringName) -> void:
 		_reject(id, null)
 
 
+## The drag preview — a compact, type-tinted CARD (not a text bar) CENTRED on the finger so it tracks the
+## touch instead of trailing a corner behind it (request: smooth pick-up). Returned to force_drag.
 func make_drag_preview(card: CardResource, id: StringName) -> Control:
-	var p := Panel.new()
-	p.size = Vector2(220, 84)
+	var e := CardCatalog.entry_for(id)
+	var ftype := int(e.get("type", 0)) if not e.is_empty() else 0
+	var rarity := int(e.get("rarity", 0)) if not e.is_empty() else 0
+	var tcol: Color = TYPE_COL[ftype]
+	var sz := Vector2(260, 120)
+	var root := Control.new()                 # Godot pins root's origin to the finger
+	root.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var face := Panel.new()
+	face.size = sz
+	face.position = Vector2(-sz.x * 0.5, -sz.y * 0.5 - 18)   # centred + lifted a touch above the finger
+	face.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	var sb := StyleBoxFlat.new()
-	sb.bg_color = Color(0.12, 0.16, 0.24, 0.95)
-	sb.set_corner_radius_all(12)
-	sb.set_border_width_all(2)
-	sb.border_color = Color(0.55, 0.82, 1.0, 0.9)
-	p.add_theme_stylebox_override(&"panel", sb)
-	var l := _lbl(card.display_name if card != null and card.display_name != "" else String(id),
-		Vector2(12, 18), Vector2(196, 48), 28, HORIZONTAL_ALIGNMENT_CENTER)
-	l.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	p.add_child(l)
-	p.modulate = Color(1, 1, 1, 0.9)
-	return p
+	sb.bg_color = Color(tcol.r * 0.18 + 0.06, tcol.g * 0.18 + 0.07, tcol.b * 0.18 + 0.10, 0.98)
+	sb.set_corner_radius_all(16)
+	sb.set_border_width_all(3)
+	sb.border_color = tcol
+	face.add_theme_stylebox_override(&"panel", sb)
+	root.add_child(face)
+	# art well (left ~32%) — card_art or the type-glyph fallback
+	var well := Control.new()
+	well.position = Vector2(12, 12)
+	well.size = Vector2(sz.x * 0.32, sz.y - 24)
+	well.clip_contents = true
+	well.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	face.add_child(well)
+	if card != null and card.card_art != null:
+		var tex := TextureRect.new()
+		tex.texture = card.card_art
+		tex.set_anchors_preset(Control.PRESET_FULL_RECT)
+		tex.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
+		tex.stretch_mode = TextureRect.STRETCH_KEEP_ASPECT_COVERED
+		tex.mouse_filter = Control.MOUSE_FILTER_IGNORE
+		well.add_child(tex)
+	else:
+		var glyph := TypeGlyphIcon.new()
+		glyph.set_anchors_preset(Control.PRESET_FULL_RECT)
+		glyph.card_type = ftype
+		glyph.tint = tcol.lightened(0.3)
+		well.add_child(glyph)
+	# name (right of the art; reserve the rarity corner)
+	var nx := sz.x * 0.32 + 22
+	var name_lbl := _lbl(card.display_name if card != null and card.display_name != "" else String(id),
+		Vector2(nx, 12), Vector2(sz.x - nx - 44, sz.y - 24), 26, HORIZONTAL_ALIGNMENT_LEFT)
+	name_lbl.modulate = tcol.lightened(0.45)
+	name_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	face.add_child(name_lbl)
+	# rarity (top-right)
+	var rar := RarityIcon.new()
+	rar.rarity = rarity
+	rar.size = Vector2(30, 30)
+	rar.position = Vector2(sz.x - 38, 8)
+	face.add_child(rar)
+	root.modulate = Color(1, 1, 1, 0.96)
+	return root
 
 
 ## A drag (or the deck-list drop) requests adding `n` of `id`. Adds what's allowed; rejects with feedback.
@@ -814,7 +906,7 @@ func _open_inspect(id: StringName, context: StringName, slot_index: int) -> void
 	# Creation Engine). No art yet → the procedural TYPE GLYPH fallback. No PNG yet → the procedural gold
 	# placeholder border. Geometry UNCHANGED (art_y / art_h identical — no spacing touched).
 	var art_y := m + 104.0
-	var art_h := H * 0.30
+	var art_h := H * 0.40   # bigger art well (Phase 2) — also tightens Panel B, which fills down to the buttons
 	var well_pos := Vector2(m, art_y)
 	var well_sz := Vector2(W - 2 * m, art_h)
 	face.add_child(_info_box(well_pos, well_sz, Color(0.05, 0.06, 0.09, 0.96)))   # dark backdrop
@@ -846,11 +938,12 @@ func _open_inspect(id: StringName, context: StringName, slot_index: int) -> void
 		frame.size = well_sz
 		frame.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 		frame.stretch_mode = TextureRect.STRETCH_SCALE
+		frame.modulate = tcol   # tint the grayscale frame by Card Type
 		frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		face.add_child(frame)
 	else:
 		var phb := PlaceholderBorder.new()
-		phb.col = Color(1.0, 0.81, 0.36)   # gold placeholder frame (the well)
+		phb.modulate = tcol      # tint the procedural placeholder by Card Type
 		phb.position = well_pos
 		phb.size = well_sz
 		face.add_child(phb)
@@ -888,6 +981,8 @@ func _open_inspect(id: StringName, context: StringName, slot_index: int) -> void
 	var body := _lbl(card.description + "\n\n— " + "  ·  ".join(_full_stats(card)),
 		Vector2(10, 8), Vector2(W - 2 * m - 20, pb_h - 16), 25, HORIZONTAL_ALIGNMENT_LEFT)
 	body.vertical_alignment = VERTICAL_ALIGNMENT_TOP
+	body.autowrap_mode = TextServer.AUTOWRAP_WORD              # clean word wrap (no mid-word breaks)
+	body.text_overrun_behavior = TextServer.OVERRUN_TRIM_ELLIPSIS   # … instead of a hard clip
 	body.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	panel_b.add_child(body)
 
@@ -1225,6 +1320,8 @@ class PlayerProfileConst:
 # =====================================================================
 class CardTile extends Control:
 	const DOUBLE_MS := 260
+	const HOLD_MS := 150        # hold this long (still) before a move PICKS UP a Collection card (else = scroll)
+	const MOVE_THRESH := 14.0   # px of movement that commits the gesture to scroll-or-drag
 	var screen: Node
 	var id: StringName
 	var card: CardResource
@@ -1241,8 +1338,14 @@ class CardTile extends Control:
 	var card_art: Texture2D = null     # raw per-card illustration (CardResource.card_art)
 	var border_tex: Texture2D = null   # universal border_pill frame (null until the asset exists)
 	var full: bool = false             # Collection cards render as full vertical cards; deck-list = pill
+	var scroll: ScrollContainer = null # the Collection ScrollContainer (inventory tiles) — for swipe-to-pan
 
 	var _last_tap_ms: int = -10000
+	# press/hold/swipe state (Collection tiles): mode 0 undecided · 1 scroll · 2 drag
+	var _press_active: bool = false
+	var _press_ms: int = 0
+	var _moved: float = 0.0
+	var _mode: int = 0
 
 
 	func build() -> void:
@@ -1276,37 +1379,24 @@ class CardTile extends Control:
 			well.add_child(tex)
 		var compact := size.x < 230.0   # the narrow deck-list slots scale their text down
 		var name_fs := 18 if compact else 25
-		var stat_fs := 14 if compact else 19
-		var name_h := 46.0 if compact else 56.0
-		var stat_y := 52.0 if compact else 68.0
 
-		# text (right 70%; the left 30% is the art glyph, drawn in _draw)
+		# NAME only (Phase 2: the pill drops the shorthand-stats clutter — name + art + rarity only).
+		# Right ~70%, vertically centred; the left 30% is the art well / glyph (drawn in _draw).
 		var tx := size.x * 0.30 + 8
 		var tw := size.x - tx - 10
 		var name_lbl := Label.new()
 		name_lbl.text = title
 		name_lbl.position = Vector2(tx, 8)
-		name_lbl.size = Vector2(tw - 42, name_h)   # leave room for the top-right rarity icon
+		name_lbl.size = Vector2(tw - 42, size.y - 16)   # reserve the top-right rarity icon
 		name_lbl.add_theme_font_size_override(&"font_size", name_fs)
 		name_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+		name_lbl.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 		name_lbl.modulate = type_col
 		name_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		add_child(name_lbl)
 
-		var stat_lbl := Label.new()
-		stat_lbl.text = short_stats
-		stat_lbl.position = Vector2(tx, stat_y)
-		stat_lbl.size = Vector2(tw, size.y - stat_y - 8)
-		stat_lbl.add_theme_font_size_override(&"font_size", stat_fs)
-		stat_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-		stat_lbl.vertical_alignment = VERTICAL_ALIGNMENT_TOP
-		stat_lbl.modulate = Color(0.78, 0.83, 0.92)
-		stat_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
-		add_child(stat_lbl)
-
-		# FRAME — the universal border_pill over the WHOLE tile (Phase 2 scope: frame the full row, not just
-		# the art well). PNG if present, else the procedural cyan placeholder. On top of the art + text; its
-		# transparent centre shows them through.
+		# FRAME — the universal border_pill over the WHOLE tile (Phase 2), TINTED by Card Type via modulate
+		# (the grayscale PNG / procedural placeholder become red/green/blue). On top of the art + name.
 		if border_tex != null:
 			var frame := TextureRect.new()
 			frame.texture = border_tex
@@ -1314,11 +1404,12 @@ class CardTile extends Control:
 			frame.size = size
 			frame.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 			frame.stretch_mode = TextureRect.STRETCH_SCALE
+			frame.modulate = type_col
 			frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			add_child(frame)
 		else:
 			var ph := PlaceholderBorder.new()
-			ph.col = Color(0.47, 0.78, 1.0)   # cyan placeholder frame (whole tile)
+			ph.modulate = type_col
 			ph.position = Vector2.ZERO
 			ph.size = size
 			add_child(ph)
@@ -1380,7 +1471,7 @@ class CardTile extends Control:
 		stat_lbl.modulate = Color(0.80, 0.85, 0.93)
 		stat_lbl.mouse_filter = Control.MOUSE_FILTER_IGNORE
 		add_child(stat_lbl)
-		# FRAME — the universal border_pill over the WHOLE card (PNG or procedural cyan placeholder).
+		# FRAME — the universal border_pill over the WHOLE card, TINTED by Card Type via modulate.
 		if border_tex != null:
 			var frame := TextureRect.new()
 			frame.texture = border_tex
@@ -1388,11 +1479,12 @@ class CardTile extends Control:
 			frame.size = size
 			frame.expand_mode = TextureRect.EXPAND_IGNORE_SIZE
 			frame.stretch_mode = TextureRect.STRETCH_SCALE
+			frame.modulate = type_col
 			frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
 			add_child(frame)
 		else:
 			var ph := PlaceholderBorder.new()
-			ph.col = Color(0.47, 0.78, 1.0)
+			ph.modulate = type_col
 			ph.position = Vector2.ZERO
 			ph.size = size
 			add_child(ph)
@@ -1504,11 +1596,7 @@ class CardTile extends Control:
 
 
 	func _get_drag_data(_pos: Vector2) -> Variant:
-		if context != &"inventory" or screen == null:
-			return null
-		screen.begin_drag(self)
-		set_drag_preview(screen.make_drag_preview(card, id))
-		return {&"id": id}
+		return null   # drags are initiated by a long-press -> force_drag (see _gui_input), not auto-drag
 
 
 	# A FILLED deck slot accepts a SAME-TYPE drop → REPLACE the card in that slot (the drag-dim guides you
@@ -1525,15 +1613,73 @@ class CardTile extends Control:
 
 
 	func _gui_input(event: InputEvent) -> void:
-		if not (event is InputEventMouseButton):
+		if not full:
+			# deck-list pill: a simple tap / double-tap (no scroll, not a drag source).
+			if event is InputEventMouseButton:
+				var b := event as InputEventMouseButton
+				if b.button_index == MOUSE_BUTTON_LEFT and not b.pressed:
+					_handle_tap(b.position)
+					accept_event()
 			return
-		var mb := event as InputEventMouseButton
-		if mb.button_index != MOUSE_BUTTON_LEFT or mb.pressed:
-			return
-		# released: a tap (a drag would have been routed away, no release here)
-		if context == &"inventory" and _badge_rect().has_point(mb.position):
-			screen.on_badge(self)
+		# COLLECTION tile: TAP = inspect · HOLD-then-move = pick up + drag · quick SWIPE = scroll the grid.
+		if event is InputEventMouseButton:
+			var mb := event as InputEventMouseButton
+			if scroll != null and mb.pressed and mb.button_index == MOUSE_BUTTON_WHEEL_UP:
+				scroll.scroll_vertical -= 80
+				accept_event()
+				return
+			if scroll != null and mb.pressed and mb.button_index == MOUSE_BUTTON_WHEEL_DOWN:
+				scroll.scroll_vertical += 80
+				accept_event()
+				return
+			if mb.button_index != MOUSE_BUTTON_LEFT:
+				return
+			if mb.pressed:
+				_press_active = true
+				_press_ms = Time.get_ticks_msec()
+				_moved = 0.0
+				_mode = 0
+				if screen != null:
+					screen.scroll_stop()   # a new press kills any in-flight flick (tap-to-stop)
+			else:
+				if _press_active and _mode == 0 and _moved < MOVE_THRESH:
+					_handle_tap(mb.position)
+				elif _mode == 1 and screen != null:
+					screen.scroll_end()    # hand the swipe velocity to the momentum glide
+				_press_active = false
+				_mode = 0
 			accept_event()
+		elif event is InputEventMouseMotion and _press_active:
+			var mm := event as InputEventMouseMotion
+			_moved += mm.relative.length()
+			if _mode == 0 and _moved > MOVE_THRESH:
+				# the FIRST real movement decides: a brief HOLD first -> pick up; a quick swipe -> scroll.
+				if Time.get_ticks_msec() - _press_ms >= HOLD_MS:
+					_mode = 2
+					_begin_pickup()
+				else:
+					_mode = 1
+					if screen != null:
+						screen.scroll_begin()
+			if _mode == 1 and scroll != null:
+				scroll.scroll_vertical = scroll.scroll_vertical - int(mm.relative.y)
+			accept_event()
+
+
+	## Long-press pickup: start a native drag programmatically (bypasses _get_drag_data) with the card preview.
+	func _begin_pickup() -> void:
+		if screen == null:
+			return
+		screen.begin_drag(self)
+		force_drag({&"id": id}, screen.make_drag_preview(card, id))
+
+
+	## Resolve a tap: the owned-qty badge -> quantity prompt; else single (delayed) / double-tap dispatch.
+	func _handle_tap(pos: Vector2) -> void:
+		if screen == null:
+			return
+		if context == &"inventory" and _badge_rect().has_point(pos):
+			screen.on_badge(self)
 			return
 		var now := Time.get_ticks_msec()
 		if now - _last_tap_ms <= DOUBLE_MS:
@@ -1546,7 +1692,12 @@ class CardTile extends Control:
 				if _last_tap_ms == tok and is_instance_valid(self):
 					_last_tap_ms = -10000
 					screen.on_tap(self))
-		accept_event()
+
+
+	func _notification(what: int) -> void:
+		if what == NOTIFICATION_DRAG_END:   # reset the press state so a post-drag hover can't mis-trigger
+			_press_active = false
+			_mode = 0
 
 
 # =====================================================================

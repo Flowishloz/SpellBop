@@ -92,8 +92,9 @@ That's it. No code changes beyond the one-line catalog registration.
  WHAT EACH VARIANT LOOKS LIKE (so you can design art that fits)
 --------------------------------------------------------------------------------
 - PILL (deck list slots):  horizontal — art fills the LEFT ~30% "well" (cropped),
-  name + stats in the right ~70%, border_pill frames the WHOLE tile, a small
-  RARITY shape sits TOP-right. Slot size 195x150 (design units).
+  NAME ONLY (vertically centred) in the right ~70% (no stats — kept uncluttered),
+  border_pill frames the WHOLE tile and is TINTED by Card Type (red/green/blue),
+  a small RARITY shape sits TOP-right. Slot size 195x150 (design units).
 - COLLECTION (the inventory grid):  vertical FULL card — art on TOP (cover-
   cropped), name + shorthand stats below, border_pill over the whole card, RARITY
   top-right, owned qty badge bottom-right. Card ~335x340, 3 per row (design units).

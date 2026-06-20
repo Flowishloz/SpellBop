@@ -67,6 +67,16 @@ func _run() -> void:
 	root.get_texture().get_image().save_png(OUT_INSPECT)
 	print("saved ", OUT_INSPECT)
 	inst._close_overlay()
+
+	# drag preview (the pick-up card visual) — centred on its origin; place it somewhere visible.
+	var dp: Control = inst.make_drag_preview(CardCatalog.card_for(&"spark_bolt"), &"spark_bolt")
+	dp.position = Vector2(540, 480)
+	root.add_child(dp)
+	for i in 10:
+		await process_frame
+	root.get_texture().get_image().save_png("res://tests/_cardart_dragpreview.png")
+	print("saved drag preview")
+	dp.queue_free()
 	inst.queue_free()
 	for i in 6:
 		await process_frame

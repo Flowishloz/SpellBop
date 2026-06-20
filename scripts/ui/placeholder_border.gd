@@ -5,8 +5,9 @@
 class_name PlaceholderBorder
 extends Control
 
-## Frame colour — cyan for the deck pill, gold for the in-round / inspect frames.
-@export var col: Color = Color(0.47, 0.78, 1.0):
+## Frame BASE colour — a near-white grayscale; callers tint it via `modulate` by Card Type
+## (red attack / green defense / blue counter), matching how the eventual grayscale PNGs are tinted.
+@export var col: Color = Color(0.93, 0.95, 1.0):
 	set(value):
 		col = value
 		queue_redraw()

@@ -20,6 +20,9 @@ const BORDER_PATH := "res://resources/cards/frames/border_in_round.png"
 ## Reference 5:7 size. The scene is authored at this; scale the instance as one unit to resize.
 const REF_SIZE := Vector2(500.0, 700.0)
 
+## Card-Type tints (Phase 2: the universal border is grayscale, tinted by type via modulate).
+const TYPE_COL := {0: Color(0.92, 0.36, 0.32), 1: Color(0.34, 0.78, 0.46), 2: Color(0.36, 0.6, 0.98)}
+
 ## Drop a CardResource here to preview in-editor / drive at runtime.
 @export var card: CardResource:
 	set(value):
@@ -64,5 +67,9 @@ func _apply() -> void:
 	_art.visible = has_art
 	_art_fallback.visible = not has_art
 	_art_fallback.card_type = int(card.card_type)
+	# Border (PNG + procedural fallback) TINTED by Card Type via modulate.
+	var tint: Color = TYPE_COL.get(int(card.card_type), Color(1, 1, 1))
+	_border.modulate = tint
+	_border_fallback.modulate = tint
 	_rarity.rarity = int(card.rarity)
 	_name.text = (card.display_name if card.display_name != "" else "").to_upper()

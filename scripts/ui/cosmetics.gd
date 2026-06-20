@@ -349,8 +349,8 @@ func _build_ui() -> void:
 	# the back / currency / carousel all float as light rounded buttons over the diorama).
 	root.add_child(_frost(Vector2(190, 250), Vector2(700, 162)))     # skin name / status
 
-	# Top row: BACK (left), currency (right).
-	var back := _btn("‹  BACK", Vector2(40, 44), Vector2(200, 92), 34)
+	# BACK at the bottom-left (consistent with the deck builder + other menus); currency stays top-right.
+	var back := _btn("‹  BACK", Vector2(40, 1690), Vector2(200, 92), 34)
 	back.pressed.connect(func() -> void: _click(); get_tree().change_scene_to_file(HOME_SCENE))
 	root.add_child(back)
 	_build_currency_display(root)
